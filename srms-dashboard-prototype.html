@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SRMS 首页驾驶舱原型</title>
+  <style>
+    :root{
+      --bg:#f3f6fb;--panel:#fff;--line:#e6ebf3;--text:#1f2937;--muted:#718096;
+      --nav:#162338;--primary:#246bfd;--green:#22a06b;--orange:#e98216;--red:#d64545;
+      --purple:#7d5ce7;--shadow:0 10px 30px rgba(30,55,90,.07)
+    }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:"Microsoft YaHei","PingFang SC",Arial,sans-serif;font-size:14px}
+    button{font:inherit}.app{display:flex;min-height:100vh}.side{width:222px;background:var(--nav);color:#d9e3f4;padding:24px 14px;position:fixed;inset:0 auto 0 0}
+    .brand{display:flex;align-items:center;gap:11px;padding:0 10px 23px;border-bottom:1px solid rgba(255,255,255,.09)}
+    .brand-mark{width:36px;height:36px;border-radius:11px;background:linear-gradient(140deg,#70a0ff,#246bfd);display:grid;place-items:center;color:#fff;font-weight:800;box-shadow:0 7px 18px rgba(36,107,253,.35)}
+    .brand b{display:block;color:#fff;font-size:17px;letter-spacing:.5px}.brand small{font-size:11px;color:#8fa3c1}
+    .menu-title{font-size:11px;color:#7085a5;margin:24px 12px 8px}.menu-item{display:flex;align-items:center;gap:11px;padding:11px 13px;margin:4px 0;border-radius:9px;color:#b9c7db}.menu-item.active{background:#246bfd;color:#fff;box-shadow:0 7px 16px rgba(36,107,253,.25)}
+    .mi{width:18px;text-align:center}.main{margin-left:222px;width:calc(100% - 222px)}.topbar{height:68px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:20}
+    .crumb{color:#8995a7}.crumb b{color:#263347}.top-actions{display:flex;align-items:center;gap:18px}.bell{position:relative;font-size:19px}.dot{position:absolute;right:-2px;top:-2px;width:7px;height:7px;background:#f04b4b;border-radius:50%;border:2px solid #fff}.avatar{width:34px;height:34px;border-radius:50%;background:#dce8ff;color:#246bfd;display:grid;place-items:center;font-weight:700}
+    .content{padding:23px 28px 40px;max-width:1600px;margin:auto}.head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px}.head h1{font-size:23px;margin:0 0 7px}.head p{margin:0;color:var(--muted)}
+    .filters{display:flex;gap:9px}.control{background:#fff;border:1px solid #dfe5ee;border-radius:8px;padding:8px 12px;color:#3c4859;min-width:105px}.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px}.metric{background:#fff;border:1px solid #e9edf4;border-radius:12px;padding:15px 16px;box-shadow:var(--shadow);position:relative;min-height:90px}.metric .label{color:#6e7a8b;font-size:12px}.metric .value{font-size:23px;font-weight:750;margin-top:8px;letter-spacing:.2px}.metric .sub{position:absolute;right:13px;bottom:12px;color:#8792a2;font-size:11px}.metric.fin .value{color:#145ddb}.metric.alert .value{color:#d64545}
+    .help{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;border:1px solid #aab4c3;color:#8190a4;font-size:10px;margin-left:4px;cursor:help;position:relative;vertical-align:1px}.help:hover:after{content:attr(data-tip);position:absolute;z-index:99;left:50%;bottom:22px;transform:translateX(-50%);background:#172235;color:#fff;width:260px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;box-shadow:0 9px 24px rgba(0,0,0,.2);font-weight:400;text-align:left}.help:hover:before{content:"";position:absolute;bottom:17px;border:5px solid transparent;border-top-color:#172235}
+    .grid-main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(330px,.7fr);gap:16px}.panel{background:#fff;border:1px solid #e8edf4;border-radius:13px;box-shadow:var(--shadow);overflow:hidden}.panel-head{padding:16px 18px;border-bottom:1px solid #edf1f6;display:flex;justify-content:space-between;align-items:center}.panel-head h2{margin:0;font-size:16px}.panel-head small{color:#8792a2}.room-tools{display:flex;align-items:center;gap:8px}.tabs{display:flex;gap:5px}.tab{border:1px solid #dfe5ee;background:#fff;color:#586577;padding:6px 11px;border-radius:7px;cursor:pointer}.tab.active{color:#246bfd;background:#edf3ff;border-color:#b8cdfc}.default-view{font-size:10px;color:#64748b;background:#f2f5f9;border-radius:6px;padding:6px 8px}.filter-wrap{position:relative}.filter-btn{border:1px solid #b8cdfc;background:#edf3ff;color:#246bfd;padding:6px 10px;border-radius:7px;cursor:pointer}.filter-menu{display:none;position:absolute;right:0;top:37px;width:220px;background:#fff;border:1px solid #dfe5ee;border-radius:10px;box-shadow:0 14px 35px rgba(30,50,80,.18);padding:10px;z-index:80}.filter-menu.open{display:block}.filter-title{font-weight:700;font-size:12px;margin:1px 3px 8px}.filter-option{display:flex;align-items:center;gap:8px;padding:6px 4px;color:#4a5768;font-size:12px}.filter-actions{display:flex;gap:7px;border-top:1px solid #edf1f5;margin-top:7px;padding-top:9px}.filter-actions button{flex:1;border:1px solid #dfe5ee;background:#fff;border-radius:6px;padding:6px;color:#536174;cursor:pointer}.filter-actions .save{background:#246bfd;border-color:#246bfd;color:#fff}.building{padding:15px 18px 18px}.legend{display:flex;flex-wrap:wrap;gap:13px;margin-bottom:14px;color:#647085;font-size:11px}.legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}.legend strong{color:#334155;margin-left:3px}.floor{display:grid;grid-template-columns:48px repeat(4,1fr);gap:8px;margin-bottom:8px;align-items:stretch}.floor-name{display:grid;place-items:center;background:#f2f5f9;color:#6a778a;border-radius:8px;font-weight:700}.room{border:1px solid transparent;border-radius:9px;padding:9px 10px;min-height:73px;position:relative;cursor:pointer;transition:.18s}.room.filtered-out{visibility:hidden}.room:hover{transform:translateY(-2px);box-shadow:0 7px 16px rgba(30,50,80,.13)}.room b{font-size:13px}.room .rstatus{display:block;font-size:11px;margin-top:6px}.room .owner{display:block;font-size:10px;color:#68758a;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.deco{position:absolute;right:6px;top:6px;background:rgba(255,255,255,.72);border-radius:5px;padding:2px 5px;font-size:9px;color:#596579}
+    .rented{background:#e8f7f0;border-color:#a9dfc5;color:#13764d}.empty{background:#eaf7f3;border-color:#a6ded1;color:#187363}.movein{background:#eaf1ff;border-color:#b5cafa;color:#245fbe}.checkout{background:#fff1df;border-color:#f5c98f;color:#b76112}.repair{background:#fff8d9;border-color:#eedc7b;color:#8b7114}.sold{background:#eceff3;border-color:#cbd2dc;color:#5c6572}.forsale{background:#f1edff;border-color:#c9bdf6;color:#6543c4}.disabled{background:#e8eaed;border-color:#c8cbd1;color:#737981}.blank{background:transparent;border-color:transparent;cursor:default}.blank:hover{transform:none;box-shadow:none}
+    .right-col{display:grid;gap:16px}.todo-list{padding:4px 16px 10px}.todo{display:grid;grid-template-columns:42px 1fr auto;gap:11px;align-items:center;padding:13px 0;border-bottom:1px solid #edf1f5}.todo:last-child{border:0}.todo-icon{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:17px}.todo b{font-size:13px}.todo p{margin:3px 0 0;color:#7b8798;font-size:11px}.count{font-weight:750;font-size:18px;color:#334155}.urgent .count{color:#d64545}
+    .trend{padding:16px 18px}.chart{height:177px;position:relative;border-left:1px solid #dfe5ee;border-bottom:1px solid #dfe5ee;margin:7px 5px 22px 38px;background:repeating-linear-gradient(to bottom,transparent 0,transparent 43px,#edf1f5 44px)}.chart svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.chart-label{display:flex;justify-content:space-around;color:#8b96a6;font-size:10px;margin-left:28px}.chart-key{display:flex;justify-content:center;gap:20px;font-size:11px;color:#6b7789}.chart-key i{width:12px;height:3px;display:inline-block;margin-right:5px;vertical-align:3px}
+    @media(max-width:1200px){.metrics{grid-template-columns:repeat(3,1fr)}.grid-main{grid-template-columns:1fr}.side{width:190px}.main{margin-left:190px;width:calc(100% - 190px)}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="brand-mark">S</div><div><b>SRMS</b><small>智慧房屋管理系统</small></div></div>
+    <div class="menu-title">工作台</div>
+    <div class="menu-item active"><span class="mi">▦</span>经营驾驶舱</div>
+    <div class="menu-item"><span class="mi">⌂</span>房源管理</div>
+    <div class="menu-item"><span class="mi">♙</span>承租人管理</div>
+    <div class="menu-item"><span class="mi">▤</span>合同管理</div>
+    <div class="menu-title">租赁财务</div>
+    <div class="menu-item"><span class="mi">￥</span>租金账单</div>
+    <div class="menu-item"><span class="mi">✓</span>收款管理</div>
+    <div class="menu-item"><span class="mi">↩</span>退租结算</div>
+    <div class="menu-item"><span class="mi">◫</span>财务中心</div>
+    <div class="menu-title">系统</div>
+    <div class="menu-item"><span class="mi">☷</span>操作日志</div>
+    <div class="menu-item"><span class="mi">⚙</span>系统设置</div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="crumb">首页 / <b>经营驾驶舱</b></div><div class="top-actions"><span class="bell">♢<i class="dot"></i></span><span class="avatar">超</span><span>超级管理员⌄</span></div></header>
+    <div class="content">
+      <div class="head">
+        <div><h1>经营驾驶舱</h1><p>早上好，以下是项目当前的房态与收租概况</p></div>
+        <div class="filters"><button class="control">2026年7月⌄</button><button class="control">全部楼栋⌄</button><button class="control primary">刷新数据</button></div>
+      </div>
+      <section class="metrics">
+        <div class="metric"><span class="label">房源总数<span class="help" data-tip="系统内全部有效房源，包括经营房源、待出售和已出售房源。">?</span></span><div class="value">48</div><span class="sub">1栋 24 · 2栋 24</span></div>
+        <div class="metric"><span class="label">可经营房源<span class="help" data-tip="可用于出租经营的房源，不包括已出售、待出售和停用房源。维修中仍属于经营房源。">?</span></span><div class="value">36</div><span class="sub">占全部 75%</span></div>
+        <div class="metric"><span class="label">出租率<span class="help" data-tip="已出租房源数 ÷ 可经营房源数。已出售、待出售和停用房源不参与计算。">?</span></span><div class="value">83.3%</div><span class="sub">较上月 ↑ 2.1%</span></div>
+        <div class="metric fin"><span class="label">本月应收<span class="help" data-tip="到期日在本月的有效租金账单应收总额，不包含尚未分配的预收款。">?</span></span><div class="value">¥82,600</div><span class="sub">账单 30 笔</span></div>
+        <div class="metric fin"><span class="label">本月实收<span class="help" data-tip="本月已经分配到租金账单的实际收款金额；预收款分配后才计入。">?</span></span><div class="value">¥76,200</div><span class="sub">收租率 92.3%</span></div>
+        <div class="metric alert"><span class="label">累计欠租<span class="help" data-tip="截至当前所有逾期账单仍未收回的金额，包含部分付款账单的未结清部分。">?</span></span><div class="value">¥9,800</div><span class="sub">涉及 4 份合同</span></div>
+      </section>
+      <section class="grid-main">
+        <div>
+          <div class="panel">
+            <div class="panel-head"><div><h2>楼栋房态图 <span class="help" data-tip="主颜色表示房源状态，右上角标签表示装修状态。点击任意房间可查看详情和可执行操作。">?</span></h2><small>直观查看每套房源的经营、销售与装修状态</small></div><div class="room-tools"><span class="default-view" id="defaultView">默认：全部状态</span><div class="filter-wrap"><button class="filter-btn" id="filterBtn">状态筛选（8）⌄</button><div class="filter-menu" id="filterMenu"><div class="filter-title">房源状态（可多选）</div><label class="filter-option"><input type="checkbox" value="已出租" checked> 已出租</label><label class="filter-option"><input type="checkbox" value="空置" checked> 空置</label><label class="filter-option"><input type="checkbox" value="待入住" checked> 待入住</label><label class="filter-option"><input type="checkbox" value="待退房" checked> 待退房</label><label class="filter-option"><input type="checkbox" value="维修中" checked> 维修中</label><label class="filter-option"><input type="checkbox" value="待出售" checked> 待出售</label><label class="filter-option"><input type="checkbox" value="已出售" checked> 已出售</label><label class="filter-option"><input type="checkbox" value="停用" checked> 停用</label><div class="filter-actions"><button id="selectAll">全选</button><button class="save" id="saveDefault">设为默认</button></div></div></div><div class="tabs"><button class="tab active">1栋</button><button class="tab">2栋</button><button class="tab">全部</button></div></div></div>
+            <div class="building">
+              <div class="legend"><span><i style="background:#22a06b"></i>已出租 <strong>12</strong></span><span><i style="background:#51ae97"></i>空置 <strong>2</strong></span><span><i style="background:#397be5"></i>待入住 <strong>2</strong></span><span><i style="background:#e98216"></i>待退房 <strong>1</strong></span><span><i style="background:#d4b52a"></i>维修中 <strong>1</strong></span><span><i style="background:#7d5ce7"></i>待出售 <strong>2</strong></span><span><i style="background:#8c95a3"></i>已出售 <strong>3</strong></span><span><i style="background:#737981"></i>停用 <strong>1</strong></span></div>
+              <div class="floor"><div class="floor-name">6F</div><div class="room rented"><b>601</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">王女士 · 正常</span></div><div class="room sold"><b>602</b><span class="deco">未装修</span><span class="rstatus">已出售</span><span class="owner">业主：李先生</span></div><div class="room empty"><b>603</b><span class="deco">已装修</span><span class="rstatus">空置</span><span class="owner">空置 12 天</span></div><div class="room rented"><b>604</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">陈先生 · 正常</span></div></div>
+              <div class="floor"><div class="floor-name">5F</div><div class="room rented"><b>501</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">刘女士 · 7天后缴租</span></div><div class="room forsale"><b>502</b><span class="deco">已装修</span><span class="rstatus">待出售</span><span class="owner">不参与出租经营</span></div><div class="room checkout"><b>503</b><span class="deco">已装修</span><span class="rstatus">待退房</span><span class="owner">押金待结算</span></div><div class="room rented"><b>504</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">周先生 · 正常</span></div></div>
+              <div class="floor"><div class="floor-name">4F</div><div class="room repair"><b>401</b><span class="deco">装修中</span><span class="rstatus">维修中</span><span class="owner">预计 7月26日完成</span></div><div class="room rented"><b>402</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">张先生 · 欠租 ¥2,000</span></div><div class="room sold"><b>403</b><span class="deco">已装修</span><span class="rstatus">已出售</span><span class="owner">业主：吴女士</span></div><div class="room movein"><b>404</b><span class="deco">已装修</span><span class="rstatus">待入住</span><span class="owner">计划 7月22日入住</span></div></div>
+              <div class="floor"><div class="floor-name">3F</div><div class="room rented"><b>301</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">赵先生 · 正常</span></div><div class="room empty"><b>302</b><span class="deco">未装修</span><span class="rstatus">空置</span><span class="owner">空置 38 天</span></div><div class="room rented"><b>303</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">孙女士 · 正常</span></div><div class="room sold"><b>304</b><span class="deco">未装修</span><span class="rstatus">已出售</span><span class="owner">业主：黄先生</span></div></div>
+              <div class="floor"><div class="floor-name">2F</div><div class="room rented"><b>201</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">林女士 · 正常</span></div><div class="room rented"><b>202</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">何先生 · 正常</span></div><div class="room movein"><b>203</b><span class="deco">未装修</span><span class="rstatus">待入住</span><span class="owner">计划 8月1日入住</span></div><div class="room rented"><b>204</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">郑女士 · 欠租 ¥1,800</span></div></div>
+              <div class="floor"><div class="floor-name">1F<br><small>商铺</small></div><div class="room rented"><b>商铺101</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">便利店 · 正常</span></div><div class="room forsale"><b>商铺102</b><span class="deco">未装修</span><span class="rstatus">待出售</span><span class="owner">不参与出租经营</span></div><div class="room rented"><b>商铺103</b><span class="deco">已装修</span><span class="rstatus">已出租</span><span class="owner">咖啡店 · 正常</span></div><div class="room disabled"><b>商铺104</b><span class="deco">未知</span><span class="rstatus">停用</span><span class="owner">不参与经营</span></div></div>
+            </div>
+          </div>
+          <div class="panel" style="margin-top:16px">
+            <div class="panel-head"><div><h2>近6个月收租趋势 <span class="help" data-tip="应收按账单到期月份统计，实收按实际分配到账单的金额统计。">?</span></h2><small>单位：万元</small></div><button class="tab">查看明细 →</button></div>
+            <div class="trend"><div class="chart"><svg viewBox="0 0 700 180" preserveAspectRatio="none"><polyline points="0,105 140,82 280,92 420,54 560,66 700,38" fill="none" stroke="#246bfd" stroke-width="3"/><polyline points="0,122 140,95 280,116 420,68 560,93 700,56" fill="none" stroke="#22a06b" stroke-width="3"/><g fill="#246bfd"><circle cx="0" cy="105" r="4"/><circle cx="140" cy="82" r="4"/><circle cx="280" cy="92" r="4"/><circle cx="420" cy="54" r="4"/><circle cx="560" cy="66" r="4"/><circle cx="700" cy="38" r="4"/></g></svg></div><div class="chart-label"><span>2月</span><span>3月</span><span>4月</span><span>5月</span><span>6月</span><span>7月</span></div><div class="chart-key"><span><i style="background:#246bfd"></i>应收</span><span><i style="background:#22a06b"></i>实收</span></div></div>
+          </div>
+        </div>
+        <div class="right-col">
+          <div class="panel"><div class="panel-head"><div><h2>今日待办</h2><small>需要优先处理的业务</small></div><button class="tab">全部待办</button></div><div class="todo-list">
+            <div class="todo urgent"><div class="todo-icon" style="background:#fff0f0;color:#d64545">!</div><div><b>逾期未收</b><p>4份合同仍有欠租</p></div><span class="count">4</span></div>
+            <div class="todo"><div class="todo-icon" style="background:#fff5e8;color:#d87714">◷</div><div><b>7天内应缴</b><p>即将到期的租金账单</p></div><span class="count">6</span></div>
+            <div class="todo"><div class="todo-icon" style="background:#eef3ff;color:#246bfd">▤</div><div><b>合同即将到期</b><p>未来30天内到期</p></div><span class="count">3</span></div>
+            <div class="todo"><div class="todo-icon" style="background:#f3efff;color:#7654d7">✓</div><div><b>待确认押金退还</b><p>已上传退还凭证</p></div><span class="count">2</span></div>
+            <div class="todo"><div class="todo-icon" style="background:#eef8f5;color:#208262">⌂</div><div><b>长期空置</b><p>连续空置超过30天</p></div><span class="count">1</span></div>
+          </div></div>
+          <div class="panel"><div class="panel-head"><div><h2>房源构成</h2><small>全部48套房源</small></div></div><div style="padding:18px">
+            <svg viewBox="0 0 260 210" style="width:100%;height:210px"><circle cx="130" cy="92" r="61" fill="none" stroke="#eef1f5" stroke-width="22"/><circle cx="130" cy="92" r="61" fill="none" stroke="#22a06b" stroke-width="22" stroke-dasharray="205 383" transform="rotate(-90 130 92)"/><circle cx="130" cy="92" r="61" fill="none" stroke="#7d5ce7" stroke-width="22" stroke-dasharray="48 383" stroke-dashoffset="-210" transform="rotate(-90 130 92)"/><circle cx="130" cy="92" r="61" fill="none" stroke="#8c95a3" stroke-width="22" stroke-dasharray="72 383" stroke-dashoffset="-263" transform="rotate(-90 130 92)"/><text x="130" y="88" text-anchor="middle" font-size="12" fill="#7b8798">房源总数</text><text x="130" y="112" text-anchor="middle" font-size="25" font-weight="700" fill="#273449">48</text><g font-size="11" fill="#657185"><circle cx="25" cy="188" r="5" fill="#22a06b"/><text x="36" y="192">经营房源 36</text><circle cx="110" cy="188" r="5" fill="#7d5ce7"/><text x="121" y="192">待出售 4</text><circle cx="191" cy="188" r="5" fill="#8c95a3"/><text x="202" y="192">已出售 8</text></g></svg>
+          </div></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script>
+  const menu = document.getElementById('filterMenu');
+  const btn = document.getElementById('filterBtn');
+  const checks = [...menu.querySelectorAll('input[type="checkbox"]')];
+  const rooms = [...document.querySelectorAll('.room:not(.blank)')];
+  const saved = JSON.parse(localStorage.getItem('srms-room-status-default') || 'null');
+  if (Array.isArray(saved)) checks.forEach(c => c.checked = saved.includes(c.value));
+  function applyFilter(){
+    const selected = checks.filter(c=>c.checked).map(c=>c.value);
+    rooms.forEach(room=>room.classList.toggle('filtered-out',!selected.includes(room.querySelector('.rstatus').textContent.trim())));
+    btn.textContent = `状态筛选（${selected.length}）⌄`;
+    document.getElementById('defaultView').textContent = selected.length === checks.length ? '默认：全部状态' : `默认：${selected.length}种状态`;
+  }
+  btn.addEventListener('click',e=>{e.stopPropagation();menu.classList.toggle('open')});
+  menu.addEventListener('click',e=>e.stopPropagation());
+  checks.forEach(c=>c.addEventListener('change',applyFilter));
+  document.getElementById('selectAll').addEventListener('click',()=>{checks.forEach(c=>c.checked=true);applyFilter()});
+  document.getElementById('saveDefault').addEventListener('click',()=>{localStorage.setItem('srms-room-status-default',JSON.stringify(checks.filter(c=>c.checked).map(c=>c.value)));menu.classList.remove('open');applyFilter()});
+  document.addEventListener('click',()=>menu.classList.remove('open'));
+  applyFilter();
+</script>
+</body>
+</html>

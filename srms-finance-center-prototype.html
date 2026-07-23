@@ -1,0 +1,1267 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <title>SRMS 财务中心原型</title>
+    <style>
+      :root {
+        --bg: #f3f6fb;
+        --line: #e5eaf1;
+        --text: #233044;
+        --muted: #748196;
+        --nav: #162338;
+        --primary: #246bfd;
+        --green: #1f9d68;
+        --orange: #df7a16;
+        --red: #d64949;
+        --purple: #7856d8;
+        --shadow: 0 10px 28px rgba(28, 52, 84, 0.07);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 "Microsoft YaHei",
+          "PingFang SC",
+          Arial,
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      .app {
+        display: flex;
+        min-height: 100vh;
+      }
+      .side {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: 214px;
+        background: var(--nav);
+        color: #c6d1e2;
+        padding: 22px 14px;
+      }
+      .brand {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 0 8px 20px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      }
+      .logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: #347af6;
+        display: grid;
+        place-items: center;
+        color: white;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      .brand b {
+        display: block;
+        color: white;
+        font-size: 16px;
+      }
+      .brand small {
+        font-size: 10px;
+        color: #8296b4;
+      }
+      .menu-title {
+        margin: 22px 12px 8px;
+        color: #647b9e;
+        font-size: 10px;
+      }
+      .menu {
+        padding: 11px 13px;
+        margin: 4px 0;
+        border-radius: 8px;
+      }
+      .menu.active {
+        background: #246bfd;
+        color: white;
+      }
+      .main {
+        margin-left: 214px;
+        width: calc(100% - 214px);
+      }
+      .top {
+        height: 64px;
+        background: white;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 26px;
+        position: sticky;
+        top: 0;
+        z-index: 30;
+      }
+      .user {
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #e2ecff;
+        color: #246bfd;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+      }
+      .workspace {
+        padding: 20px 26px 40px;
+        max-width: 1500px;
+        margin: auto;
+      }
+      .prototype-switch {
+        display: flex;
+        justify-content: center;
+        gap: 7px;
+        background: #e7edf6;
+        padding: 5px;
+        border-radius: 10px;
+        width: max-content;
+        margin: 0 auto 18px;
+        position: sticky;
+        top: 74px;
+        z-index: 25;
+      }
+      .prototype-switch button {
+        border: 0;
+        background: transparent;
+        padding: 8px 22px;
+        border-radius: 7px;
+        color: #566478;
+      }
+      .prototype-switch button.active {
+        background: white;
+        color: #246bfd;
+        font-weight: 700;
+      }
+      .page {
+        display: none;
+      }
+      .page.active {
+        display: block;
+      }
+      .page-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: 16px;
+      }
+      .page-head h1 {
+        font-size: 22px;
+        margin: 0 0 5px;
+      }
+      .page-head p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .actions,
+      .filters {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .btn {
+        border: 1px solid #d9e0ea;
+        background: white;
+        color: #435166;
+        padding: 8px 15px;
+        border-radius: 8px;
+      }
+      .btn.primary {
+        background: #246bfd;
+        border-color: #246bfd;
+        color: white;
+      }
+      .btn.soft {
+        background: #edf3ff;
+        border-color: #c6d6fb;
+        color: #246bfd;
+      }
+      .input {
+        height: 38px;
+        border: 1px solid #dce3ec;
+        border-radius: 7px;
+        background: white;
+        padding: 0 10px;
+        color: #303e52;
+      }
+      .card {
+        background: white;
+        border: 1px solid #e7ecf3;
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        margin-bottom: 15px;
+      }
+      .card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 17px;
+        border-bottom: 1px solid #edf1f5;
+      }
+      .card-head h2 {
+        font-size: 15px;
+        margin: 0;
+      }
+      .card-body {
+        padding: 17px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+        margin-bottom: 15px;
+      }
+      .metric {
+        background: white;
+        border: 1px solid #e7ecf3;
+        border-radius: 11px;
+        padding: 14px 15px;
+        box-shadow: var(--shadow);
+      }
+      .metric span {
+        font-size: 11px;
+        color: #748196;
+      }
+      .metric b {
+        display: block;
+        font-size: 21px;
+        margin-top: 7px;
+      }
+      .metric small {
+        font-size: 10px;
+        color: #8a96a7;
+      }
+      .money-blue {
+        color: #246bfd;
+      }
+      .money-red {
+        color: #d64949;
+      }
+      .money-green {
+        color: #18825a;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(330px, 0.8fr);
+        gap: 15px;
+      }
+      .grid-even {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+      }
+      .tag {
+        display: inline-block;
+        border-radius: 6px;
+        padding: 3px 7px;
+        font-size: 10px;
+      }
+      .tag.blue {
+        background: #eaf1ff;
+        color: #246bfd;
+      }
+      .tag.green {
+        background: #e8f7f0;
+        color: #18825a;
+      }
+      .tag.orange {
+        background: #fff1df;
+        color: #b96310;
+      }
+      .tag.red {
+        background: #fff0f0;
+        color: #c44747;
+      }
+      .tag.gray {
+        background: #eef1f5;
+        color: #6e7887;
+      }
+      .tag.purple {
+        background: #f0ebff;
+        color: #6848c2;
+      }
+      .tipbox {
+        background: #eef4ff;
+        border: 1px solid #ccdcfb;
+        color: #46648e;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 11px;
+      }
+      .summary-list {
+        display: grid;
+        gap: 12px;
+      }
+      .summary-row {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px dashed #e2e7ee;
+        padding-bottom: 10px;
+      }
+      .summary-row:last-child {
+        border: 0;
+      }
+      .summary-row span {
+        color: #758196;
+      }
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .table th,
+      .table td {
+        text-align: left;
+        padding: 10px;
+        border-bottom: 1px solid #edf1f5;
+        font-size: 12px;
+      }
+      .table th {
+        color: #728095;
+        background: #f8fafc;
+      }
+      .bars {
+        height: 250px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-around;
+        border-bottom: 1px solid #dfe5ed;
+        padding: 12px 12px 0;
+      }
+      .bar-group {
+        height: 100%;
+        display: flex;
+        align-items: flex-end;
+        gap: 7px;
+        position: relative;
+        padding-bottom: 30px;
+      }
+      .bar {
+        width: 24px;
+        border-radius: 5px 5px 0 0;
+        background: #b9cef9;
+      }
+      .bar.actual {
+        background: #347af6;
+      }
+      .bar-group label {
+        position: absolute;
+        bottom: 5px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: #748196;
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        font-size: 11px;
+        color: #6f7c90;
+        margin-top: 10px;
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        display: inline-block;
+        margin-right: 5px;
+      }
+      .progress {
+        height: 9px;
+        background: #edf1f6;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .progress i {
+        display: block;
+        height: 100%;
+        background: #347af6;
+      }
+      .donut-wrap {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+      .donut {
+        width: 150px;
+        height: 150px;
+        border-radius: 50%;
+        background: conic-gradient(
+          #347af6 0 70%,
+          #7b5ce1 70% 83%,
+          #f2a23a 83% 94%,
+          #e65c62 94%
+        );
+        position: relative;
+      }
+      .donut:after {
+        content: "资金流入";
+        position: absolute;
+        inset: 27px;
+        background: white;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: #607086;
+        font-size: 11px;
+      }
+      .alert {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 5px;
+        padding: 11px 0;
+        border-bottom: 1px solid #edf1f5;
+      }
+      .alert:last-child {
+        border: 0;
+      }
+      .alert small {
+        color: #7a8799;
+      }
+      .number {
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .segment {
+        display: flex;
+        background: #f0f3f8;
+        border-radius: 8px;
+        padding: 4px;
+      }
+      .segment button {
+        border: 0;
+        background: transparent;
+        padding: 7px 15px;
+        border-radius: 6px;
+        color: #607086;
+      }
+      .segment button.active {
+        background: white;
+        color: #246bfd;
+        font-weight: 700;
+      }
+      .hidden {
+        display: none !important;
+      }
+      @media (max-width: 1200px) {
+        .metrics {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .grid,
+        .grid-even {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side">
+        <div class="brand">
+          <div class="logo">S</div>
+          <div>
+            <b>SRMS</b>
+            <small>智慧房屋管理系统</small>
+          </div>
+        </div>
+        <div class="menu-title">工作台</div>
+        <div class="menu">•　经营驾驶舱</div>
+        <div class="menu">•　房源管理</div>
+        <div class="menu">•　承租人管理</div>
+        <div class="menu">•　合同管理</div>
+        <div class="menu-title">租赁财务</div>
+        <div class="menu">•　租金账单</div>
+        <div class="menu">•　收款管理</div>
+        <div class="menu">•　退租结算</div>
+        <div class="menu active">•　财务中心</div>
+      </aside>
+      <main class="main">
+        <header class="top">
+          <div>
+            <b id="crumbTitle">财务总览</b>
+          </div>
+          <div class="user">
+            <span class="avatar">超</span>
+            <span>超级管理员 v</span>
+          </div>
+        </header>
+        <div class="workspace">
+          <nav class="prototype-switch">
+            <button class="active" data-page="overview">1　财务总览</button>
+            <button data-page="rent-report">2　租金收缴报表</button>
+            <button data-page="cash-flow">3　资金流水</button>
+            <button data-page="commission">4　提成台账</button>
+          </nav>
+
+          <section class="page active" id="page-overview">
+            <div class="page-head">
+              <div>
+                <h1>财务总览</h1>
+                <p>经营应收与实际资金收支分开统计</p>
+              </div>
+              <div class="filters">
+                <select class="input">
+                  <option>全部楼栋</option>
+                  <option>1栋</option>
+                  <option>2栋</option>
+                </select>
+                <input class="input" value="2027-01-01 至 2027-01-31" />
+                <button class="btn primary">查询</button>
+                <button class="btn">导出PDF</button>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <span>租金原应收</span>
+                <b>¥48,000</b>
+                <small>账期口径</small>
+              </div>
+              <div class="metric">
+                <span>优惠减免</span>
+                <b style="color: #c46d14">-¥1,200</b>
+                <small>仅已确认</small>
+              </div>
+              <div class="metric">
+                <span>租金净应收</span>
+                <b>¥46,800</b>
+                <small>原应收－减免</small>
+              </div>
+              <div class="metric">
+                <span>租金有效实收</span>
+                <b class="money-blue">¥44,400</b>
+                <small>已分配至账单</small>
+              </div>
+              <div class="metric">
+                <span>未收／欠租</span>
+                <b class="money-red">¥2,400</b>
+                <small>净应收－有效实收</small>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>近6个月租金收缴趋势</h2>
+                    <div class="segment">
+                      <button class="active">按账期</button>
+                      <button>按收款日</button>
+                    </div>
+                  </div>
+                  <div class="card-body">
+                    <div class="bars">
+                      <div class="bar-group">
+                        <i class="bar" style="height: 72%"> </i>
+                        <i class="bar actual" style="height: 69%"> </i>
+                        <label>8月</label>
+                      </div>
+                      <div class="bar-group">
+                        <i class="bar" style="height: 78%"> </i>
+                        <i class="bar actual" style="height: 74%"> </i>
+                        <label>9月</label>
+                      </div>
+                      <div class="bar-group">
+                        <i class="bar" style="height: 82%"> </i>
+                        <i class="bar actual" style="height: 77%"> </i>
+                        <label>10月</label>
+                      </div>
+                      <div class="bar-group">
+                        <i class="bar" style="height: 86%"> </i>
+                        <i class="bar actual" style="height: 84%"> </i>
+                        <label>11月</label>
+                      </div>
+                      <div class="bar-group">
+                        <i class="bar" style="height: 90%"> </i>
+                        <i class="bar actual" style="height: 87%"> </i>
+                        <label>12月</label>
+                      </div>
+                      <div class="bar-group">
+                        <i class="bar" style="height: 96%"> </i>
+                        <i class="bar actual" style="height: 91%"> </i>
+                        <label>1月</label>
+                      </div>
+                    </div>
+                    <div class="legend">
+                      <span>
+                        <i class="dot" style="background: #b9cef9"> </i
+                        >租金净应收</span
+                      >
+                      <span>
+                        <i class="dot" style="background: #347af6"> </i
+                        >有效实收</span
+                      >
+                    </div>
+                  </div>
+                </div>
+                <div class="grid-even">
+                  <div class="card">
+                    <div class="card-head">
+                      <h2>楼栋收租率</h2>
+                    </div>
+                    <div class="card-body">
+                      <div class="summary-list">
+                        <div>
+                          <div class="summary-row">
+                            <span>1栋</span>
+                            <b>97.4%</b>
+                          </div>
+                          <div class="progress">
+                            <i style="width: 97.4%"> </i>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="summary-row">
+                            <span>2栋</span>
+                            <b>92.1%</b>
+                          </div>
+                          <div class="progress">
+                            <i style="width: 92.1%; background: #7b5ce1"> </i>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <div class="card-head">
+                      <h2>待处理财务事项</h2>
+                    </div>
+                    <div class="card-body">
+                      <div class="alert">
+                        <div>
+                          <b>欠租待跟进</b>
+                          <br />
+                          <small>2份合同，共¥2,400</small>
+                        </div>
+                        <span class="tag red">2</span>
+                      </div>
+                      <div class="alert">
+                        <div>
+                          <b>优惠减免待确认</b>
+                          <br />
+                          <small>管理员提交的账单调整</small>
+                        </div>
+                        <span class="tag orange">3</span>
+                      </div>
+                      <div class="alert">
+                        <div>
+                          <b>退款凭证待审核</b>
+                          <br />
+                          <small>押金退款及退差</small>
+                        </div>
+                        <span class="tag blue">2</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>收租率</h2>
+                    <span class="tag green">良好</span>
+                  </div>
+                  <div class="card-body" style="text-align: center">
+                    <div class="number" style="font-size: 38px; color: #246bfd">
+                      94.9%
+                    </div>
+                    <p style="color: #748196">有效实收 ÷ 租金净应收</p>
+                    <div class="tipbox">
+                      押金、预收款和未分配收款不计入收租率。
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>资金与负债余额</h2>
+                  </div>
+                  <div class="card-body summary-list">
+                    <div class="summary-row">
+                      <span>本月资金流入</span>
+                      <b>¥51,600</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>本月资金流出</span>
+                      <b>-¥2,500</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>押金余额</span>
+                      <b>¥82,000</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>预收款余额</span>
+                      <b>¥12,600</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>重要口径</h2>
+                  </div>
+                  <div class="card-body">
+                    <div class="tipbox">
+                      押金和未分配预收款属于待处理余额，不是租金收入；优惠减免也不是现金支出。
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" id="page-rent-report">
+            <div class="page-head">
+              <div>
+                <h1>租金收缴报表</h1>
+                <p>按租金账期查看原应收、减免、实收和欠租</p>
+              </div>
+              <div class="actions">
+                <button class="btn soft">导出Excel</button>
+                <button class="btn">导出PDF</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body">
+                <div class="filters">
+                  <select class="input">
+                    <option>2027年1月账期</option>
+                  </select>
+                  <select class="input">
+                    <option>全部楼栋</option>
+                    <option>1栋</option>
+                    <option>2栋</option>
+                  </select>
+                  <select class="input">
+                    <option>全部状态</option>
+                    <option>已结清</option>
+                    <option>部分付款</option>
+                    <option>欠租</option>
+                  </select>
+                  <input class="input" placeholder="房号／承租人／合同号" />
+                  <button class="btn primary">查询</button>
+                  <button class="btn">重置</button>
+                </div>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <span>筛选结果原应收</span>
+                <b>¥25,800</b>
+              </div>
+              <div class="metric">
+                <span>已确认减免</span>
+                <b style="color: #c46d14">-¥1,200</b>
+              </div>
+              <div class="metric">
+                <span>净应收</span>
+                <b>¥24,600</b>
+              </div>
+              <div class="metric">
+                <span>有效实收</span>
+                <b class="money-blue">¥22,200</b>
+              </div>
+              <div class="metric">
+                <span>未收</span>
+                <b class="money-red">¥2,400</b>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <h2>账期明细</h2>
+                <small>金额单位：人民币元</small>
+              </div>
+              <div class="card-body">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>楼栋房号</th>
+                      <th>承租人</th>
+                      <th>合同号</th>
+                      <th>账期</th>
+                      <th>原应收</th>
+                      <th>优惠减免</th>
+                      <th>净应收</th>
+                      <th>有效实收</th>
+                      <th>未收</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>1栋301</td>
+                      <td>张三</td>
+                      <td>HT2026080001</td>
+                      <td>2027-01</td>
+                      <td>¥6,600</td>
+                      <td>-¥300</td>
+                      <td>¥6,300</td>
+                      <td>¥6,300</td>
+                      <td>¥0</td>
+                      <td>
+                        <span class="tag green">已结清</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>1栋302</td>
+                      <td>李四</td>
+                      <td>HT2026080002</td>
+                      <td>2027-01</td>
+                      <td>¥6,000</td>
+                      <td>-¥300</td>
+                      <td>¥5,700</td>
+                      <td>¥5,700</td>
+                      <td>¥0</td>
+                      <td>
+                        <span class="tag green">已结清</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>1栋401</td>
+                      <td>王五</td>
+                      <td>HT2026090003</td>
+                      <td>2027-01</td>
+                      <td>¥6,000</td>
+                      <td>¥0</td>
+                      <td>¥6,000</td>
+                      <td>¥4,800</td>
+                      <td class="money-red">¥1,200</td>
+                      <td>
+                        <span class="tag orange">部分付款</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>2栋201</td>
+                      <td>赵六</td>
+                      <td>HT2026100007</td>
+                      <td>2027-01</td>
+                      <td>¥7,200</td>
+                      <td>-¥600</td>
+                      <td>¥6,600</td>
+                      <td>¥5,400</td>
+                      <td class="money-red">¥1,200</td>
+                      <td>
+                        <span class="tag red">欠租</span>
+                      </td>
+                    </tr>
+                    <tr style="font-weight: 700; background: #f8fafc">
+                      <td colspan="4">本页合计</td>
+                      <td>¥25,800</td>
+                      <td>-¥1,200</td>
+                      <td>¥24,600</td>
+                      <td>¥22,200</td>
+                      <td>¥2,400</td>
+                      <td>—</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="tipbox" style="margin-top: 12px">
+                  待审批优惠不进入报表；部分付款只统计已经分配到该账单的有效实收。
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" id="page-cash-flow">
+            <div class="page-head">
+              <div>
+                <h1>资金流水</h1>
+                <p>按实际发生日期查看现金流入和流出</p>
+              </div>
+              <div class="actions">
+                <button class="btn soft">导出Excel</button>
+                <button class="btn">导出PDF</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body">
+                <div class="filters">
+                  <input class="input" value="2027-01-01 至 2027-01-31" />
+                  <select class="input">
+                    <option>全部资金类型</option>
+                    <option>租金收款</option>
+                    <option>押金收退</option>
+                    <option>预收款收退</option>
+                    <option>退款退差</option>
+                  </select>
+                  <select class="input">
+                    <option>全部支付方式</option>
+                    <option>微信</option>
+                    <option>支付宝</option>
+                    <option>银行转账</option>
+                    <option>现金</option>
+                  </select>
+                  <input class="input" placeholder="流水号／合同号／房号" />
+                  <button class="btn primary">查询</button>
+                </div>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <span>资金流入</span>
+                <b class="money-green">¥51,600</b>
+              </div>
+              <div class="metric">
+                <span>资金流出</span>
+                <b class="money-red">-¥2,500</b>
+              </div>
+              <div class="metric">
+                <span>净资金流</span>
+                <b class="money-blue">¥49,100</b>
+              </div>
+              <div class="metric">
+                <span>期末押金余额</span>
+                <b>¥82,000</b>
+              </div>
+              <div class="metric">
+                <span>期末预收款余额</span>
+                <b>¥12,600</b>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>流水明细</h2>
+                    <span class="tag blue">按发生时间倒序</span>
+                  </div>
+                  <div class="card-body">
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th>时间</th>
+                          <th>流水号</th>
+                          <th>类型</th>
+                          <th>合同／房源</th>
+                          <th>方式</th>
+                          <th>流入</th>
+                          <th>流出</th>
+                          <th>计入租金实收</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>01-31 16:10</td>
+                          <td>SK2027010038</td>
+                          <td>租金收款</td>
+                          <td>HT0002／1栋302</td>
+                          <td>银行</td>
+                          <td class="money-green">¥5,700</td>
+                          <td>—</td>
+                          <td>
+                            <span class="tag green">是</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>01-31 15:18</td>
+                          <td>YJTK2027010002</td>
+                          <td>押金退款</td>
+                          <td>HT0002／1栋302</td>
+                          <td>微信</td>
+                          <td>—</td>
+                          <td class="money-red">¥1,300</td>
+                          <td>
+                            <span class="tag gray">否</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>01-28 09:40</td>
+                          <td>SK2027010032</td>
+                          <td>租金收款</td>
+                          <td>HT0001／1栋301</td>
+                          <td>微信</td>
+                          <td class="money-green">¥6,300</td>
+                          <td>—</td>
+                          <td>
+                            <span class="tag green">是</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>01-22 11:12</td>
+                          <td>TD2027010003</td>
+                          <td>阶梯退差</td>
+                          <td>HT0001／1栋301</td>
+                          <td>微信</td>
+                          <td>—</td>
+                          <td class="money-red">¥300</td>
+                          <td>
+                            <span class="tag purple">租金冲减</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>01-15 14:33</td>
+                          <td>YJ2027010011</td>
+                          <td>押金收取</td>
+                          <td>HT0011／2栋501</td>
+                          <td>银行</td>
+                          <td class="money-green">¥2,400</td>
+                          <td>—</td>
+                          <td>
+                            <span class="tag gray">否</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td>01-08 10:05</td>
+                          <td>YS2027010008</td>
+                          <td>预收款</td>
+                          <td>HT0008／2栋301</td>
+                          <td>支付宝</td>
+                          <td class="money-green">¥2,400</td>
+                          <td>—</td>
+                          <td>
+                            <span class="tag gray">未分配</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>资金流入构成</h2>
+                  </div>
+                  <div class="card-body">
+                    <div class="donut-wrap">
+                      <div class="donut"></div>
+                      <div class="summary-list" style="flex: 1">
+                        <div class="summary-row">
+                          <span>
+                            <i class="dot" style="background: #347af6"> </i
+                            >租金</span
+                          >
+                          <b>70%</b>
+                        </div>
+                        <div class="summary-row">
+                          <span>
+                            <i class="dot" style="background: #7b5ce1"> </i
+                            >押金</span
+                          >
+                          <b>13%</b>
+                        </div>
+                        <div class="summary-row">
+                          <span>
+                            <i class="dot" style="background: #f2a23a"> </i
+                            >预收款</span
+                          >
+                          <b>11%</b>
+                        </div>
+                        <div class="summary-row">
+                          <span>
+                            <i class="dot" style="background: #e65c62"> </i
+                            >其他</span
+                          >
+                          <b>6%</b>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>对账口径</h2>
+                  </div>
+                  <div class="card-body">
+                    <div class="tipbox">
+                      资金流水按付款或退款实际发生日统计；租金收缴报表按账期统计。两张报表用途不同，金额不要求在同一月份完全相等。
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" id="page-commission">
+            <div class="page-head">
+              <div>
+                <h1>租房提成台账</h1>
+                <p>仅超级管理员可见和编辑</p>
+              </div>
+              <div class="actions">
+                <button class="btn soft">导出Excel</button>
+                <button class="btn primary">＋ 新增提成</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body">
+                <div class="filters">
+                  <select class="input">
+                    <option>全部楼栋</option>
+                    <option>1栋</option>
+                    <option>2栋</option>
+                  </select>
+                  <input class="input" placeholder="合同号／房号／承租人" />
+                  <input class="input" placeholder="提成所属对象" />
+                  <button class="btn primary">查询</button>
+                  <button class="btn">重置</button>
+                </div>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <span>提成登记金额</span><b style="color: #6848c2">¥6,800</b
+                ><small>不是资金实付</small>
+              </div>
+              <div class="metric"><span>涉及合同</span><b>6份</b></div>
+              <div class="metric"><span>所属对象</span><b>5人</b></div>
+              <div class="metric"><span>本月新增</span><b>2笔</b></div>
+              <div class="metric">
+                <span>最近修改</span><b style="font-size: 16px">2027-01-31</b>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>提成记录</h2>
+                    <span class="tag purple">超级管理员专属</span>
+                  </div>
+                  <div class="card-body">
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th>合同／房源</th>
+                          <th>承租人</th>
+                          <th>所属对象</th>
+                          <th>提成金额</th>
+                          <th>最后修改</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>HT2026080001／1栋301</td>
+                          <td>张三</td>
+                          <td>员工A</td>
+                          <td style="color: #6848c2">¥1,000</td>
+                          <td>2027-01-31 16:20</td>
+                          <td><span style="color: #246bfd">编辑</span></td>
+                        </tr>
+                        <tr>
+                          <td>HT2026080002／1栋302</td>
+                          <td>李四</td>
+                          <td>中介王某</td>
+                          <td style="color: #6848c2">¥800</td>
+                          <td>2027-01-28 10:15</td>
+                          <td><span style="color: #246bfd">编辑</span></td>
+                        </tr>
+                        <tr>
+                          <td>HT2026090003／1栋401</td>
+                          <td>王五</td>
+                          <td>员工B</td>
+                          <td style="color: #6848c2">¥1,200</td>
+                          <td>2027-01-20 09:30</td>
+                          <td><span style="color: #246bfd">编辑</span></td>
+                        </tr>
+                        <tr>
+                          <td>HT2026100007／2栋201</td>
+                          <td>赵六</td>
+                          <td>员工A</td>
+                          <td style="color: #6848c2">¥1,000</td>
+                          <td>2027-01-16 14:08</td>
+                          <td><span style="color: #246bfd">编辑</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div class="tipbox" style="margin-top: 12px">
+                      金额可随时修改，但每次修改的修改人、时间、修改前金额和修改后金额都会写入不可删除的安全审计记录。
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>编辑提成</h2>
+                    <span class="tag blue">HT2026080001</span>
+                  </div>
+                  <div class="card-body">
+                    <div class="summary-list" style="margin-bottom: 14px">
+                      <div class="summary-row">
+                        <span>房源</span><b>1栋301</b>
+                      </div>
+                      <div class="summary-row">
+                        <span>承租人</span><b>张三</b>
+                      </div>
+                    </div>
+                    <div style="display: grid; gap: 13px">
+                      <label
+                        >提成所属对象<input
+                          class="input"
+                          style="width: 100%; margin-top: 6px"
+                          value="员工A"
+                      /></label>
+                      <label
+                        >提成金额<input
+                          class="input"
+                          style="width: 100%; margin-top: 6px"
+                          value="1,000.00"
+                      /></label>
+                    </div>
+                    <button
+                      class="btn primary"
+                      style="width: 100%; margin-top: 16px"
+                    >
+                      保存修改
+                    </button>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><h2>统计口径</h2></div>
+                  <div class="card-body">
+                    <div class="tipbox">
+                      提成台账只记录内部管理金额，没有支付日期和付款状态，因此不进入资金流水，也不影响租金应收、实收和收租率。
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script>
+      const names = {
+        overview: "财务总览",
+        "rent-report": "租金收缴报表",
+        "cash-flow": "资金流水",
+        commission: "租房提成台账",
+      };
+      document.querySelectorAll(".prototype-switch button").forEach(
+        (b) =>
+          (b.onclick = () => {
+            document
+              .querySelectorAll(".prototype-switch button")
+              .forEach((x) => x.classList.remove("active"));
+            document
+              .querySelectorAll(".page")
+              .forEach((x) => x.classList.remove("active"));
+            b.classList.add("active");
+            document
+              .getElementById("page-" + b.dataset.page)
+              .classList.add("active");
+            document.getElementById("crumbTitle").textContent =
+              names[b.dataset.page];
+            scrollTo({ top: 0, behavior: "smooth" });
+          }),
+      );
+      if (location.hash === "#commission") {
+        document.querySelector('[data-page="commission"]').click();
+      }
+    </script>
+  </body>
+</html>

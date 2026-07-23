@@ -1,0 +1,56 @@
+CREATE TABLE `pricing_rebates` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `rebate_no` VARCHAR(40) NOT NULL,
+  `contract_id` INT UNSIGNED NOT NULL,
+  `source_type` ENUM('TIER_MILESTONE', 'FIXED_RENT_MANUAL') NOT NULL,
+  `rebate_type` ENUM('MILESTONE', 'MANUAL', 'SUPPLEMENT') NOT NULL,
+  `pricing_tier_id` INT UNSIGNED NULL,
+  `parent_rebate_id` INT UNSIGNED NULL,
+  `threshold_months` INT NULL,
+  `qualification_date` DATE NULL,
+  `period_start` DATE NOT NULL,
+  `period_end` DATE NOT NULL,
+  `gross_billed_amount` DECIMAL(14,2) NOT NULL DEFAULT 0,
+  `target_net_rent_amount` DECIMAL(14,2) NULL,
+  `previous_rebate_amount` DECIMAL(14,2) NOT NULL DEFAULT 0,
+  `reference_amount` DECIMAL(14,2) NULL,
+  `actual_amount` DECIMAL(14,2) NOT NULL,
+  `difference_amount` DECIMAL(14,2) NULL,
+  `difference_reason` VARCHAR(500) NULL,
+  `settlement_method` ENUM('ACTUAL_REFUND', 'PREPAYMENT_CREDIT') NOT NULL,
+  `refund_date` DATE NULL,
+  `refund_method` ENUM('WECHAT', 'ALIPAY', 'BANK_TRANSFER', 'CASH', 'POS', 'OTHER') NULL,
+  `remark` VARCHAR(1000) NULL,
+  `approval_status` ENUM('DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED') NOT NULL DEFAULT 'DRAFT',
+  `submitted_by` INT UNSIGNED NOT NULL,
+  `submitted_at` DATETIME(3) NULL,
+  `approved_by` INT UNSIGNED NULL,
+  `approved_at` DATETIME(3) NULL,
+  `rejected_reason` VARCHAR(500) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pricing_rebate_no` (`rebate_no`),
+  KEY `idx_rebate_contract_status` (`contract_id`, `approval_status`),
+  KEY `idx_rebate_tier_status` (`pricing_tier_id`, `approval_status`),
+  KEY `idx_rebate_parent` (`parent_rebate_id`),
+  CONSTRAINT `fk_rebate_contract` FOREIGN KEY (`contract_id`) REFERENCES `contracts`(`id`),
+  CONSTRAINT `fk_rebate_tier` FOREIGN KEY (`pricing_tier_id`) REFERENCES `contract_pricing_tiers`(`id`),
+  CONSTRAINT `fk_rebate_parent` FOREIGN KEY (`parent_rebate_id`) REFERENCES `pricing_rebates`(`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `pricing_rebate_files` (
+  `pricing_rebate_id` INT UNSIGNED NOT NULL,
+  `file_asset_id` INT UNSIGNED NOT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`pricing_rebate_id`, `file_asset_id`),
+  CONSTRAINT `fk_rebate_file_rebate` FOREIGN KEY (`pricing_rebate_id`) REFERENCES `pricing_rebates`(`id`),
+  CONSTRAINT `fk_rebate_file_asset` FOREIGN KEY (`file_asset_id`) REFERENCES `file_assets`(`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE `contracts`
+  ADD COLUMN `qualified_months` INT NOT NULL DEFAULT 0,
+  ADD COLUMN `next_tier_date` DATE NULL,
+  ADD COLUMN `current_pricing_tier_id` INT UNSIGNED NULL,
+  ADD KEY `idx_contract_current_tier` (`current_pricing_tier_id`),
+  ADD CONSTRAINT `fk_contract_current_tier` FOREIGN KEY (`current_pricing_tier_id`) REFERENCES `contract_pricing_tiers`(`id`);

@@ -1,0 +1,1814 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <title>SRMS 合同、收款与退差原型</title>
+    <style>
+      :root {
+        --bg: #f3f6fb;
+        --panel: #fff;
+        --line: #e5eaf1;
+        --text: #233044;
+        --muted: #748196;
+        --nav: #162338;
+        --primary: #246bfd;
+        --green: #1f9d68;
+        --orange: #df7a16;
+        --red: #d64949;
+        --purple: #7856d8;
+        --shadow: 0 10px 28px rgba(28, 52, 84, 0.07);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 "Microsoft YaHei",
+          "PingFang SC",
+          Arial,
+          sans-serif;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+      .app {
+        display: flex;
+        min-height: 100vh;
+      }
+      .side {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: 214px;
+        background: var(--nav);
+        color: #c6d1e2;
+        padding: 22px 14px;
+      }
+      .brand {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 0 8px 20px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      }
+      .logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: #347af6;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      .brand b {
+        display: block;
+        color: #fff;
+        font-size: 16px;
+      }
+      .brand small {
+        font-size: 10px;
+        color: #8296b4;
+      }
+      .menu-title {
+        margin: 22px 12px 8px;
+        color: #647b9e;
+        font-size: 10px;
+      }
+      .menu {
+        padding: 11px 13px;
+        margin: 4px 0;
+        border-radius: 8px;
+      }
+      .menu.active {
+        background: #246bfd;
+        color: #fff;
+      }
+      .main {
+        margin-left: 214px;
+        width: calc(100% - 214px);
+      }
+      .top {
+        height: 64px;
+        background: #fff;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 26px;
+        position: sticky;
+        top: 0;
+        z-index: 30;
+      }
+      .crumb {
+        color: #8390a2;
+      }
+      .user {
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #e2ecff;
+        color: #246bfd;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+      }
+      .workspace {
+        padding: 20px 26px 40px;
+        max-width: 1500px;
+        margin: auto;
+      }
+      .prototype-switch {
+        display: flex;
+        justify-content: center;
+        gap: 7px;
+        background: #e7edf6;
+        padding: 5px;
+        border-radius: 10px;
+        width: max-content;
+        margin: 0 auto 18px;
+        position: sticky;
+        top: 74px;
+        z-index: 25;
+      }
+      .prototype-switch button {
+        border: 0;
+        background: transparent;
+        padding: 8px 20px;
+        border-radius: 7px;
+        color: #566478;
+        cursor: pointer;
+      }
+      .prototype-switch button.active {
+        background: #fff;
+        color: #246bfd;
+        box-shadow: 0 3px 10px rgba(31, 55, 86, 0.1);
+        font-weight: 700;
+      }
+      .page {
+        display: none;
+      }
+      .page.active {
+        display: block;
+      }
+      .page-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: 16px;
+      }
+      .page-head h1 {
+        font-size: 22px;
+        margin: 0 0 5px;
+      }
+      .page-head p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+      .btn {
+        border: 1px solid #d9e0ea;
+        background: #fff;
+        color: #435166;
+        padding: 8px 15px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .btn.primary {
+        background: #246bfd;
+        border-color: #246bfd;
+        color: #fff;
+      }
+      .btn.danger {
+        color: #c83d3d;
+        border-color: #efbcbc;
+        background: #fff8f8;
+      }
+      .btn.soft {
+        background: #edf3ff;
+        border-color: #c6d6fb;
+        color: #246bfd;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 15px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e7ecf3;
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        margin-bottom: 15px;
+      }
+      .card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 17px;
+        border-bottom: 1px solid #edf1f5;
+      }
+      .card-head h2 {
+        font-size: 15px;
+        margin: 0;
+      }
+      .card-head small {
+        color: var(--muted);
+      }
+      .card-body {
+        padding: 17px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px 14px;
+      }
+      .field label {
+        display: block;
+        color: #526075;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .req:before {
+        content: "*";
+        color: #e14c4c;
+        margin-right: 3px;
+      }
+      .input {
+        height: 38px;
+        border: 1px solid #dce3ec;
+        border-radius: 7px;
+        background: #fff;
+        padding: 0 10px;
+        width: 100%;
+        color: #303e52;
+      }
+      .input:focus {
+        outline: 2px solid #d9e6ff;
+        border-color: #7ba4fb;
+      }
+      .help {
+        display: inline-grid;
+        place-items: center;
+        width: 14px;
+        height: 14px;
+        border: 1px solid #9da9b9;
+        border-radius: 50%;
+        font-size: 9px;
+        color: #748196;
+        position: relative;
+        cursor: help;
+        margin-left: 3px;
+      }
+      .help:hover:after {
+        content: attr(data-tip);
+        position: absolute;
+        left: 50%;
+        bottom: 20px;
+        transform: translateX(-50%);
+        width: 245px;
+        background: #172235;
+        color: #fff;
+        border-radius: 7px;
+        padding: 9px 11px;
+        font-size: 11px;
+        line-height: 1.55;
+        z-index: 80;
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+      }
+      .segment {
+        display: flex;
+        background: #f0f3f8;
+        border-radius: 8px;
+        padding: 4px;
+        width: max-content;
+      }
+      .segment button {
+        border: 0;
+        background: transparent;
+        padding: 7px 14px;
+        border-radius: 6px;
+        color: #607086;
+        cursor: pointer;
+      }
+      .segment button.active {
+        background: #fff;
+        color: #246bfd;
+        box-shadow: 0 2px 8px rgba(34, 55, 84, 0.09);
+        font-weight: 700;
+      }
+      .tier-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .tier-table th {
+        background: #f7f9fc;
+        color: #68768a;
+        font-size: 11px;
+        text-align: left;
+        padding: 9px;
+        border-bottom: 1px solid #e7ecf2;
+      }
+      .tier-table td {
+        padding: 8px;
+        border-bottom: 1px solid #edf1f5;
+      }
+      .tier-table .input {
+        height: 34px;
+      }
+      .tier-table .n {
+        width: 90px;
+      }
+      .tier-table .money {
+        width: 120px;
+      }
+      .tag {
+        display: inline-block;
+        border-radius: 6px;
+        padding: 3px 7px;
+        font-size: 10px;
+      }
+      .tag.blue {
+        background: #eaf1ff;
+        color: #246bfd;
+      }
+      .tag.green {
+        background: #e8f7f0;
+        color: #18825a;
+      }
+      .tag.orange {
+        background: #fff1df;
+        color: #b96310;
+      }
+      .tag.gray {
+        background: #eef1f5;
+        color: #6e7887;
+      }
+      .tag.purple {
+        background: #f0ebff;
+        color: #6848c2;
+      }
+      .link {
+        color: #246bfd;
+        cursor: pointer;
+      }
+      .switch {
+        width: 36px;
+        height: 20px;
+        border-radius: 12px;
+        background: #246bfd;
+        display: inline-block;
+        position: relative;
+        vertical-align: -5px;
+        margin-right: 6px;
+      }
+      .switch:after {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        background: #fff;
+        border-radius: 50%;
+        right: 2px;
+        top: 2px;
+      }
+      .tipbox {
+        background: #eef4ff;
+        border: 1px solid #ccdcfb;
+        color: #46648e;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 11px;
+      }
+      .summary-list {
+        display: grid;
+        gap: 12px;
+      }
+      .summary-row {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px dashed #e2e7ee;
+        padding-bottom: 10px;
+      }
+      .summary-row:last-child {
+        border: 0;
+        padding: 0;
+      }
+      .summary-row span {
+        color: #758196;
+      }
+      .summary-row b {
+        font-weight: 700;
+      }
+      .money-blue {
+        color: #246bfd;
+      }
+      .preview-period {
+        display: flex;
+        gap: 5px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .period {
+        padding: 7px 9px;
+        border-radius: 7px;
+        background: #eef4ff;
+        color: #3564b5;
+        font-size: 10px;
+      }
+      .period.p2 {
+        background: #ecf8f2;
+        color: #27815e;
+      }
+      .period.p3 {
+        background: #fff5e8;
+        color: #ad681d;
+      }
+      .period.p4 {
+        background: #f2edff;
+        color: #6c4bc5;
+      }
+      .status-banner {
+        padding: 16px 18px;
+        background: linear-gradient(120deg, #1d5fd8, #2f82f7);
+        color: #fff;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+      .status-banner h1 {
+        margin: 0 0 5px;
+        font-size: 21px;
+      }
+      .status-banner p {
+        margin: 0;
+        color: #dce9ff;
+      }
+      .status-banner .tag {
+        background: rgba(255, 255, 255, 0.18);
+        color: #fff;
+        font-size: 11px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 15px;
+      }
+      .metric {
+        background: #fff;
+        border: 1px solid #e7ecf3;
+        border-radius: 11px;
+        padding: 14px 15px;
+        box-shadow: var(--shadow);
+      }
+      .metric span {
+        font-size: 11px;
+        color: #748196;
+      }
+      .metric b {
+        display: block;
+        font-size: 21px;
+        margin-top: 7px;
+      }
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #e8edf3;
+        padding: 0 15px;
+      }
+      .tabs span {
+        padding: 12px 14px;
+        color: #67758a;
+      }
+      .tabs span.active {
+        color: #246bfd;
+        border-bottom: 2px solid #246bfd;
+        font-weight: 700;
+      }
+      .timeline {
+        position: relative;
+        display: flex;
+        justify-content: space-between;
+        margin: 16px 20px 28px;
+      }
+      .timeline:before {
+        content: "";
+        position: absolute;
+        left: 15px;
+        right: 15px;
+        top: 13px;
+        height: 3px;
+        background: #dde5f0;
+      }
+      .step {
+        position: relative;
+        text-align: center;
+        width: 24%;
+        font-size: 11px;
+        color: #718095;
+      }
+      .step i {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        background: #fff;
+        border: 3px solid #d5ddea;
+        border-radius: 50%;
+        margin: 0 auto 8px;
+        font-style: normal;
+        font-weight: 700;
+      }
+      .step.done i {
+        background: #1f9d68;
+        border-color: #1f9d68;
+        color: #fff;
+      }
+      .step.current i {
+        background: #246bfd;
+        border-color: #246bfd;
+        color: #fff;
+      }
+      .step b {
+        display: block;
+        color: #39475a;
+        margin-bottom: 2px;
+      }
+      .history {
+        display: grid;
+        gap: 10px;
+      }
+      .history-item {
+        display: grid;
+        grid-template-columns: 110px 1fr auto;
+        align-items: center;
+        padding: 11px;
+        background: #f8fafc;
+        border-radius: 8px;
+      }
+      .approval-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 15px;
+      }
+      .checklist {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 9px;
+      }
+      .check {
+        border: 1px solid #cfe9dd;
+        background: #f0faf5;
+        border-radius: 8px;
+        padding: 10px;
+        color: #277a59;
+        font-size: 11px;
+      }
+      .comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+      }
+      .compare-box {
+        border: 1px solid #e2e8f0;
+        border-radius: 9px;
+        padding: 13px;
+      }
+      .compare-box span {
+        font-size: 11px;
+        color: #748196;
+      }
+      .compare-box b {
+        display: block;
+        font-size: 22px;
+        margin-top: 6px;
+      }
+      .compare-box.actual {
+        border-color: #aac4fb;
+        background: #f2f6ff;
+      }
+      .compare-box.diff {
+        border-color: #f1c9a0;
+        background: #fff8ee;
+      }
+      .reason {
+        background: #fff8ee;
+        border-left: 3px solid #e18a2b;
+        padding: 10px 12px;
+        font-size: 12px;
+        color: #775326;
+      }
+      .bill-list {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .bill-list th,
+      .bill-list td {
+        text-align: left;
+        padding: 10px;
+        border-bottom: 1px solid #edf1f5;
+        font-size: 12px;
+      }
+      .bill-list th {
+        color: #728095;
+        background: #f8fafc;
+      }
+      .proof {
+        border: 1px dashed #b8c5d8;
+        border-radius: 9px;
+        background: #f8fafc;
+        padding: 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .proof-thumb {
+        width: 72px;
+        height: 54px;
+        border-radius: 7px;
+        background: linear-gradient(150deg, #ddf3e7, #eef7f2);
+        display: grid;
+        place-items: center;
+        color: #27805c;
+        font-size: 10px;
+      }
+      .audit {
+        font-size: 11px;
+        color: #6f7d90;
+        background: #f4f6f9;
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .sticky-approve {
+        display: flex;
+        gap: 9px;
+        justify-content: flex-end;
+        border-top: 1px solid #e7ecf2;
+        padding-top: 15px;
+        margin-top: 15px;
+      }
+      .textarea {
+        width: 100%;
+        min-height: 78px;
+        border: 1px solid #dce3ec;
+        border-radius: 7px;
+        padding: 9px;
+        resize: vertical;
+      }
+      .hidden {
+        display: none !important;
+      }
+      @media (max-width: 1180px) {
+        .grid,
+        .approval-grid {
+          grid-template-columns: 1fr;
+        }
+        .form-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .side {
+          width: 185px;
+        }
+        .main {
+          margin-left: 185px;
+          width: calc(100% - 185px);
+        }
+      }
+      .page-head > div:first-child {
+        min-width: 220px;
+      }
+      .actions {
+        flex-shrink: 0;
+      }
+      .sticky-approve .btn {
+        min-width: 110px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side">
+        <div class="brand">
+          <div class="logo">S</div>
+          <div><b>SRMS</b><small>智慧房屋管理系统</small></div>
+        </div>
+        <div class="menu-title">工作台</div>
+        <div class="menu">•　经营驾驶舱</div>
+        <div class="menu">•　房源管理</div>
+        <div class="menu">•　承租人管理</div>
+        <div class="menu active">•　合同管理</div>
+        <div class="menu-title">租赁财务</div>
+        <div class="menu">•　租金账单</div>
+        <div class="menu">•　收款管理</div>
+        <div class="menu">•　退租结算</div>
+        <div class="menu">•　财务中心</div>
+      </aside>
+      <main class="main">
+        <header class="top">
+          <div class="crumb"><b id="crumbTitle">合同管理</b></div>
+          <div class="user">
+            <span class="avatar">超</span><span>超级管理员 v</span>
+          </div>
+        </header>
+        <div class="workspace">
+          <nav class="prototype-switch">
+            <button class="active" data-page="create">1　新增合同</button
+            ><button data-page="detail">2　阶梯合同详情</button
+            ><button data-page="rebate">3　阶梯退差确认</button
+            ><button data-page="fixed-detail">4　固定月租详情</button
+            ><button data-page="fixed-rebate">5　固定月租退差</button>
+          </nav>
+
+          <section class="page active" id="page-create">
+            <div class="page-head">
+              <div>
+                <h1>新增合同</h1>
+                <p>录入合同、承租人和自定义计价规则</p>
+              </div>
+              <div class="actions">
+                <button class="btn">取消</button
+                ><button class="btn soft">保存草稿</button
+                ><button class="btn primary">确认并生成账单</button>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>基本信息</h2>
+                    <small>合同编号将在确认后自动生成</small>
+                  </div>
+                  <div class="card-body">
+                    <div class="form-grid">
+                      <div class="field">
+                        <label class="req">房源</label
+                        ><select class="input">
+                          <option>1栋 · 301（住宅｜空置）</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label class="req">主承租人</label
+                        ><select class="input">
+                          <option>张三｜138****2026</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label>副承租人</label
+                        ><select class="input">
+                          <option>可选择多人</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label class="req">合同开始日期</label
+                        ><input class="input" value="2026-08-01" />
+                      </div>
+                      <div class="field">
+                        <label class="req"
+                          >合同结束日期
+                          <span
+                            class="help"
+                            data-tip="合同仍采用固定最长租期，不会因为缴费自动延期；允许提前退租时按实际情况结算。"
+                            >?</span
+                          ></label
+                        ><input class="input" value="2027-07-31" />
+                      </div>
+                      <div class="field">
+                        <label>计划入住日期</label
+                        ><input class="input" value="2026-08-01" />
+                      </div>
+                      <div class="field">
+                        <label class="req">押金</label
+                        ><input class="input" value="2,200.00" />
+                      </div>
+                      <div class="field">
+                        <label class="req"
+                          >租缴周期（月）
+                          <span
+                            class="help"
+                            data-tip="表示合同约定每隔几个月应缴一次，可选择1至12个月；租客某次实际多交几个月，不会改变这里的约定周期。"
+                            >?</span
+                          ></label
+                        ><select class="input">
+                          <option>1个月（每月）</option>
+                          <option>2个月</option>
+                          <option>3个月（每季度）</option>
+                          <option>4个月</option>
+                          <option>5个月</option>
+                          <option>6个月（每半年）</option>
+                          <option>7个月</option>
+                          <option>8个月</option>
+                          <option>9个月</option>
+                          <option>10个月</option>
+                          <option>11个月</option>
+                          <option>12个月（每年）</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label>纸质合同编号</label
+                        ><input class="input" placeholder="选填" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head">
+                    <div>
+                      <h2>
+                        租金计价方式
+                        <span
+                          class="help"
+                          data-tip="固定月租使用一个价格；自定义弹性阶梯可以为本合同自由录入任意月数和月租档位。"
+                          >?</span
+                        >
+                      </h2>
+                      <small>价格方案只作用于当前合同</small>
+                    </div>
+                    <div class="segment">
+                      <button data-pricing="fixed">固定月租</button
+                      ><button class="active" data-pricing="tiered">
+                        自定义弹性阶梯
+                      </button>
+                    </div>
+                  </div>
+                  <div class="card-body" id="tieredPricing">
+                    <div
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 12px;
+                      "
+                    >
+                      <div>
+                        <select class="input" style="width: 225px">
+                          <option>从模板带出：常用住宅方案</option>
+                          <option>不使用模板</option>
+                        </select>
+                      </div>
+                      <button class="btn soft" id="addTier">＋ 新增档位</button>
+                    </div>
+                    <table class="tier-table">
+                      <thead>
+                        <tr>
+                          <th>顺序</th>
+                          <th>档位名称</th>
+                          <th>
+                            达标月数
+                            <span
+                              class="help"
+                              data-tip="可自由输入1、2、3、5、6、9、12等正整数，同一合同不能重复。"
+                              >?</span
+                            >
+                          </th>
+                          <th>月租（元）</th>
+                          <th>达标前需结清</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tierRows">
+                        <tr>
+                          <td>1</td>
+                          <td><input class="input" value="短月租" /></td>
+                          <td><input class="input n" value="1" /></td>
+                          <td><input class="input money" value="1100.00" /></td>
+                          <td><span class="switch"></span>是</td>
+                          <td><span class="link delete-tier">删除</span></td>
+                        </tr>
+                        <tr>
+                          <td>2</td>
+                          <td><input class="input" value="季租档" /></td>
+                          <td><input class="input n" value="3" /></td>
+                          <td><input class="input money" value="1000.00" /></td>
+                          <td><span class="switch"></span>是</td>
+                          <td><span class="link delete-tier">删除</span></td>
+                        </tr>
+                        <tr>
+                          <td>3</td>
+                          <td><input class="input" value="半年档" /></td>
+                          <td><input class="input n" value="6" /></td>
+                          <td><input class="input money" value="900.00" /></td>
+                          <td><span class="switch"></span>是</td>
+                          <td><span class="link delete-tier">删除</span></td>
+                        </tr>
+                        <tr>
+                          <td>4</td>
+                          <td><input class="input" value="年租档" /></td>
+                          <td><input class="input n" value="12" /></td>
+                          <td><input class="input money" value="800.00" /></td>
+                          <td><span class="switch"></span>是</td>
+                          <td><span class="link delete-tier">删除</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div class="tipbox" style="margin-top: 12px">
+                      档位和价格均可自由调整。合同确认后保存价格快照，修改模板不会影响本合同。
+                    </div>
+                  </div>
+                  <div class="card-body hidden" id="fixedPricing">
+                    <div class="form-grid">
+                      <div class="field">
+                        <label class="req">固定月租</label
+                        ><input class="input" value="1000.00" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head"><h2>其他约定</h2></div>
+                  <div class="card-body">
+                    <div class="form-grid">
+                      <div class="field">
+                        <label>允许提前退租</label>
+                        <div><span class="switch"></span>是</div>
+                      </div>
+                      <div class="field">
+                        <label>免租与优惠</label
+                        ><button class="btn">＋ 添加规则</button>
+                      </div>
+                      <div class="field">
+                        <label>合同附件</label
+                        ><button class="btn">上传PDF/图片</button>
+                      </div>
+                    </div>
+                    <div class="field" style="margin-top: 14px">
+                      <label>合同备注</label
+                      ><textarea
+                        class="textarea"
+                        placeholder="请输入特殊约定"
+                      ></textarea>
+                    </div>
+                  </div>
+                </div>
+                <div class="card" id="commission-create-card">
+                  <div class="card-head">
+                    <h2>租房提成</h2>
+                    <span class="tag purple">仅超级管理员可见</span>
+                  </div>
+                  <div class="card-body">
+                    <div class="form-grid">
+                      <div class="field">
+                        <label>提成所属对象</label>
+                        <input class="input" value="员工A" />
+                      </div>
+                      <div class="field">
+                        <label>提成金额</label>
+                        <input class="input" value="1,000.00" />
+                      </div>
+                    </div>
+                    <div class="tipbox" style="margin-top: 12px">
+                      提成金额由超级管理员主观填写，可随时修改。系统只保存所属对象和金额，不计算比例、付款状态或触发条件。
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>合同摘要</h2>
+                    <span class="tag blue">待确认</span>
+                  </div>
+                  <div class="card-body summary-list">
+                    <div class="summary-row">
+                      <span>房源</span><b>1栋301</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>主承租人</span><b>张三</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>最长租期</span><b>12个月</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>计价方式</span><b>自定义阶梯</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>初始月租</span><b class="money-blue">¥1,100.00</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>押金</span><b>¥2,200.00</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>租房提成</span
+                      ><b style="color: #6848c2">员工A · ¥1,000</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>
+                      账单价格预览
+                      <span
+                        class="help"
+                        data-tip="确认合同后将按最终档位生成全租期账单，并保存每期价格快照。"
+                        >?</span
+                      >
+                    </h2>
+                  </div>
+                  <div class="card-body">
+                    <div class="preview-period">
+                      <span class="period">1期 ¥1100</span
+                      ><span class="period">2期 ¥1100</span
+                      ><span class="period">3期 ¥1100</span
+                      ><span class="period p2">4期 ¥1000</span
+                      ><span class="period p2">5期 ¥1000</span
+                      ><span class="period p2">6期 ¥1000</span
+                      ><span class="period p3">7–12期 ¥900</span>
+                    </div>
+                    <div class="tipbox" style="margin-top: 12px">
+                      预计生成12张租金账单。提前退租时，作废退租日之后的未来账单。
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" id="page-detail">
+            <div class="status-banner">
+              <div>
+                <h1>HT2026080001 · 1栋301</h1>
+                <p>张三｜合同期 2026-08-01 至 2027-07-31</p>
+              </div>
+              <div><span class="tag">履行中</span></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1>合同详情</h1>
+                <p>自定义弹性阶梯计价合同</p>
+              </div>
+              <div class="actions">
+                <button class="btn">打印合同</button
+                ><button class="btn">合同变更</button
+                ><button class="btn soft">登记收款</button
+                ><button class="btn danger">发起退租</button>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric"><span>当前档位</span><b>季租档</b></div>
+              <div class="metric">
+                <span>当前月租</span><b class="money-blue">¥1,000</b>
+              </div>
+              <div class="metric"><span>连续完整账期</span><b>4个月</b></div>
+              <div class="metric">
+                <span>下一档预计达标</span><b>2027-02-01</b>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <div class="card">
+                  <div class="tabs">
+                    <span class="active">价格阶梯</span><span>租金账单</span
+                    ><span>收款记录</span><span>合同成员</span><span>附件</span
+                    ><span>操作日志</span>
+                  </div>
+                  <div class="card-body">
+                    <div class="timeline">
+                      <div class="step done">
+                        <i>✓</i><b>短月租</b><span>1个月 · ¥1100</span>
+                      </div>
+                      <div class="step current">
+                        <i>2</i><b>季租档</b><span>3个月 · ¥1000</span>
+                      </div>
+                      <div class="step">
+                        <i>3</i><b>半年档</b><span>6个月 · ¥900</span>
+                      </div>
+                      <div class="step">
+                        <i>4</i><b>年租档</b><span>12个月 · ¥800</span>
+                      </div>
+                    </div>
+                    <table class="tier-table">
+                      <thead>
+                        <tr>
+                          <th>档位</th>
+                          <th>达标月数</th>
+                          <th>合同月租</th>
+                          <th>状态</th>
+                          <th>达标日期</th>
+                          <th>实际退差</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>短月租</td>
+                          <td>1个月</td>
+                          <td>¥1,100</td>
+                          <td><span class="tag green">已完成</span></td>
+                          <td>2026-09-01</td>
+                          <td>—</td>
+                        </tr>
+                        <tr>
+                          <td>季租档</td>
+                          <td>3个月</td>
+                          <td>¥1,000</td>
+                          <td><span class="tag blue">当前档位</span></td>
+                          <td>2026-11-01</td>
+                          <td><span class="link">¥200（查看）</span></td>
+                        </tr>
+                        <tr>
+                          <td>半年档</td>
+                          <td>6个月</td>
+                          <td>¥900</td>
+                          <td><span class="tag orange">预计2个月后</span></td>
+                          <td>2027-02-01</td>
+                          <td>待达标</td>
+                        </tr>
+                        <tr>
+                          <td>年租档</td>
+                          <td>12个月</td>
+                          <td>¥800</td>
+                          <td><span class="tag gray">未达标</span></td>
+                          <td>2027-08-01</td>
+                          <td>—</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>退差记录</h2>
+                    <button class="btn soft">＋ 登记补充退差</button>
+                  </div>
+                  <div class="card-body history">
+                    <div class="history-item">
+                      <span>2026-11-01</span>
+                      <div>
+                        <b>季租档达标退差</b>
+                        <div class="muted" style="font-size: 11px">
+                          参考¥300 · 实际¥200 · 原因：双方协商减免部分退差
+                        </div>
+                      </div>
+                      <span class="tag green">已退款</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head"><h2>财务概况</h2></div>
+                  <div class="card-body summary-list">
+                    <div class="summary-row">
+                      <span>累计应收</span><b>¥4,300</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>累计实收</span><b class="money-blue">¥4,300</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>累计实际退差</span><b>¥200</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>预收款余额</span><b>¥0</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>押金余额</span><b>¥2,200</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>租房提成</span
+                      ><b style="color: #6848c2">员工A · ¥1,000</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>下一档提醒</h2>
+                    <span class="tag orange">待达标</span>
+                  </div>
+                  <div class="card-body">
+                    <b style="font-size: 17px">半年档 · 月租¥900</b>
+                    <p class="muted">
+                      还需连续租住2个完整账期，并结清对应账单。
+                    </p>
+                    <div class="tipbox">
+                      系统参考退差将在达标时计算，实际退差金额由管理员根据协商结果填写。
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" id="page-rebate">
+            <div class="page-head">
+              <div>
+                <h1>阶梯退差确认</h1>
+                <p>TD2026110001｜合同HT2026080001｜1栋301</p>
+              </div>
+              <div><span class="tag orange">待超级管理员确认</span></div>
+            </div>
+            <div class="approval-grid">
+              <div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>达标核验</h2>
+                    <span class="tag green">系统校验通过</span>
+                  </div>
+                  <div class="card-body">
+                    <div class="checklist">
+                      <div class="check">✓ 连续租住满3个月</div>
+                      <div class="check">✓ 前3期账单已结清</div>
+                      <div class="check">✓ 合同状态为履行中</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>
+                      金额核对
+                      <span
+                        class="help"
+                        data-tip="参考金额仅用于核对，实际退差由管理员按真实协商结果录入。两者不同必须填写原因。"
+                        >?</span
+                      >
+                    </h2>
+                    <small>金额单位：人民币元</small>
+                  </div>
+                  <div class="card-body">
+                    <div class="comparison">
+                      <div class="compare-box">
+                        <span>系统参考退差</span><b>¥300.00</b>
+                      </div>
+                      <div class="compare-box actual">
+                        <span>管理员录入实际退差</span
+                        ><b class="money-blue">¥200.00</b>
+                      </div>
+                      <div class="compare-box diff">
+                        <span>与参考值差额</span
+                        ><b style="color: #c46d14">-¥100.00</b>
+                      </div>
+                    </div>
+                    <div class="reason" style="margin-top: 12px">
+                      <b>差异原因：</b
+                      >租客同意其中100元不退，本次双方协商实际退还200元。
+                    </div>
+                    <table class="bill-list" style="margin-top: 14px">
+                      <thead>
+                        <tr>
+                          <th>账期</th>
+                          <th>账单金额</th>
+                          <th>实收</th>
+                          <th>状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>2026-08-01 ～ 08-31</td>
+                          <td>¥1,100</td>
+                          <td>¥1,100</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                        <tr>
+                          <td>2026-09-01 ～ 09-30</td>
+                          <td>¥1,100</td>
+                          <td>¥1,100</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                        <tr>
+                          <td>2026-10-01 ～ 10-31</td>
+                          <td>¥1,100</td>
+                          <td>¥1,100</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><h2>退差处理</h2></div>
+                  <div class="card-body">
+                    <div class="segment" style="margin-bottom: 14px">
+                      <button class="active" data-method="refund">
+                        实际退款</button
+                      ><button data-method="credit">转为预收款</button>
+                    </div>
+                    <div id="refundFields">
+                      <div class="form-grid">
+                        <div class="field">
+                          <label class="req">退款日期</label
+                          ><input class="input" value="2026-11-02" />
+                        </div>
+                        <div class="field">
+                          <label class="req">退款方式</label
+                          ><select class="input">
+                            <option>微信</option>
+                            <option>银行转账</option>
+                            <option>支付宝</option>
+                            <option>现金</option>
+                          </select>
+                        </div>
+                        <div class="field">
+                          <label>备注</label
+                          ><input class="input" value="季租档实际退差" />
+                        </div>
+                      </div>
+                      <div class="field" style="margin-top: 14px">
+                        <label class="req">退款凭证</label>
+                        <div class="proof">
+                          <div class="proof-thumb">交易截图</div>
+                          <div>
+                            <b>refund_20261102.jpg</b>
+                            <div class="muted" style="font-size: 11px">
+                              1.2MB · 管理员A上传 · 等待确认后锁定
+                            </div>
+                          </div>
+                          <span class="link" style="margin-left: auto"
+                            >查看大图</span
+                          >
+                        </div>
+                      </div>
+                    </div>
+                    <div id="creditFields" class="hidden">
+                      <div class="tipbox">
+                        确认后将¥200.00写入本合同预收款，自动抵扣下一张到期账单，无需上传退款截图。
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head"><h2>审批信息</h2></div>
+                  <div class="card-body summary-list">
+                    <div class="summary-row">
+                      <span>提交人</span><b>管理员A</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>提交时间</span><b>2026-11-02 10:28</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>处理方式</span><b>实际退款</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>实际金额</span><b class="money-blue">¥200.00</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><h2>超级管理员意见</h2></div>
+                  <div class="card-body">
+                    <div class="field">
+                      <label>确认或驳回意见</label
+                      ><textarea
+                        class="textarea"
+                        placeholder="可填写审核意见"
+                      ></textarea>
+                    </div>
+                    <div class="audit" style="margin-top: 12px">
+                      确认后将生成财务流水、锁定退款凭证，并记录不可删除的安全审计日志。
+                    </div>
+                    <div class="sticky-approve">
+                      <button class="btn danger">驳回</button
+                      ><button class="btn primary">确认退差</button>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" id="page-fixed-detail">
+            <div class="status-banner">
+              <div>
+                <h1>HT2026080002 · 1栋302</h1>
+                <p>李四｜合同期 2026-08-01 至 2027-07-31</p>
+              </div>
+              <div><span class="tag">履行中</span></div>
+            </div>
+            <div class="page-head">
+              <div>
+                <h1>固定月租合同详情</h1>
+                <p>合同约定每月缴租，实际收款可一次覆盖多个账期</p>
+              </div>
+              <div class="actions">
+                <button class="btn">打印合同</button
+                ><button class="btn">合同变更</button
+                ><button class="btn soft">登记收款</button
+                ><button class="btn danger">发起退租</button>
+              </div>
+            </div>
+            <div class="metrics">
+              <div class="metric">
+                <span>固定月租</span><b class="money-blue">¥1,200</b>
+              </div>
+              <div class="metric"><span>约定租缴周期</span><b>1个月</b></div>
+              <div class="metric"><span>已缴至</span><b>2027-01-31</b></div>
+              <div class="metric">
+                <span>下次应缴日期</span><b>2027-02-01</b>
+              </div>
+            </div>
+            <div class="grid">
+              <div>
+                <div class="card">
+                  <div class="tabs">
+                    <span>合同概况</span><span>租金账单</span
+                    ><span class="active">收款记录</span><span>合同成员</span
+                    ><span>附件</span><span>操作日志</span>
+                  </div>
+                  <div class="card-body">
+                    <div class="tipbox" style="margin-bottom: 13px">
+                      <b>本例：</b
+                      >合同租缴周期仍为1个月。租客首月支付1个月，第二个月支付¥6,000，一笔收款分配至第2—6个月的5张月账单，合同约定不变。
+                    </div>
+                    <table class="bill-list">
+                      <thead>
+                        <tr>
+                          <th>收款日期</th>
+                          <th>收款单号</th>
+                          <th>金额</th>
+                          <th>覆盖账期</th>
+                          <th>支付方式</th>
+                          <th>状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>2026-08-01</td>
+                          <td>SK2026080008</td>
+                          <td>¥1,200</td>
+                          <td>2026-08（1个月）</td>
+                          <td>微信</td>
+                          <td><span class="tag green">已确认</span></td>
+                        </tr>
+                        <tr>
+                          <td>2026-09-01</td>
+                          <td>SK2026090012</td>
+                          <td><b class="money-blue">¥6,000</b></td>
+                          <td>2026-09 ～ 2027-01（5个月）</td>
+                          <td>银行转账</td>
+                          <td><span class="tag green">已确认</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>
+                      收款 SK2026090012 分配明细
+                      <span
+                        class="help"
+                        data-tip="一笔收款可以分配到多张账单。默认先冲抵最早到期的欠款；超过已选账单应收的部分进入预收款。"
+                        >?</span
+                      >
+                    </h2>
+                    <span class="tag blue">共覆盖5个月</span>
+                  </div>
+                  <div class="card-body">
+                    <table class="bill-list">
+                      <thead>
+                        <tr>
+                          <th>顺序</th>
+                          <th>租金账期</th>
+                          <th>账单应收</th>
+                          <th>本次分配</th>
+                          <th>账单状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>1</td>
+                          <td>2026-09-01 ～ 09-30</td>
+                          <td>¥1,200</td>
+                          <td>¥1,200</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                        <tr>
+                          <td>2</td>
+                          <td>2026-10-01 ～ 10-31</td>
+                          <td>¥1,200</td>
+                          <td>¥1,200</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                        <tr>
+                          <td>3</td>
+                          <td>2026-11-01 ～ 11-30</td>
+                          <td>¥1,200</td>
+                          <td>¥1,200</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                        <tr>
+                          <td>4</td>
+                          <td>2026-12-01 ～ 12-31</td>
+                          <td>¥1,200</td>
+                          <td>¥1,200</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                        <tr>
+                          <td>5</td>
+                          <td>2027-01-01 ～ 01-31</td>
+                          <td>¥1,200</td>
+                          <td>¥1,200</td>
+                          <td><span class="tag green">已结清</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head"><h2>合同财务概况</h2></div>
+                  <div class="card-body summary-list">
+                    <div class="summary-row">
+                      <span>计价方式</span><b>固定月租</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>累计应收</span><b>¥7,200</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>累计实收</span><b class="money-blue">¥7,200</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>预收款余额</span><b>¥0</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>押金余额</span><b>¥2,400</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>租房提成</span
+                      ><b style="color: #6848c2">中介王某 · ¥800</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><h2>口径说明</h2></div>
+                  <div class="card-body">
+                    <div class="tipbox">
+                      “租缴周期”决定合同约定多久应缴一次；“本次覆盖账期”决定这一笔钱实际冲抵哪些账单。二者独立，提前多缴不会把合同改成5个月一缴。
+                    </div>
+                    <p class="muted" style="font-size: 11px">
+                      若未来各月金额不同，收款金额按所选账单实际应收合计；多余金额转入预收款。
+                    </p>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="page" id="page-fixed-rebate">
+            <div class="page-head">
+              <div>
+                <h1>固定月租合同退差确认</h1>
+                <p>TD2026120003｜合同HT2026080002｜1栋302</p>
+              </div>
+              <div><span class="tag orange">待超级管理员确认</span></div>
+            </div>
+            <div class="approval-grid">
+              <div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>退差核验</h2>
+                    <span class="tag green">系统校验通过</span>
+                  </div>
+                  <div class="card-body">
+                    <div class="checklist">
+                      <div class="check">✓ 合同处于履行中</div>
+                      <div class="check">✓ 涉及账单已结清</div>
+                      <div class="check">✓ 退差不超过有效实收</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h2>
+                      金额与原因
+                      <span
+                        class="help"
+                        data-tip="固定月租没有阶梯达标价，系统不自动计算应退差额；管理员依据真实协商填写，超级管理员核对确认。"
+                        >?</span
+                      >
+                    </h2>
+                    <small>本页用于合同履行中的协商退差</small>
+                  </div>
+                  <div class="card-body">
+                    <div class="comparison">
+                      <div class="compare-box">
+                        <span>系统参考退差</span><b>—</b
+                        ><small class="muted">固定月租不自动计算</small>
+                      </div>
+                      <div class="compare-box actual">
+                        <span>管理员录入实际退差</span
+                        ><b class="money-blue">¥400.00</b>
+                      </div>
+                      <div class="compare-box diff">
+                        <span>退差性质</span
+                        ><b style="font-size: 17px; color: #c46d14">手工协商</b>
+                      </div>
+                    </div>
+                    <div class="reason" style="margin-top: 12px">
+                      <b>退差原因：</b
+                      >2026年11月房屋维修影响正常使用，双方协商退还租金400元。
+                    </div>
+                    <table class="bill-list" style="margin-top: 14px">
+                      <thead>
+                        <tr>
+                          <th>涉及账期</th>
+                          <th>账单金额</th>
+                          <th>有效实收</th>
+                          <th>本次关联</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>2026-11-01 ～ 11-30</td>
+                          <td>¥1,200</td>
+                          <td>¥1,200</td>
+                          <td>¥400</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div class="tipbox" style="margin-top: 12px">
+                      如果只是收款登记错误，应进入“收款退款/作废重录”流程，不应登记为合同退差。
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><h2>退差处理</h2></div>
+                  <div class="card-body">
+                    <div class="segment" style="margin-bottom: 14px">
+                      <button class="active">实际退款</button
+                      ><button>转为预收款</button>
+                    </div>
+                    <div class="form-grid">
+                      <div class="field">
+                        <label class="req">退款日期</label
+                        ><input class="input" value="2026-12-06" />
+                      </div>
+                      <div class="field">
+                        <label class="req">退款方式</label
+                        ><select class="input">
+                          <option>微信</option>
+                          <option>银行转账</option>
+                          <option>支付宝</option>
+                          <option>现金</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label>备注</label
+                        ><input class="input" value="维修影响使用协商退差" />
+                      </div>
+                    </div>
+                    <div class="field" style="margin-top: 14px">
+                      <label class="req">退款凭证</label>
+                      <div class="proof">
+                        <div class="proof-thumb">交易截图</div>
+                        <div>
+                          <b>fixed_rebate_20261206.jpg</b>
+                          <div class="muted" style="font-size: 11px">
+                            管理员A上传 · 确认后锁定
+                          </div>
+                        </div>
+                        <span class="link" style="margin-left: auto"
+                          >查看大图</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <aside>
+                <div class="card">
+                  <div class="card-head"><h2>审批信息</h2></div>
+                  <div class="card-body summary-list">
+                    <div class="summary-row">
+                      <span>提交人</span><b>管理员A</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>提交时间</span><b>2026-12-06 14:20</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>处理方式</span><b>实际退款</b>
+                    </div>
+                    <div class="summary-row">
+                      <span>实际金额</span><b class="money-blue">¥400.00</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><h2>超级管理员意见</h2></div>
+                  <div class="card-body">
+                    <div class="field">
+                      <label>确认或驳回意见</label
+                      ><textarea
+                        class="textarea"
+                        placeholder="可填写审核意见"
+                      ></textarea>
+                    </div>
+                    <div class="audit" style="margin-top: 12px">
+                      确认后生成独立退差流水，不修改原账单或原收款；退款凭证和安全审计记录将被锁定。
+                    </div>
+                    <div class="sticky-approve">
+                      <button class="btn danger">驳回</button
+                      ><button class="btn primary">确认退差</button>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script>
+      const names = {
+        create: "新增合同",
+        detail: "阶梯合同详情",
+        rebate: "阶梯退差确认",
+        "fixed-detail": "固定月租合同详情",
+        "fixed-rebate": "固定月租退差确认",
+      };
+      document.querySelectorAll(".prototype-switch button").forEach(
+        (b) =>
+          (b.onclick = () => {
+            document
+              .querySelectorAll(".prototype-switch button")
+              .forEach((x) => x.classList.remove("active"));
+            document
+              .querySelectorAll(".page")
+              .forEach((x) => x.classList.remove("active"));
+            b.classList.add("active");
+            document
+              .getElementById("page-" + b.dataset.page)
+              .classList.add("active");
+            document.getElementById("crumbTitle").textContent =
+              names[b.dataset.page];
+            scrollTo({ top: 0, behavior: "smooth" });
+          }),
+      );
+      document.querySelectorAll("[data-pricing]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            document
+              .querySelectorAll("[data-pricing]")
+              .forEach((x) => x.classList.remove("active"));
+            b.classList.add("active");
+            document
+              .getElementById("tieredPricing")
+              .classList.toggle("hidden", b.dataset.pricing !== "tiered");
+            document
+              .getElementById("fixedPricing")
+              .classList.toggle("hidden", b.dataset.pricing !== "fixed");
+          }),
+      );
+      function renumber() {
+        document
+          .querySelectorAll("#tierRows tr")
+          .forEach((r, i) => (r.cells[0].textContent = i + 1));
+      }
+      document.getElementById("addTier").onclick = () => {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          '<td></td><td><input class="input" placeholder="自定义档位"></td><td><input class="input n" value=""></td><td><input class="input money" value=""></td><td><span class="switch"></span>是</td><td><span class="link delete-tier">删除</span></td>';
+        document.getElementById("tierRows").appendChild(tr);
+        renumber();
+      };
+      document.getElementById("tierRows").onclick = (e) => {
+        if (e.target.classList.contains("delete-tier")) {
+          e.target.closest("tr").remove();
+          renumber();
+        }
+      };
+      document.querySelectorAll("[data-method]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            document
+              .querySelectorAll("[data-method]")
+              .forEach((x) => x.classList.remove("active"));
+            b.classList.add("active");
+            document
+              .getElementById("refundFields")
+              .classList.toggle("hidden", b.dataset.method !== "refund");
+            document
+              .getElementById("creditFields")
+              .classList.toggle("hidden", b.dataset.method !== "credit");
+          }),
+      );
+      if (location.hash === "#commission") {
+        document.querySelector('[data-page="create"]').click();
+        requestAnimationFrame(() =>
+          document
+            .getElementById("commission-create-card")
+            .scrollIntoView({ block: "center" }),
+        );
+      }
+    </script>
+  </body>
+</html>

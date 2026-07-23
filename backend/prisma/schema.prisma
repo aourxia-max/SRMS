@@ -1,0 +1,937 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  VISITOR
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  LOCKED
+}
+enum BuildingStatus {
+  ACTIVE
+  DISABLED
+}
+enum RoomType {
+  RESIDENTIAL
+  SHOP
+}
+enum DecorationStatus {
+  RENOVATED
+  UNRENOVATED
+  RENOVATING
+  UNKNOWN
+}
+enum UsageType {
+  RESIDENCE
+  SHOP
+  OFFICE
+  STORAGE
+  OTHER
+}
+enum RoomStatus {
+  EMPTY
+  PENDING_MOVE_IN
+  RENTED
+  PENDING_CHECKOUT
+  MAINTENANCE
+  FOR_SALE
+  SOLD
+  DISABLED
+  OTHER
+}
+enum TenantType {
+  INDIVIDUAL
+  COMPANY
+}
+enum TenantStatus {
+  ACTIVE
+  INACTIVE
+}
+enum FileCategory {
+  TENANT_ID
+  CONTRACT
+  PAYMENT_PROOF
+  DEPOSIT_REFUND_PROOF
+  PRICING_REBATE_PROOF
+  IMPORT
+  EXPORT
+  BACKUP
+  FINANCE_EXPORT
+}
+
+enum ExportTaskStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum ExportFormat {
+  XLSX
+  PDF
+}
+enum ContractStatus {
+  DRAFT
+  PENDING_START
+  ACTIVE
+  PENDING_CHECKOUT
+  ENDED
+  VOIDED
+}
+enum PricingMode {
+  FIXED
+  TIERED_RETROACTIVE
+}
+enum ContractMemberRole {
+  PRIMARY
+  SECONDARY
+}
+enum RentBillStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  VOIDED
+  REFUNDED
+}
+enum ConcessionType {
+  RENT_FREE
+  FIXED_AMOUNT
+  PERCENTAGE
+}
+enum ConcessionApplyMode {
+  DATE_RANGE
+  ONE_TIME
+  BILLING_PERIODS
+}
+enum ConcessionStatus {
+  ACTIVE
+  CANCELLED
+}
+enum ApprovalStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+enum PaymentCategory {
+  RENT
+  PREPAYMENT
+  DEPOSIT
+}
+enum PaymentMethod {
+  WECHAT
+  ALIPAY
+  BANK_TRANSFER
+  CASH
+  POS
+  OTHER
+}
+enum PaymentStatus {
+  CONFIRMED
+  VOIDED
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
+}
+enum PrepaymentTransactionType {
+  CREDIT_RECEIPT
+  DEBIT_TO_BILL
+  REFUND
+  TRANSFER_OUT
+  TRANSFER_IN
+  REVERSAL
+  ADJUSTMENT
+}
+enum BillAdjustmentType {
+  DISCOUNT
+  WAIVER
+  INCREASE
+  CORRECTION
+}
+enum AdjustmentDirection {
+  DECREASE
+  INCREASE
+}
+enum PricingRebateSourceType {
+  TIER_MILESTONE
+  FIXED_RENT_MANUAL
+}
+enum PricingRebateType {
+  MILESTONE
+  MANUAL
+  SUPPLEMENT
+}
+enum PricingRebateSettlementMethod {
+  ACTUAL_REFUND
+  PREPAYMENT_CREDIT
+}
+enum DepositTransactionType {
+  RECEIPT
+  OFFSET_ARREARS
+  OFFSET_SETTLEMENT
+  REFUND
+  REVERSAL
+  ADJUSTMENT
+}
+enum CheckoutSettlementStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+enum CheckoutSettlementItemType {
+  RENT_ARREARS
+  DAMAGE
+  REPAIR
+  CLEANING
+  OTHER
+}
+
+enum SettingValueType {
+  STRING
+  INTEGER
+  BOOLEAN
+  JSON
+}
+
+enum BackupType {
+  MANUAL
+  DAILY
+  PRE_RESTORE
+}
+
+enum BackupStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum RestoreStatus {
+  NOT_REQUESTED
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model User {
+  id                 Int          @id @default(autoincrement()) @db.UnsignedInt
+  username           String       @unique @db.VarChar(50)
+  passwordHash       String       @map("password_hash") @db.VarChar(255)
+  displayName        String       @map("display_name") @db.VarChar(50)
+  role               UserRole
+  phone              String?      @db.VarChar(30)
+  status             UserStatus   @default(ACTIVE)
+  failedLoginCount   Int          @default(0) @map("failed_login_count")
+  lockedUntil        DateTime?    @map("locked_until") @db.DateTime(3)
+  lastLoginAt        DateTime?    @map("last_login_at") @db.DateTime(3)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  createdBy          Int?         @map("created_by") @db.UnsignedInt
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.DateTime(3)
+  updatedBy          Int?         @map("updated_by") @db.UnsignedInt
+  deletedAt          DateTime?    @map("deleted_at") @db.DateTime(3)
+  deletedBy          Int?         @map("deleted_by") @db.UnsignedInt
+  version            Int          @default(1)
+  refreshTokens      AuthRefreshToken[]
+  preference         UserPreference?
+  securityAudits     SecurityAuditLog[]
+  uploadedFiles      FileAsset[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model Tenant {
+  id                 Int          @id @default(autoincrement()) @db.UnsignedInt
+  tenantType         TenantType   @default(INDIVIDUAL) @map("tenant_type")
+  name               String       @db.VarChar(100)
+  phone              String?      @db.VarChar(30)
+  idType             String?      @map("id_type") @db.VarChar(50)
+  idNoCiphertext     String?      @map("id_no_ciphertext") @db.Text
+  idNoHash           String?      @map("id_no_hash") @db.Char(64)
+  idNoLast4          String?      @map("id_no_last4") @db.Char(4)
+  contactAddress     String?      @map("contact_address") @db.VarChar(300)
+  status             TenantStatus @default(ACTIVE)
+  remark             String?      @db.VarChar(500)
+  files              TenantFile[]
+  contractMembers    ContractMember[]
+
+  @@index([name, status])
+  @@index([phone])
+  @@index([idNoHash])
+  @@map("tenants")
+}
+
+model FileAsset {
+  id           Int          @id @default(autoincrement()) @db.UnsignedInt
+  storageKey   String       @unique @map("storage_key") @db.VarChar(500)
+  originalName String       @map("original_name") @db.VarChar(255)
+  storedName   String       @map("stored_name") @db.VarChar(255)
+  mimeType     String       @map("mime_type") @db.VarChar(100)
+  extension    String       @db.VarChar(20)
+  sizeBytes    BigInt       @map("size_bytes") @db.UnsignedBigInt
+  sha256       String       @db.Char(64)
+  category     FileCategory
+  uploadedBy   Int          @map("uploaded_by") @db.UnsignedInt
+  uploadedAt   DateTime     @default(now()) @map("uploaded_at") @db.DateTime(3)
+  lockedAt     DateTime?    @map("locked_at") @db.DateTime(3)
+  uploader     User         @relation(fields: [uploadedBy], references: [id], onDelete: Restrict)
+  tenantFiles  TenantFile[]
+  pricingRebateFiles PricingRebateFile[]
+  depositRefundFiles DepositRefundFile[]
+  checkoutSettlementItemFiles CheckoutSettlementItemFile[]
+
+  @@index([category, uploadedAt])
+  @@map("file_assets")
+}
+
+model TenantFile {
+  tenantId    Int       @map("tenant_id") @db.UnsignedInt
+  fileAssetId Int       @map("file_asset_id") @db.UnsignedInt
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  fileAsset   FileAsset @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@id([tenantId, fileAssetId])
+  @@map("tenant_files")
+}
+
+model SecurityAuditLog {
+  id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  eventType    String   @map("event_type") @db.VarChar(80)
+  entityType   String   @map("entity_type") @db.VarChar(50)
+  entityId     Int?     @map("entity_id") @db.UnsignedInt
+  operatorId   Int      @map("operator_id") @db.UnsignedInt
+  eventData    Json     @map("event_data")
+  reason       String?  @db.VarChar(500)
+  previousHash String?  @map("previous_hash") @db.Char(64)
+  recordHash   String?  @map("record_hash") @db.Char(64)
+  occurredAt   DateTime @default(now()) @map("occurred_at") @db.DateTime(3)
+  operator     User     @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  @@index([operatorId, occurredAt])
+  @@index([eventType, occurredAt])
+  @@map("security_audit_logs")
+}
+
+model SystemSetting {
+  id           Int              @id @default(autoincrement()) @db.UnsignedInt
+  settingKey   String           @unique @map("setting_key") @db.VarChar(80)
+  settingValue Json             @map("setting_value")
+  valueType    SettingValueType @map("value_type")
+  description  String           @db.VarChar(255)
+  updatedBy    Int?             @map("updated_by") @db.UnsignedInt
+  createdAt    DateTime         @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@map("system_settings")
+}
+
+model OperationLog {
+  id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  module       String   @db.VarChar(50)
+  action       String   @db.VarChar(80)
+  entityType   String   @map("entity_type") @db.VarChar(50)
+  entityId     Int?     @map("entity_id") @db.UnsignedInt
+  entityNo     String?  @map("entity_no") @db.VarChar(100)
+  summary      String   @db.VarChar(500)
+  beforeData   Json?    @map("before_data")
+  afterData    Json?    @map("after_data")
+  reason       String?  @db.VarChar(500)
+  operatorId   Int      @map("operator_id") @db.UnsignedInt
+  operatorRole UserRole @map("operator_role")
+  ipAddress    String?  @map("ip_address") @db.VarChar(45)
+  userAgent    String?  @map("user_agent") @db.VarChar(500)
+  isHidden     Boolean  @default(false) @map("is_hidden")
+  hiddenBy     Int?     @map("hidden_by") @db.UnsignedInt
+  hiddenAt     DateTime? @map("hidden_at") @db.DateTime(3)
+  hiddenReason String?  @map("hidden_reason") @db.VarChar(500)
+  occurredAt   DateTime @default(now()) @map("occurred_at") @db.DateTime(3)
+
+  @@index([operatorId, occurredAt])
+  @@index([module, occurredAt])
+  @@index([isHidden, occurredAt])
+  @@map("operation_logs")
+}
+
+model BackupRecord {
+  id               Int           @id @default(autoincrement()) @db.UnsignedInt
+  backupNo         String        @unique @map("backup_no") @db.VarChar(50)
+  backupType       BackupType    @map("backup_type")
+  status           BackupStatus  @default(PENDING)
+  databasePath     String?       @map("database_path") @db.VarChar(500)
+  manifestPath     String?       @map("manifest_path") @db.VarChar(500)
+  sizeBytes        BigInt?       @map("size_bytes") @db.UnsignedBigInt
+  checksum         String?       @db.Char(64)
+  failureReason    String?       @map("failure_reason") @db.VarChar(500)
+  retentionUntil   DateTime      @map("retention_until") @db.DateTime(3)
+  createdBy        Int?          @map("created_by") @db.UnsignedInt
+  startedAt        DateTime?     @map("started_at") @db.DateTime(3)
+  completedAt      DateTime?     @map("completed_at") @db.DateTime(3)
+  restoreStatus    RestoreStatus @default(NOT_REQUESTED) @map("restore_status")
+  restoredBy       Int?          @map("restored_by") @db.UnsignedInt
+  restoredAt       DateTime?     @map("restored_at") @db.DateTime(3)
+  restoreReason    String?       @map("restore_reason") @db.VarChar(500)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@index([status, createdAt])
+  @@map("backup_records")
+}
+
+model ExportTask {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  taskNo String @unique @map("task_no") @db.VarChar(50)
+  reportType String @map("report_type") @db.VarChar(50)
+  exportFormat ExportFormat @map("export_format")
+  filters Json @map("filters")
+  status ExportTaskStatus @default(PENDING)
+  fileAssetId Int? @map("file_asset_id") @db.UnsignedInt
+  failureReason String? @map("failure_reason") @db.VarChar(500)
+  createdBy Int @map("created_by") @db.UnsignedInt
+  startedAt DateTime? @map("started_at") @db.DateTime(3)
+  completedAt DateTime? @map("completed_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  @@index([createdBy, createdAt])
+  @@index([status, createdAt])
+  @@map("export_tasks")
+}
+
+model AuthRefreshToken {
+  id          Int       @id @default(autoincrement()) @db.UnsignedInt
+  userId      Int       @map("user_id") @db.UnsignedInt
+  tokenHash   String    @map("token_hash") @db.VarChar(255)
+  expiresAt   DateTime  @map("expires_at") @db.DateTime(3)
+  revokedAt   DateTime? @map("revoked_at") @db.DateTime(3)
+  ipAddress   String?   @map("ip_address") @db.VarChar(45)
+  userAgent   String?   @map("user_agent") @db.VarChar(500)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, expiresAt])
+  @@map("auth_refresh_tokens")
+}
+
+model UserPreference {
+  id                    Int      @id @default(autoincrement()) @db.UnsignedInt
+  userId                Int      @unique @map("user_id") @db.UnsignedInt
+  dashboardBuildingId   Int?     @map("dashboard_building_id") @db.UnsignedInt
+  dashboardRoomStatuses Json?    @map("dashboard_room_statuses")
+  dashboardMonthMode    String   @default("CURRENT_MONTH") @map("dashboard_month_mode") @db.VarChar(20)
+  createdAt             DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model Building {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  buildingNo String @unique @map("building_no") @db.VarChar(20)
+  buildingName String? @map("building_name") @db.VarChar(100)
+  floorCount Int @map("floor_count")
+  sortOrder Int @default(0) @map("sort_order")
+  status BuildingStatus @default(ACTIVE)
+  remark String? @db.VarChar(500)
+  rooms Room[]
+  @@map("buildings")
+}
+model Room {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  buildingId Int @map("building_id") @db.UnsignedInt
+  houseNo String @map("house_no") @db.VarChar(30)
+  fullHouseNo String @map("full_house_no") @db.VarChar(60)
+  floorNo Int @map("floor_no")
+  roomType RoomType @default(RESIDENTIAL) @map("room_type")
+  area Decimal? @db.Decimal(10,2)
+  decorationStatus DecorationStatus @default(UNKNOWN) @map("decoration_status")
+  usageType UsageType @map("usage_type")
+  roomStatus RoomStatus @default(EMPTY) @map("room_status")
+  statusChangedAt DateTime @default(now()) @map("status_changed_at") @db.DateTime(3)
+  ownerName String? @map("owner_name") @db.VarChar(100)
+  ownerPhone String? @map("owner_phone") @db.VarChar(30)
+  ownerRemark String? @map("owner_remark") @db.VarChar(500)
+  remark String? @db.VarChar(500)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(3)
+  building Building @relation(fields:[buildingId], references:[id], onDelete:Restrict)
+  histories RoomStatusHistory[]
+  contracts Contract[]
+  @@unique([buildingId, houseNo])
+  @@index([buildingId, floorNo, houseNo])
+  @@index([roomStatus, deletedAt])
+  @@map("rooms")
+}
+model Contract {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractNo String @unique @map("contract_no") @db.VarChar(40)
+  roomId Int @map("room_id") @db.UnsignedInt
+  startDate DateTime @map("start_date") @db.Date
+  endDate DateTime @map("end_date") @db.Date
+  plannedMoveInDate DateTime? @map("planned_move_in_date") @db.Date
+  monthlyRent Decimal @map("monthly_rent") @db.Decimal(14,2)
+  pricingMode PricingMode @map("pricing_mode")
+  paymentCycleMonths Int @default(1) @map("payment_cycle_months") @db.UnsignedTinyInt
+  depositRequired Decimal @default(0) @map("deposit_required") @db.Decimal(14,2)
+  status ContractStatus @default(DRAFT)
+  billingGeneratedAt DateTime? @map("billing_generated_at") @db.DateTime(3)
+  paidThroughDate DateTime? @map("paid_through_date") @db.Date
+  nextDueDate DateTime? @map("next_due_date") @db.Date
+  qualifiedMonths Int @default(0) @map("qualified_months")
+  nextTierDate DateTime? @map("next_tier_date") @db.Date
+  currentPricingTierId Int? @map("current_pricing_tier_id") @db.UnsignedInt
+  remark String? @db.VarChar(1000)
+  room Room @relation(fields:[roomId], references:[id], onDelete:Restrict)
+  members ContractMember[]
+  pricingTiers ContractPricingTier[]
+  bills RentBill[]
+  concessions ContractConcession[]
+  changes ContractChange[]
+  payments Payment[]
+  refunds PaymentRefund[]
+  prepaymentTransactions PrepaymentTransaction[]
+  pricingRebates PricingRebate[]
+  depositTransactions DepositTransaction[]
+  checkoutSettlements CheckoutSettlement[]
+  depositRefunds DepositRefund[]
+  commissions ContractCommission[]
+  currentPricingTier ContractPricingTier? @relation("ContractCurrentPricingTier", fields:[currentPricingTierId], references:[id], onDelete:Restrict)
+  @@index([roomId, startDate, endDate, status])
+  @@index([status, nextDueDate])
+  @@map("contracts")
+}
+model ContractCommission {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  recipientName String @map("recipient_name") @db.VarChar(120)
+  amount Decimal @db.Decimal(14,2)
+  createdBy Int @map("created_by") @db.UnsignedInt
+  updatedBy Int @map("updated_by") @db.UnsignedInt
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(3)
+  deletedBy Int? @map("deleted_by") @db.UnsignedInt
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  @@unique([contractId, recipientName])
+  @@index([contractId, deletedAt])
+  @@map("contract_commissions")
+}
+model ContractChange {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  changeNo String @unique @map("change_no") @db.VarChar(40)
+  changeType String @map("change_type") @db.VarChar(50)
+  effectiveDate DateTime @map("effective_date") @db.Date
+  beforeSnapshot Json @map("before_snapshot")
+  afterSnapshot Json @map("after_snapshot")
+  reason String @db.VarChar(500)
+  approvalStatus ApprovalStatus @default(DRAFT) @map("approval_status")
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime? @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  rejectedReason String? @map("rejected_reason") @db.VarChar(500)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  @@index([contractId, approvalStatus])
+  @@map("contract_changes")
+}
+model ContractConcession {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  concessionType ConcessionType @map("concession_type")
+  applyMode ConcessionApplyMode @map("apply_mode")
+  startDate DateTime? @map("start_date") @db.Date
+  endDate DateTime? @map("end_date") @db.Date
+  fixedAmount Decimal? @map("fixed_amount") @db.Decimal(14,2)
+  discountRate Decimal? @map("discount_rate") @db.Decimal(7,4)
+  billingPeriodCount Int? @map("billing_period_count")
+  reason String @db.VarChar(500)
+  status ConcessionStatus @default(ACTIVE)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  @@index([contractId, status])
+  @@map("contract_concessions")
+}
+model ContractMember {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  tenantId Int @map("tenant_id") @db.UnsignedInt
+  memberRole ContractMemberRole @map("member_role")
+  relationship String? @db.VarChar(50)
+  isCurrent Boolean @default(true) @map("is_current")
+  remark String? @db.VarChar(500)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  tenant Tenant @relation(fields:[tenantId], references:[id], onDelete:Restrict)
+  @@index([contractId, memberRole, isCurrent])
+  @@map("contract_members")
+}
+model ContractPricingTier {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  tierName String @map("tier_name") @db.VarChar(50)
+  thresholdMonths Int @map("threshold_months")
+  monthlyRent Decimal @map("monthly_rent") @db.Decimal(14,2)
+  sortOrder Int @map("sort_order")
+  requiresFullyPaid Boolean @default(true) @map("requires_fully_paid")
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  bills RentBill[]
+  currentForContracts Contract[] @relation("ContractCurrentPricingTier")
+  pricingRebates PricingRebate[]
+  @@unique([contractId, thresholdMonths])
+  @@map("contract_pricing_tiers")
+}
+model PricingRebate {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  rebateNo String @unique @map("rebate_no") @db.VarChar(40)
+  contractId Int @map("contract_id") @db.UnsignedInt
+  sourceType PricingRebateSourceType @map("source_type")
+  rebateType PricingRebateType @map("rebate_type")
+  pricingTierId Int? @map("pricing_tier_id") @db.UnsignedInt
+  rentBillId Int? @map("rent_bill_id") @db.UnsignedInt
+  parentRebateId Int? @map("parent_rebate_id") @db.UnsignedInt
+  thresholdMonths Int? @map("threshold_months")
+  qualificationDate DateTime? @map("qualification_date") @db.Date
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd DateTime @map("period_end") @db.Date
+  grossBilledAmount Decimal @default(0) @map("gross_billed_amount") @db.Decimal(14,2)
+  targetNetRentAmount Decimal? @map("target_net_rent_amount") @db.Decimal(14,2)
+  previousRebateAmount Decimal @default(0) @map("previous_rebate_amount") @db.Decimal(14,2)
+  referenceAmount Decimal? @map("reference_amount") @db.Decimal(14,2)
+  actualAmount Decimal @map("actual_amount") @db.Decimal(14,2)
+  differenceAmount Decimal? @map("difference_amount") @db.Decimal(14,2)
+  differenceReason String? @map("difference_reason") @db.VarChar(500)
+  settlementMethod PricingRebateSettlementMethod @map("settlement_method")
+  refundDate DateTime? @map("refund_date") @db.Date
+  refundMethod PaymentMethod? @map("refund_method")
+  remark String? @db.VarChar(1000)
+  approvalStatus ApprovalStatus @default(DRAFT) @map("approval_status")
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime? @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  rejectedReason String? @map("rejected_reason") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  pricingTier ContractPricingTier? @relation(fields:[pricingTierId], references:[id], onDelete:Restrict)
+  rentBill RentBill? @relation(fields:[rentBillId], references:[id], onDelete:Restrict)
+  parentRebate PricingRebate? @relation("PricingRebateSupplements", fields:[parentRebateId], references:[id], onDelete:Restrict)
+  supplements PricingRebate[] @relation("PricingRebateSupplements")
+  files PricingRebateFile[]
+  @@index([contractId, approvalStatus])
+  @@index([pricingTierId, approvalStatus])
+  @@index([rentBillId])
+  @@index([parentRebateId])
+  @@map("pricing_rebates")
+}
+model PricingRebateFile {
+  pricingRebateId Int @map("pricing_rebate_id") @db.UnsignedInt
+  fileAssetId Int @map("file_asset_id") @db.UnsignedInt
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  pricingRebate PricingRebate @relation(fields:[pricingRebateId], references:[id], onDelete:Restrict)
+  fileAsset FileAsset @relation(fields:[fileAssetId], references:[id], onDelete:Restrict)
+  @@id([pricingRebateId, fileAssetId])
+  @@map("pricing_rebate_files")
+}
+model RentBill {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  billNo String @unique @map("bill_no") @db.VarChar(40)
+  contractId Int @map("contract_id") @db.UnsignedInt
+  periodSeq Int @map("period_seq")
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd DateTime @map("period_end") @db.Date
+  dueDate DateTime @map("due_date") @db.Date
+  contractPricingTierId Int? @map("contract_pricing_tier_id") @db.UnsignedInt
+  unitMonthlyRent Decimal @map("unit_monthly_rent") @db.Decimal(14,2)
+  baseRentAmount Decimal @map("base_rent_amount") @db.Decimal(14,2)
+  rentFreeAmount Decimal @default(0) @map("rent_free_amount") @db.Decimal(14,2)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(14,2)
+  adjustmentAmount Decimal @default(0) @map("adjustment_amount") @db.Decimal(14,2)
+  payableAmount Decimal @map("payable_amount") @db.Decimal(14,2)
+  receivedAmount Decimal @default(0) @map("received_amount") @db.Decimal(14,2)
+  outstandingAmount Decimal @map("outstanding_amount") @db.Decimal(14,2)
+  status RentBillStatus @default(PENDING)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  pricingTier ContractPricingTier? @relation(fields:[contractPricingTierId], references:[id], onDelete:Restrict)
+  allocations PaymentAllocation[]
+  prepaymentTransactions PrepaymentTransaction[]
+  adjustments BillAdjustment[]
+  pricingRebates PricingRebate[]
+  depositTransactions DepositTransaction[]
+  checkoutSettlementItems CheckoutSettlementItem[]
+  @@unique([contractId, periodSeq])
+  @@index([dueDate, status])
+  @@map("rent_bills")
+}
+model Payment {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  receiptNo String @unique @map("receipt_no") @db.VarChar(40)
+  contractId Int @map("contract_id") @db.UnsignedInt
+  paymentCategory PaymentCategory @map("payment_category")
+  paymentDate DateTime @map("payment_date") @db.Date
+  amount Decimal @db.Decimal(14,2)
+  method PaymentMethod
+  externalReference String? @map("external_reference") @db.VarChar(100)
+  operatorId Int @map("operator_id") @db.UnsignedInt
+  status PaymentStatus @default(CONFIRMED)
+  voidReason String? @map("void_reason") @db.VarChar(500)
+  voidedBy Int? @map("voided_by") @db.UnsignedInt
+  voidedAt DateTime? @map("voided_at") @db.DateTime(3)
+  editReason String? @map("edit_reason") @db.VarChar(500)
+  remark String? @db.VarChar(500)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  allocations PaymentAllocation[]
+  prepaymentTransactions PrepaymentTransaction[]
+  adjustments BillAdjustment[]
+  refunds PaymentRefund[]
+  voidRequests PaymentVoidRequest[]
+  depositTransactions DepositTransaction[]
+  @@index([contractId, paymentDate, status])
+  @@map("payments")
+}
+model BillAdjustment {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  adjustmentNo String @map("adjustment_no") @db.VarChar(40)
+  rentBillId Int @map("rent_bill_id") @db.UnsignedInt
+  adjustmentType BillAdjustmentType @map("adjustment_type")
+  direction AdjustmentDirection
+  amount Decimal @db.Decimal(14,2)
+  beforeAmount Decimal @map("before_amount") @db.Decimal(14,2)
+  afterAmount Decimal @map("after_amount") @db.Decimal(14,2)
+  reason String @db.VarChar(500)
+  sourcePaymentId Int? @map("source_payment_id") @db.UnsignedInt
+  contractChangeId Int? @map("contract_change_id") @db.UnsignedInt
+  approvalStatus ApprovalStatus @default(PENDING) @map("approval_status")
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  rejectedReason String? @map("rejected_reason") @db.VarChar(500)
+  reversedByAdjustmentId Int? @map("reversed_by_adjustment_id") @db.UnsignedInt
+  rentBill RentBill @relation(fields:[rentBillId], references:[id], onDelete:Restrict)
+  sourcePayment Payment? @relation(fields:[sourcePaymentId], references:[id], onDelete:Restrict)
+  @@index([rentBillId, approvalStatus])
+  @@index([adjustmentNo])
+  @@map("bill_adjustments")
+}
+model PaymentRefund {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  refundNo String @unique @map("refund_no") @db.VarChar(40)
+  paymentId Int @map("payment_id") @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  refundAmount Decimal @map("refund_amount") @db.Decimal(14,2)
+  refundDate DateTime @map("refund_date") @db.Date
+  refundMethod PaymentMethod @map("refund_method")
+  reason String @db.VarChar(500)
+  approvalStatus ApprovalStatus @default(PENDING) @map("approval_status")
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  rejectedReason String? @map("rejected_reason") @db.VarChar(500)
+  payment Payment @relation(fields:[paymentId], references:[id], onDelete:Restrict)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  allocations PaymentRefundAllocation[]
+  @@index([paymentId, approvalStatus])
+  @@map("payment_refunds")
+}
+model PaymentVoidRequest {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  requestNo String @unique @map("request_no") @db.VarChar(40)
+  paymentId Int @map("payment_id") @db.UnsignedInt
+  reason String @db.VarChar(500)
+  approvalStatus ApprovalStatus @default(PENDING) @map("approval_status")
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  rejectedReason String? @map("rejected_reason") @db.VarChar(500)
+  payment Payment @relation(fields:[paymentId], references:[id], onDelete:Restrict)
+  @@index([paymentId, approvalStatus])
+  @@map("payment_void_requests")
+}
+model PaymentAllocation {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  paymentId Int @map("payment_id") @db.UnsignedInt
+  rentBillId Int @map("rent_bill_id") @db.UnsignedInt
+  allocatedAmount Decimal @map("allocated_amount") @db.Decimal(14,2)
+  reversedAmount Decimal @default(0) @map("reversed_amount") @db.Decimal(14,2)
+  allocatedAt DateTime @default(now()) @map("allocated_at") @db.DateTime(3)
+  payment Payment @relation(fields:[paymentId], references:[id], onDelete:Restrict)
+  rentBill RentBill @relation(fields:[rentBillId], references:[id], onDelete:Restrict)
+  refundAllocations PaymentRefundAllocation[]
+  @@index([paymentId])
+  @@index([rentBillId])
+  @@map("payment_allocations")
+}
+model PaymentRefundAllocation {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  paymentRefundId Int @map("payment_refund_id") @db.UnsignedInt
+  paymentAllocationId Int @map("payment_allocation_id") @db.UnsignedInt
+  reversedAmount Decimal @map("reversed_amount") @db.Decimal(14,2)
+  paymentRefund PaymentRefund @relation(fields:[paymentRefundId], references:[id], onDelete:Restrict)
+  paymentAllocation PaymentAllocation @relation(fields:[paymentAllocationId], references:[id], onDelete:Restrict)
+  @@unique([paymentRefundId, paymentAllocationId])
+  @@index([paymentAllocationId])
+  @@map("payment_refund_allocations")
+}
+model PrepaymentTransaction {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  transactionNo String @unique @map("transaction_no") @db.VarChar(40)
+  transactionType PrepaymentTransactionType @map("transaction_type")
+  amount Decimal @db.Decimal(14,2)
+  balanceAfter Decimal @map("balance_after") @db.Decimal(14,2)
+  paymentId Int? @map("payment_id") @db.UnsignedInt
+  rentBillId Int? @map("rent_bill_id") @db.UnsignedInt
+  reason String? @db.VarChar(500)
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.DateTime(3)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  payment Payment? @relation(fields:[paymentId], references:[id], onDelete:Restrict)
+  rentBill RentBill? @relation(fields:[rentBillId], references:[id], onDelete:Restrict)
+  @@index([contractId, occurredAt])
+  @@map("prepayment_transactions")
+}
+model DepositTransaction {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  contractId Int @map("contract_id") @db.UnsignedInt
+  transactionNo String @unique @map("transaction_no") @db.VarChar(40)
+  transactionType DepositTransactionType @map("transaction_type")
+  amount Decimal @db.Decimal(14,2)
+  balanceAfter Decimal @map("balance_after") @db.Decimal(14,2)
+  paymentId Int? @map("payment_id") @db.UnsignedInt
+  rentBillId Int? @map("rent_bill_id") @db.UnsignedInt
+  checkoutSettlementId Int? @map("checkout_settlement_id") @db.UnsignedInt
+  depositRefundId Int? @map("deposit_refund_id") @db.UnsignedInt
+  reason String? @db.VarChar(500)
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.DateTime(3)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  payment Payment? @relation(fields:[paymentId], references:[id], onDelete:Restrict)
+  rentBill RentBill? @relation(fields:[rentBillId], references:[id], onDelete:Restrict)
+  checkoutSettlement CheckoutSettlement? @relation(fields:[checkoutSettlementId], references:[id], onDelete:Restrict)
+  depositRefund DepositRefund? @relation(fields:[depositRefundId], references:[id], onDelete:Restrict)
+  @@index([contractId, occurredAt])
+  @@map("deposit_transactions")
+}
+model CheckoutSettlement {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  settlementNo String @unique @map("settlement_no") @db.VarChar(40)
+  contractId Int @map("contract_id") @db.UnsignedInt
+  checkoutType String @map("checkout_type") @db.VarChar(50)
+  plannedCheckoutDate DateTime @map("planned_checkout_date") @db.Date
+  actualCheckoutDate DateTime? @map("actual_checkout_date") @db.Date
+  handoverDate DateTime? @map("handover_date") @db.Date
+  inspectionAt DateTime? @map("inspection_at") @db.DateTime(3)
+  checkoutReason String @map("checkout_reason") @db.VarChar(500)
+  rentReceivable Decimal @default(0) @map("rent_receivable") @db.Decimal(14,2)
+  rentReceived Decimal @default(0) @map("rent_received") @db.Decimal(14,2)
+  rentOutstanding Decimal @default(0) @map("rent_outstanding") @db.Decimal(14,2)
+  prepaymentBalance Decimal @default(0) @map("prepayment_balance") @db.Decimal(14,2)
+  depositBalance Decimal @default(0) @map("deposit_balance") @db.Decimal(14,2)
+  depositOffsetAmount Decimal @default(0) @map("deposit_offset_amount") @db.Decimal(14,2)
+  otherDeductionAmount Decimal @default(0) @map("other_deduction_amount") @db.Decimal(14,2)
+  depositRefundableAmount Decimal @default(0) @map("deposit_refundable_amount") @db.Decimal(14,2)
+  prepaymentRefundableAmount Decimal @default(0) @map("prepayment_refundable_amount") @db.Decimal(14,2)
+  finalReceivable Decimal @default(0) @map("final_receivable") @db.Decimal(14,2)
+  targetRoomStatus RoomStatus @map("target_room_status")
+  status CheckoutSettlementStatus @default(DRAFT)
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime? @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  rejectedReason String? @map("rejected_reason") @db.VarChar(500)
+  remark String? @db.VarChar(1000)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  items CheckoutSettlementItem[]
+  depositTransactions DepositTransaction[]
+  depositRefunds DepositRefund[]
+  @@index([contractId, status])
+  @@map("checkout_settlements")
+}
+model CheckoutSettlementItem {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  checkoutSettlementId Int @map("checkout_settlement_id") @db.UnsignedInt
+  itemType CheckoutSettlementItemType @map("item_type")
+  amount Decimal @db.Decimal(14,2)
+  rentBillId Int? @map("rent_bill_id") @db.UnsignedInt
+  inspectionRecordRef String? @map("inspection_record_ref") @db.VarChar(100)
+  description String @db.VarChar(500)
+  evidenceRequired Boolean @default(false) @map("evidence_required")
+  confirmedByTenant Boolean @default(false) @map("confirmed_by_tenant")
+  sortOrder Int @default(0) @map("sort_order")
+  settlement CheckoutSettlement @relation(fields:[checkoutSettlementId], references:[id], onDelete:Restrict)
+  rentBill RentBill? @relation(fields:[rentBillId], references:[id], onDelete:Restrict)
+  files CheckoutSettlementItemFile[]
+  @@index([checkoutSettlementId, sortOrder])
+  @@map("checkout_settlement_items")
+}
+model CheckoutSettlementItemFile {
+  checkoutSettlementItemId Int @map("checkout_settlement_item_id") @db.UnsignedInt
+  fileAssetId Int @map("file_asset_id") @db.UnsignedInt
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  item CheckoutSettlementItem @relation(fields:[checkoutSettlementItemId], references:[id], onDelete:Restrict)
+  fileAsset FileAsset @relation(fields:[fileAssetId], references:[id], onDelete:Restrict)
+  @@id([checkoutSettlementItemId, fileAssetId])
+  @@map("checkout_settlement_item_files")
+}
+model DepositRefund {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  refundNo String @unique @map("refund_no") @db.VarChar(40)
+  contractId Int @map("contract_id") @db.UnsignedInt
+  checkoutSettlementId Int @map("checkout_settlement_id") @db.UnsignedInt
+  refundAmount Decimal @map("refund_amount") @db.Decimal(14,2)
+  refundDate DateTime @map("refund_date") @db.Date
+  refundMethod PaymentMethod @map("refund_method")
+  remark String? @db.VarChar(1000)
+  approvalStatus ApprovalStatus @default(PENDING) @map("approval_status")
+  submittedBy Int @map("submitted_by") @db.UnsignedInt
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.DateTime(3)
+  approvedBy Int? @map("approved_by") @db.UnsignedInt
+  approvedAt DateTime? @map("approved_at") @db.DateTime(3)
+  cancelledReason String? @map("cancelled_reason") @db.VarChar(500)
+  contract Contract @relation(fields:[contractId], references:[id], onDelete:Restrict)
+  checkoutSettlement CheckoutSettlement @relation(fields:[checkoutSettlementId], references:[id], onDelete:Restrict)
+  transactions DepositTransaction[]
+  files DepositRefundFile[]
+  @@index([contractId, approvalStatus])
+  @@index([checkoutSettlementId, approvalStatus])
+  @@map("deposit_refunds")
+}
+model DepositRefundFile {
+  depositRefundId Int @map("deposit_refund_id") @db.UnsignedInt
+  fileAssetId Int @map("file_asset_id") @db.UnsignedInt
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  depositRefund DepositRefund @relation(fields:[depositRefundId], references:[id], onDelete:Restrict)
+  fileAsset FileAsset @relation(fields:[fileAssetId], references:[id], onDelete:Restrict)
+  @@id([depositRefundId, fileAssetId])
+  @@map("deposit_refund_files")
+}
+model RoomStatusHistory {
+  id Int @id @default(autoincrement()) @db.UnsignedInt
+  roomId Int @map("room_id") @db.UnsignedInt
+  fromStatus RoomStatus? @map("from_status")
+  toStatus RoomStatus @map("to_status")
+  changeReason String? @map("change_reason") @db.VarChar(500)
+  businessType String? @map("business_type") @db.VarChar(50)
+  businessId Int? @map("business_id") @db.UnsignedInt
+  changedAt DateTime @default(now()) @map("changed_at") @db.DateTime(3)
+  changedBy Int? @map("changed_by") @db.UnsignedInt
+  room Room @relation(fields:[roomId], references:[id], onDelete:Restrict)
+  @@index([roomId, changedAt])
+  @@map("room_status_histories")
+}

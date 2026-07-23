@@ -1,0 +1,20 @@
+CREATE TABLE `contract_changes` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `contract_id` INT UNSIGNED NOT NULL,
+  `change_no` VARCHAR(40) NOT NULL,
+  `change_type` VARCHAR(50) NOT NULL,
+  `effective_date` DATE NOT NULL,
+  `before_snapshot` JSON NOT NULL,
+  `after_snapshot` JSON NOT NULL,
+  `reason` VARCHAR(500) NOT NULL,
+  `approval_status` ENUM('DRAFT','PENDING','APPROVED','REJECTED','CANCELLED') NOT NULL DEFAULT 'DRAFT',
+  `submitted_by` INT UNSIGNED NOT NULL,
+  `submitted_at` DATETIME(3) NULL,
+  `approved_by` INT UNSIGNED NULL,
+  `approved_at` DATETIME(3) NULL,
+  `rejected_reason` VARCHAR(500) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `contract_changes_change_no_key` (`change_no`),
+  KEY `contract_changes_contract_id_approval_status_idx` (`contract_id`,`approval_status`),
+  CONSTRAINT `contract_changes_contract_id_fkey` FOREIGN KEY (`contract_id`) REFERENCES `contracts`(`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

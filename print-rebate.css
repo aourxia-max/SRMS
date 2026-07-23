@@ -1,0 +1,5 @@
+@font-face{font-family:ProtoCN;src:url("prototype-font.woff")}@font-face{font-family:ProtoCN;src:url("prototype-font-bold.woff");font-weight:700}
+@page{size:1440px 1120px;margin:0}
+*{font-family:ProtoCN,sans-serif!important}
+.prototype-switch{display:none!important}.page{display:none!important}#page-rebate{display:block!important}.top{position:static!important}.workspace{padding-top:20px!important}.help:hover:after{display:none!important}
+.sticky-approve .btn{height:36px!important;line-height:18px!important;padding:8px 10px!important}
