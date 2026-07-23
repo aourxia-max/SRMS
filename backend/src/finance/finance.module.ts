@@ -9,6 +9,11 @@ import { SystemModule } from '../system/system.module';
 @Module({
   imports: [SystemModule],
   controllers: [CommissionsController, FinanceController],
-  providers: [CommissionsService, FinanceService, FinanceExportService, ExportTasksService],
+  providers: [
+    CommissionsService,
+    FinanceService,
+    FinanceExportService,
+    ExportTasksService,
+  ],
 })
 export class FinanceModule {}

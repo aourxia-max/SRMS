@@ -298,6 +298,7 @@ model FileAsset {
   pricingRebateFiles PricingRebateFile[]
   depositRefundFiles DepositRefundFile[]
   checkoutSettlementItemFiles CheckoutSettlementItemFile[]
+  exportTasks ExportTask[]
 
   @@index([category, uploadedAt])
   @@map("file_assets")
@@ -409,6 +410,7 @@ model ExportTask {
   startedAt DateTime? @map("started_at") @db.DateTime(3)
   completedAt DateTime? @map("completed_at") @db.DateTime(3)
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  fileAsset FileAsset? @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
   @@index([createdBy, createdAt])
   @@index([status, createdAt])
   @@map("export_tasks")
