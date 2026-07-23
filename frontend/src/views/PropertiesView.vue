@@ -20,6 +20,7 @@ const statusOptions = ['EMPTY', 'PENDING_MOVE_IN', 'RENTED', 'PENDING_CHECKOUT',
 const statusLabels: Record<string, string> = { EMPTY: '空置', PENDING_MOVE_IN: '待入住', RENTED: '已出租', PENDING_CHECKOUT: '待退房', MAINTENANCE: '维修中', FOR_SALE: '待出售', SOLD: '已出售', DISABLED: '停用', OTHER: '其他' }
 const buildingForm = reactive({ buildingNo: '', buildingName: '', floorCount: 6, sortOrder: 0, status: 'ACTIVE', remark: '' })
 const roomForm = reactive({ buildingId: 0, houseNo: '', floorNo: 1, roomType: 'RESIDENTIAL', area: undefined as number | undefined, decorationStatus: 'UNKNOWN', usageType: 'RESIDENCE', ownerName: '', ownerPhone: '', ownerRemark: '', remark: '' })
+const withoutEmptyFields = (form: Record<string, unknown>) => Object.fromEntries(Object.entries(form).filter(([, value]) => value !== '' && value !== undefined))
 
 async function reload() {
   const [buildingResponse, roomResponse] = await Promise.all([http.get('/properties/buildings'), http.get('/properties/rooms')])
@@ -30,8 +31,8 @@ function resetBuildingForm() { Object.assign(buildingForm, { buildingNo: '', bui
 function resetRoomForm() { Object.assign(roomForm, { buildingId: 0, houseNo: '', floorNo: 1, roomType: 'RESIDENTIAL', area: undefined, decorationStatus: 'UNKNOWN', usageType: 'RESIDENCE', ownerName: '', ownerPhone: '', ownerRemark: '', remark: '' }); editingRoomId.value = null }
 function openBuilding(building?: any) { resetBuildingForm(); if (building) { editingBuildingId.value = building.id; Object.assign(buildingForm, building) }; buildingDialog.value = true }
 function openRoom(room?: any) { resetRoomForm(); if (room) { editingRoomId.value = room.id; Object.assign(roomForm, room) }; roomDialog.value = true }
-async function saveBuilding() { if (editingBuildingId.value) await http.patch(`/properties/buildings/${editingBuildingId.value}`, buildingForm); else await http.post('/properties/buildings', buildingForm); await reload(); buildingDialog.value = false }
-async function saveRoom() { if (editingRoomId.value) await http.patch(`/properties/rooms/${editingRoomId.value}`, roomForm); else await http.post('/properties/rooms', roomForm); await reload(); roomDialog.value = false }
+async function saveBuilding() { const payload = withoutEmptyFields(buildingForm); if (editingBuildingId.value) await http.patch(`/properties/buildings/${editingBuildingId.value}`, payload); else await http.post('/properties/buildings', payload); await reload(); buildingDialog.value = false }
+async function saveRoom() { const payload = withoutEmptyFields(roomForm); if (editingRoomId.value) await http.patch(`/properties/rooms/${editingRoomId.value}`, payload); else await http.post('/properties/rooms', payload); await reload(); roomDialog.value = false }
 async function changeStatus(room: any, status: string) { await http.patch(`/properties/rooms/${room.id}/status`, { roomStatus: status }); await reload() }
 async function showHistory(room: any) { histories.value = (await http.get(`/properties/rooms/${room.id}/history`)).data.data; historyDialog.value = true }
 async function removeRoom(room: any) { await ElMessageBox.confirm(`确认删除房源 ${room.fullHouseNo} 吗？`, '删除确认', { type: 'warning' }); await http.delete(`/properties/rooms/${room.id}`); await reload() }
