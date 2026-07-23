@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { ExportFormat, ExportTaskStatus, FileCategory } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
@@ -10,11 +10,36 @@ import { FinanceExportService } from './finance-export.service';
 type ReportType = 'overview' | 'rent-collection' | 'cash-flows' | 'commissions';
 
 @Injectable()
-export class ExportTasksService {
+export class ExportTasksService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly exports: FinanceExportService,
   ) {}
+  async onModuleInit() {
+    const tasks = await this.prisma.db.exportTask.findMany({
+      where: {
+        status: { in: [ExportTaskStatus.PENDING, ExportTaskStatus.RUNNING] },
+      },
+      select: { id: true, createdBy: true },
+    });
+    for (const task of tasks) {
+      const user = await this.prisma.db.user.findUnique({
+        where: { id: task.createdBy },
+        select: { id: true, username: true, displayName: true, role: true },
+      });
+      if (user) setImmediate(() => void this.run(task.id, user));
+      else {
+        await this.prisma.db.exportTask.update({
+          where: { id: task.id },
+          data: {
+            status: ExportTaskStatus.FAILED,
+            completedAt: new Date(),
+            failureReason: '导出任务创建人不存在，无法恢复处理',
+          },
+        });
+      }
+    }
+  }
   async create(
     reportType: ReportType,
     format: ExportFormat,
