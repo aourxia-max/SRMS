@@ -75,3 +75,5 @@ npm run db:validate
 Task001 的详细验收结果见 `task001-acceptance.md`。
 Task002—005 的验收记录见 `docs/task002-acceptance.md` 至 `docs/task005-acceptance.md`。
 Task013 的验收记录见 `docs/task013-acceptance.md`。
+
+尚未完成真实业务数据核验的任务，请按 `docs/manual-acceptance-checklist.md` 执行手工验收。
