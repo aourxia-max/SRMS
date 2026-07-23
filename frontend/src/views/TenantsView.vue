@@ -14,9 +14,10 @@ const editingId = ref<number | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const form = reactive({ tenantType: 'INDIVIDUAL', name: '', phone: '', idType: 'ID_CARD', idNo: '', contactAddress: '', status: 'ACTIVE', remark: '' })
 const defaultTenantType = ref('INDIVIDUAL')
+const withoutEmptyFields = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== ''))
 async function load() { const response = await http.get('/tenants', { params: { keyword: keyword.value || undefined } }); tenants.value = response.data.data.items; total.value = response.data.data.total }
 function open(tenant?: any) { editingId.value = tenant?.id ?? null; Object.assign(form, tenant ?? { tenantType: defaultTenantType.value, name: '', phone: '', idType: 'ID_CARD', idNo: '', contactAddress: '', status: 'ACTIVE', remark: '' }); dialog.value = true }
-async function save() { const data = { ...form }; if (editingId.value && !data.idNo) delete (data as Partial<typeof data>).idNo; if (editingId.value) await http.patch(`/tenants/${editingId.value}`, data); else await http.post('/tenants', data); await load(); dialog.value = false }
+async function save() { const data = withoutEmptyFields(form) as Partial<typeof form>; if (editingId.value && !data.idNo) delete data.idNo; if (editingId.value) await http.patch(`/tenants/${editingId.value}`, data); else await http.post('/tenants', data); await load(); dialog.value = false }
 async function viewId(tenant: any) { const result = await http.get(`/tenants/${tenant.id}/sensitive`); ElMessage.success(`完整证件号码：${result.data.data.idNo ?? '未登记'}`) }
 async function upload(tenant: any, event: Event) { const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return; const data = new FormData(); data.append('file', file); await http.post(`/tenants/${tenant.id}/files`, data); ElMessage.success('证件附件已上传'); (event.target as HTMLInputElement).value = '' }
 onMounted(async () => { const settings = await http.get('/system/defaults').catch(() => null); if (settings?.data?.data?.defaultTenantType) defaultTenantType.value = settings.data.data.defaultTenantType; await load() })
