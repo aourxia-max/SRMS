@@ -21,11 +21,15 @@ import { CreateRoomDto } from './dto/create-room.dto';
 import { ChangeRoomStatusDto } from './dto/change-room-status.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { RoomDetailsService } from './room-details.service';
 
 @Controller('properties')
 @UseGuards(JwtAuthGuard)
 export class PropertiesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly roomDetails: RoomDetailsService,
+  ) {}
 
   @Get('buildings')
   async buildings() {
@@ -116,6 +120,18 @@ export class PropertiesController {
         where: { roomId: id },
         orderBy: { changedAt: 'desc' },
       }),
+    };
+  }
+
+  @Get('rooms/:id/detail')
+  async detail(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.roomDetails.detail(id, user),
     };
   }
 

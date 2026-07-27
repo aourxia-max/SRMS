@@ -287,7 +287,7 @@ onMounted(init)
                 :key="room.id"
                 class="room-cell"
                 :class="statusClass(room.roomStatus)"
-                @click="router.push('/properties')"
+                @click="router.push({ name: 'room-detail', params: { id: room.id } })"
               >
                 <b>{{ room.fullHouseNo || room.houseNo }}</b>
                 <span class="room-status">{{ statusLabel(room.roomStatus) }}</span>
