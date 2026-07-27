@@ -43,6 +43,22 @@ describe('ExportTasksService', () => {
     await expect(service.content(9, user)).rejects.toThrow();
   });
 
+  it('serializes completed export file sizes for task-list JSON responses', async () => {
+    const service = serviceWith({
+      exportTask: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 1, fileAsset: { id: 1, sizeBytes: 256n } },
+          ]),
+      },
+    });
+
+    const result = await service.list(user);
+
+    expect(result[0].fileAsset.sizeBytes).toBe('256');
+  });
+
   it('requeues pending and interrupted tasks on startup', async () => {
     const service = serviceWith({
       exportTask: {
