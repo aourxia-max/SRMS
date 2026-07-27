@@ -15,7 +15,7 @@ export class PricingRebatesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(contractId?: number) {
-    return this.prisma.db.pricingRebate.findMany({
+    const rebates = await this.prisma.db.pricingRebate.findMany({
       where: contractId ? { contractId } : undefined,
       include: {
         pricingTier: true,
@@ -25,6 +25,7 @@ export class PricingRebatesService {
       },
       orderBy: { id: 'desc' },
     });
+    return rebates.map((rebate) => this.serializeFiles(rebate));
   }
 
   async preview(contractId: number) {
@@ -137,7 +138,7 @@ export class PricingRebatesService {
       if (!parent)
         throw new BadRequestException('补充退差必须关联本合同已确认的原退差单');
     }
-    return this.prisma.db.pricingRebate.create({
+    const rebate = await this.prisma.db.pricingRebate.create({
       data: {
         rebateNo: `TC${Date.now()}${contract.id}`,
         contractId: contract.id,
@@ -176,6 +177,7 @@ export class PricingRebatesService {
         files: { include: { fileAsset: true } },
       },
     });
+    return this.serializeFiles(rebate);
   }
 
   async approve(id: number, user: AuthUser) {
@@ -254,6 +256,21 @@ export class PricingRebatesService {
     return new Prisma.Decimal(payments._sum.amount ?? 0).minus(
       refunds._sum.refundAmount ?? 0,
     );
+  }
+
+  private serializeFiles<
+    T extends { files: Array<{ fileAsset: { sizeBytes: bigint } }> },
+  >(rebate: T) {
+    return {
+      ...rebate,
+      files: rebate.files.map((file) => ({
+        ...file,
+        fileAsset: {
+          ...file.fileAsset,
+          sizeBytes: file.fileAsset.sizeBytes.toString(),
+        },
+      })),
+    };
   }
 
   private async loadContract(contractId: number) {
