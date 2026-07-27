@@ -3,17 +3,428 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
-const router = useRouter(); const session = useSessionStore(); const data = ref<any>({ roomSummary:{statusCounts:{},rooms:[]},rentReminders:[],arrears:[],expiringContracts:[],approvals:{} }); const buildings = ref<any[]>([])
-const filters = reactive({ buildingId: undefined as number|undefined, statuses: [] as string[] })
-const isSuper = computed(()=>session.user?.role==='SUPER_ADMIN')
-const labels:Record<string,string>={EMPTY:'空置',PENDING_MOVE_IN:'待入住',RENTED:'已出租',PENDING_CHECKOUT:'待退房',MAINTENANCE:'维修中',FOR_SALE:'待出售',SOLD:'已出售',DISABLED:'停用',OTHER:'其他'}
-async function load(){ const params:any={}; if(filters.buildingId)params.buildingId=filters.buildingId; if(filters.statuses.length)params.statuses=filters.statuses.join(','); data.value=(await http.get('/dashboard',{params})).data.data }
-async function init(){ buildings.value=(await http.get('/properties/buildings')).data.data; await load() }
+
+type RoomStatus =
+  | 'EMPTY'
+  | 'PENDING_MOVE_IN'
+  | 'RENTED'
+  | 'PENDING_CHECKOUT'
+  | 'MAINTENANCE'
+  | 'FOR_SALE'
+  | 'SOLD'
+  | 'DISABLED'
+  | 'OTHER'
+
+type DashboardRoom = {
+  id: number
+  fullHouseNo: string
+  houseNo: string
+  floorNo?: number | null
+  roomStatus: RoomStatus
+  decorationStatus?: string | null
+  statusChangedAt?: string | null
+  building?: { id: number; buildingName: string }
+}
+
+const router = useRouter()
+const session = useSessionStore()
+const data = ref<any>({
+  roomSummary: { statusCounts: {}, rooms: [] },
+  rentReminders: [],
+  arrears: [],
+  expiringContracts: [],
+  approvals: {},
+})
+const buildings = ref<any[]>([])
+const filters = reactive({
+  buildingId: undefined as number | undefined,
+  statuses: [] as RoomStatus[],
+})
+
+const isSuper = computed(() => session.user?.role === 'SUPER_ADMIN')
+const statusMeta: Record<RoomStatus, { label: string; className: string; color: string }> = {
+  EMPTY: { label: '空置', className: 'empty', color: '#51ae97' },
+  PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#397be5' },
+  RENTED: { label: '已出租', className: 'rented', color: '#22a06b' },
+  PENDING_CHECKOUT: { label: '待退租', className: 'checkout', color: '#e98216' },
+  MAINTENANCE: { label: '维修中', className: 'repair', color: '#d4b52a' },
+  FOR_SALE: { label: '待出售', className: 'forsale', color: '#7d5ce7' },
+  SOLD: { label: '已出售', className: 'sold', color: '#8c95a3' },
+  DISABLED: { label: '停用', className: 'disabled', color: '#737981' },
+  OTHER: { label: '其他', className: 'disabled', color: '#8c95a3' },
+}
+const statusOptions = Object.entries(statusMeta).map(([value, item]) => ({ value, ...item }))
+
+const rooms = computed<DashboardRoom[]>(() => data.value.roomSummary?.rooms ?? [])
+const monthValue = computed(() => new Date().toISOString().slice(0, 7))
+const totalApprovals = computed(() =>
+  Number(data.value.approvals?.billAdjustments || 0) +
+  Number(data.value.approvals?.paymentRefunds || 0) +
+  Number(data.value.approvals?.pricingRebates || 0),
+)
+const todoItems = computed(() => [
+  {
+    title: '逾期未收',
+    desc: '仍有未结清的逾期账单',
+    count: data.value.arrears?.length || 0,
+    tone: 'danger',
+    path: '/payments',
+  },
+  {
+    title: `${data.value.rentReminderDays || 7} 天内应缴`,
+    desc: '即将到期的租金账单',
+    count: data.value.rentReminders?.length || 0,
+    tone: 'warning',
+    path: '/payments',
+  },
+  {
+    title: '合同即将到期',
+    desc: `未来 ${data.value.contractExpiryDays || 30} 天内到期`,
+    count: data.value.expiringContracts?.length || 0,
+    tone: 'primary',
+    path: '/contracts',
+  },
+  {
+    title: '审批待处理',
+    desc: '账单、退款、阶梯退差待审批',
+    count: totalApprovals.value,
+    tone: 'purple',
+    path: '/contracts/changes',
+  },
+  {
+    title: '长期空置',
+    desc: `连续空置超过 ${data.value.longVacancyDays || 30} 天`,
+    count: data.value.longVacancyRooms?.length || 0,
+    tone: 'green',
+    path: '/properties',
+  },
+])
+const floorGroups = computed(() => {
+  const grouped = new Map<string, DashboardRoom[]>()
+  for (const room of rooms.value) {
+    const floor = room.floorNo === null || room.floorNo === undefined ? '未分层' : `${room.floorNo}F`
+    grouped.set(floor, [...(grouped.get(floor) ?? []), room])
+  }
+  return [...grouped.entries()].sort((a, b) => {
+    const av = Number.parseInt(a[0])
+    const bv = Number.parseInt(b[0])
+    if (Number.isNaN(av) || Number.isNaN(bv)) return a[0].localeCompare(b[0], 'zh-CN')
+    return bv - av
+  })
+})
+const composition = computed(() => {
+  const counts = data.value.roomSummary?.statusCounts ?? {}
+  const operating = Number(data.value.roomSummary?.operating || 0)
+  const forSale = Number(counts.FOR_SALE || 0)
+  const sold = Number(counts.SOLD || 0)
+  const other = Math.max(Number(data.value.roomSummary?.total || 0) - operating - forSale - sold, 0)
+  return { operating, forSale, sold, other }
+})
+
+function statusLabel(status: string) {
+  return statusMeta[status as RoomStatus]?.label ?? status
+}
+function statusClass(status: string) {
+  return statusMeta[status as RoomStatus]?.className ?? 'disabled'
+}
+function statusCount(status: string) {
+  return data.value.roomSummary?.statusCounts?.[status] ?? 0
+}
+function formatMoney(value: unknown) {
+  const amount = Number(value || 0)
+  return `￥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+function formatDate(value: string | Date | null | undefined) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleDateString('zh-CN')
+}
+function tenantName(row: any) {
+  return row.contract?.members?.[0]?.tenant?.name || '-'
+}
+async function load() {
+  const params: any = {}
+  if (filters.buildingId) params.buildingId = filters.buildingId
+  if (filters.statuses.length) params.statuses = filters.statuses.join(',')
+  data.value = (await http.get('/dashboard', { params })).data.data
+}
+async function init() {
+  buildings.value = (await http.get('/properties/buildings')).data.data
+  await load()
+}
 onMounted(init)
 </script>
-<template><main class="users-page dashboard-page"><header><div><el-tag type="primary">驾驶舱</el-tag><h1>经营概览</h1><p>快速查看房态、租金待办与合同履行情况。</p></div><div><el-button type="primary" @click="router.push('/payments')">登记收款</el-button><el-button @click="router.push('/contracts')">合同管理</el-button></div></header>
-<el-card class="dashboard-filter"><el-form inline><el-form-item label="楼栋"><el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" @change="load"><el-option v-for="item in buildings" :key="item.id" :label="item.buildingName" :value="item.id" /></el-select></el-form-item><el-form-item label="房态"><el-select v-model="filters.statuses" multiple collapse-tags clearable placeholder="全部房态" @change="load"><el-option v-for="(label,key) in labels" :key="key" :label="label" :value="key" /></el-select></el-form-item><el-button @click="load">刷新</el-button></el-form></el-card>
-<section class="metric-grid"><el-card><el-statistic title="房源总数" :value="data.roomSummary.total||0" /><p>可经营 {{ data.roomSummary.operating||0 }} 套</p></el-card><el-card><el-statistic title="已出租" :value="data.roomSummary.rented||0" /><p>出租率 {{ data.roomSummary.occupancyRate===null?'—':`${data.roomSummary.occupancyRate}%` }}</p></el-card><el-card><el-statistic :title="`未来 ${data.rentReminderDays||7} 天催租`" :value="data.rentReminders.length" /><p>待收款账单提醒</p></el-card><el-card><el-statistic title="逾期欠租" :value="data.arrears.length" /><p v-if="isSuper">欠租金额 {{ data.arrearsTotal||0 }}</p><p v-else>待跟进账单</p></el-card><el-card><el-statistic :title="`空置超过 ${data.longVacancyDays||30} 天`" :value="data.longVacancyRooms?.length||0" /><p>建议优先跟进招租</p></el-card></section>
-<section class="dashboard-columns"><el-card header="待办事项"><el-descriptions :column="1" border><el-descriptions-item label="账单调整待审批">{{ data.approvals.billAdjustments||0 }}</el-descriptions-item><el-descriptions-item label="收款退款待审批">{{ data.approvals.paymentRefunds||0 }}</el-descriptions-item><el-descriptions-item label="阶梯退差待审批">{{ data.approvals.pricingRebates||0 }}</el-descriptions-item><el-descriptions-item :label="`${data.contractExpiryDays||30} 天内合同到期`">{{ data.expiringContracts.length }}</el-descriptions-item></el-descriptions></el-card><el-card header="房态分布"><div class="status-tags"><el-tag v-for="(count,status) in data.roomSummary.statusCounts" :key="String(status)" effect="plain">{{ labels[String(status)] }} {{ count }}</el-tag></div><div class="room-grid"><div v-for="room in data.roomSummary.rooms" :key="room.id" class="room-cell" :class="`status-${room.roomStatus}`"><strong>{{ room.fullHouseNo }}</strong><span>{{ labels[room.roomStatus] }}</span></div></div></el-card></section>
-<section class="dashboard-columns"><el-card :header="`未来 ${data.rentReminderDays||7} 天催租`"><el-empty v-if="!data.rentReminders.length" description="暂无催租事项" /><el-table v-else :data="data.rentReminders" size="small"><el-table-column prop="contract.room.fullHouseNo" label="房号" /><el-table-column prop="dueDate" label="应缴日" /><el-table-column prop="outstandingAmount" label="未收金额" /><el-table-column label="承租人"><template #default="{row}">{{row.contract.members?.[0]?.tenant?.name}}</template></el-table-column></el-table></el-card><el-card header="逾期欠租"><el-empty v-if="!data.arrears.length" description="暂无逾期欠租" /><el-table v-else :data="data.arrears" size="small"><el-table-column prop="contract.room.fullHouseNo" label="房号" /><el-table-column prop="dueDate" label="应缴日" /><el-table-column prop="outstandingAmount" label="未收金额" /><el-table-column label="承租人"><template #default="{row}">{{row.contract.members?.[0]?.tenant?.name}}</template></el-table-column></el-table></el-card></section><section><el-card :header="`长期空置预警（超过 ${data.longVacancyDays||30} 天）`"><el-empty v-if="!data.longVacancyRooms?.length" description="暂无长期空置房源" /><el-table v-else :data="data.longVacancyRooms" size="small"><el-table-column prop="fullHouseNo" label="房号" /><el-table-column prop="building.buildingName" label="楼栋" /><el-table-column prop="statusChangedAt" label="空置起始时间" /></el-table></el-card></section></main></template>
-<style scoped>.dashboard-filter{margin-bottom:16px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}.metric-grid p{margin:8px 0 0;color:#8f959e;font-size:13px}.dashboard-columns{display:grid;grid-template-columns:1fr 1.6fr;gap:16px;margin-bottom:16px}.status-tags{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.room-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px;max-height:240px;overflow:auto}.room-cell{padding:9px;border-radius:6px;background:#f5f6f7;font-size:12px;display:flex;flex-direction:column;gap:4px}.room-cell span{color:#646a73}.status-RENTED{background:#e8f3ff}.status-EMPTY{background:#f5f6f7}.status-PENDING_CHECKOUT{background:#fff4e5}.status-MAINTENANCE{background:#fff1f0}@media(max-width:900px){.metric-grid,.dashboard-columns{grid-template-columns:1fr 1fr}}@media(max-width:600px){.metric-grid,.dashboard-columns{grid-template-columns:1fr}}</style>
+
+<template>
+  <main class="dashboard-page">
+    <header class="page-head">
+      <div>
+        <el-tag type="primary" effect="light">经营驾驶舱</el-tag>
+        <h1>经营概览</h1>
+        <p>按房源状态、租金待办和合同履行情况快速判断今日重点。</p>
+      </div>
+      <div class="head-actions">
+        <el-date-picker :model-value="monthValue" type="month" disabled format="YYYY年MM月" />
+        <el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" @change="load">
+          <el-option v-for="item in buildings" :key="item.id" :label="item.buildingName" :value="item.id" />
+        </el-select>
+        <el-button type="primary" @click="load">刷新数据</el-button>
+      </div>
+    </header>
+
+    <section class="metrics">
+      <article class="metric">
+        <span>房源总数</span>
+        <b>{{ data.roomSummary.total || 0 }}</b>
+        <small>当前筛选范围内全部有效房源</small>
+      </article>
+      <article class="metric">
+        <span>可经营房源</span>
+        <b>{{ data.roomSummary.operating || 0 }}</b>
+        <small>空置、已租、待入住、待退租、维修</small>
+      </article>
+      <article class="metric">
+        <span>出租率</span>
+        <b>{{ data.roomSummary.occupancyRate === null ? '-' : `${data.roomSummary.occupancyRate}%` }}</b>
+        <small>已出租 / 可经营房源</small>
+      </article>
+      <article class="metric fin">
+        <span>催租事项</span>
+        <b>{{ data.rentReminders.length }}</b>
+        <small>未来 {{ data.rentReminderDays || 7 }} 天待收</small>
+      </article>
+      <article class="metric fin">
+        <span>合同到期</span>
+        <b>{{ data.expiringContracts.length }}</b>
+        <small>未来 {{ data.contractExpiryDays || 30 }} 天到期</small>
+      </article>
+      <article class="metric alert">
+        <span>累计欠租</span>
+        <b>{{ isSuper ? formatMoney(data.arrearsTotal) : data.arrears.length }}</b>
+        <small>{{ isSuper ? `涉及 ${data.arrears.length} 份账单` : '待跟进账单' }}</small>
+      </article>
+    </section>
+
+    <section class="cockpit-grid">
+      <div class="left-stack">
+        <el-card class="panel-card room-map-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <h2>楼栋房态图</h2>
+                <small>颜色表示房源状态，点击房间进入房源管理。</small>
+              </div>
+              <div class="room-tools">
+                <el-select
+                  v-model="filters.statuses"
+                  multiple
+                  collapse-tags
+                  collapse-tags-tooltip
+                  clearable
+                  placeholder="全部房态"
+                  @change="load"
+                >
+                  <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+                <el-button @click="router.push('/properties')">房源管理</el-button>
+              </div>
+            </div>
+          </template>
+
+          <div class="legend">
+            <span v-for="item in statusOptions" :key="item.value">
+              <i :style="{ background: item.color }"></i>{{ item.label }} <strong>{{ statusCount(item.value) }}</strong>
+            </span>
+          </div>
+          <el-empty v-if="!rooms.length" description="当前筛选下暂无房源" />
+          <div v-else class="building-map">
+            <div v-for="[floor, floorRooms] in floorGroups" :key="floor" class="floor-row">
+              <div class="floor-name">{{ floor }}</div>
+              <button
+                v-for="room in floorRooms"
+                :key="room.id"
+                class="room-cell"
+                :class="statusClass(room.roomStatus)"
+                @click="router.push('/properties')"
+              >
+                <b>{{ room.fullHouseNo || room.houseNo }}</b>
+                <span class="room-status">{{ statusLabel(room.roomStatus) }}</span>
+                <span class="room-owner">{{ room.building?.buildingName || '未设置楼栋' }}</span>
+              </button>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card class="panel-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <h2>租金趋势</h2>
+                <small>当前版本展示实时待收和欠租规模，后续接入月度趋势接口。</small>
+              </div>
+              <el-button text type="primary" @click="router.push('/finance')">查看财务中心</el-button>
+            </div>
+          </template>
+          <div class="trend-lines">
+            <div class="trend-bar expected" :style="{ width: `${Math.min(data.rentReminders.length * 12, 100)}%` }">
+              <span>待收提醒 {{ data.rentReminders.length }}</span>
+            </div>
+            <div class="trend-bar received" :style="{ width: `${Math.min(data.arrears.length * 12, 100)}%` }">
+              <span>逾期欠租 {{ data.arrears.length }}</span>
+            </div>
+          </div>
+        </el-card>
+      </div>
+
+      <aside class="right-stack">
+        <el-card class="panel-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <h2>今日待办</h2>
+                <small>需要优先处理的业务</small>
+              </div>
+            </div>
+          </template>
+          <div class="todo-list">
+            <button v-for="item in todoItems" :key="item.title" class="todo" :class="item.tone" @click="router.push(item.path)">
+              <span class="todo-icon">{{ item.count }}</span>
+              <span><b>{{ item.title }}</b><small>{{ item.desc }}</small></span>
+              <strong>{{ item.count }}</strong>
+            </button>
+          </div>
+        </el-card>
+
+        <el-card class="panel-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <h2>房源构成</h2>
+                <small>全部 {{ data.roomSummary.total || 0 }} 套房源</small>
+              </div>
+            </div>
+          </template>
+          <div class="composition">
+            <div class="donut">
+              <span>{{ data.roomSummary.total || 0 }}</span>
+              <small>房源总数</small>
+            </div>
+            <ul>
+              <li><i class="green"></i>经营房源 <b>{{ composition.operating }}</b></li>
+              <li><i class="purple"></i>待出售 <b>{{ composition.forSale }}</b></li>
+              <li><i class="gray"></i>已出售 <b>{{ composition.sold }}</b></li>
+              <li><i class="muted"></i>其他 <b>{{ composition.other }}</b></li>
+            </ul>
+          </div>
+        </el-card>
+      </aside>
+    </section>
+
+    <section class="table-grid">
+      <el-card class="panel-card" shadow="never">
+        <template #header>未来 {{ data.rentReminderDays || 7 }} 天催租</template>
+        <el-empty v-if="!data.rentReminders.length" description="暂无催租事项" />
+        <el-table v-else :data="data.rentReminders" size="small">
+          <el-table-column prop="contract.room.fullHouseNo" label="房号" min-width="110" />
+          <el-table-column label="承租人" min-width="110"><template #default="{ row }">{{ tenantName(row) }}</template></el-table-column>
+          <el-table-column label="应缴日" min-width="110"><template #default="{ row }">{{ formatDate(row.dueDate) }}</template></el-table-column>
+          <el-table-column label="未收金额" align="right" min-width="120"><template #default="{ row }">{{ formatMoney(row.outstandingAmount) }}</template></el-table-column>
+        </el-table>
+      </el-card>
+      <el-card class="panel-card" shadow="never">
+        <template #header>逾期欠租</template>
+        <el-empty v-if="!data.arrears.length" description="暂无逾期欠租" />
+        <el-table v-else :data="data.arrears" size="small">
+          <el-table-column prop="contract.room.fullHouseNo" label="房号" min-width="110" />
+          <el-table-column label="承租人" min-width="110"><template #default="{ row }">{{ tenantName(row) }}</template></el-table-column>
+          <el-table-column label="应缴日" min-width="110"><template #default="{ row }">{{ formatDate(row.dueDate) }}</template></el-table-column>
+          <el-table-column label="未收金额" align="right" min-width="120"><template #default="{ row }">{{ formatMoney(row.outstandingAmount) }}</template></el-table-column>
+        </el-table>
+      </el-card>
+    </section>
+
+    <el-card class="panel-card" shadow="never">
+      <template #header>长期空置预警（超过 {{ data.longVacancyDays || 30 }} 天）</template>
+      <el-empty v-if="!data.longVacancyRooms?.length" description="暂无长期空置房源" />
+      <el-table v-else :data="data.longVacancyRooms" size="small">
+        <el-table-column prop="fullHouseNo" label="房号" min-width="120" />
+        <el-table-column prop="building.buildingName" label="楼栋" min-width="120" />
+        <el-table-column label="空置起始时间" min-width="140"><template #default="{ row }">{{ formatDate(row.statusChangedAt) }}</template></el-table-column>
+      </el-table>
+    </el-card>
+  </main>
+</template>
+
+<style scoped>
+.dashboard-page { color:#233044; }
+.page-head { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; margin-bottom:18px; }
+.page-head h1 { margin:7px 0 6px; font-size:24px; font-weight:750; }
+.page-head p { margin:0; color:#748196; }
+.head-actions { display:flex; align-items:center; gap:8px; }
+.head-actions :deep(.el-select) { width:160px; }
+.metrics { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.metric { min-height:94px; padding:15px 16px; border:1px solid #e7ecf3; border-radius:12px; background:#fff; box-shadow:0 10px 28px rgba(28,52,84,.07); }
+.metric span { color:#748196; font-size:12px; }
+.metric b { display:block; margin-top:8px; color:#233044; font-size:24px; font-weight:760; }
+.metric small { display:block; margin-top:5px; color:#8a96a7; font-size:11px; }
+.metric.fin b { color:#246bfd; }
+.metric.alert b { color:#d64949; }
+.cockpit-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(330px,.7fr); gap:16px; margin-bottom:16px; }
+.left-stack,.right-stack { display:grid; gap:16px; align-content:start; }
+.panel-card { border:1px solid #e7ecf3; border-radius:12px; box-shadow:0 10px 28px rgba(28,52,84,.07); }
+.panel-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.panel-head h2 { margin:0; font-size:16px; }
+.panel-head small { color:#8792a2; }
+.room-tools { display:flex; gap:8px; align-items:center; }
+.room-tools :deep(.el-select) { width:210px; }
+.legend { display:flex; flex-wrap:wrap; gap:13px; margin-bottom:14px; color:#647085; font-size:12px; }
+.legend i { display:inline-block; width:9px; height:9px; margin-right:5px; border-radius:3px; }
+.legend strong { margin-left:3px; color:#334155; }
+.building-map { display:grid; gap:8px; max-height:430px; overflow:auto; }
+.floor-row { display:grid; grid-template-columns:58px repeat(auto-fill,minmax(112px,1fr)); gap:8px; align-items:stretch; }
+.floor-name { display:grid; place-items:center; min-height:76px; border-radius:8px; background:#f2f5f9; color:#6a778a; font-weight:700; }
+.room-cell { min-height:76px; padding:9px 10px; border:1px solid transparent; border-radius:9px; cursor:pointer; text-align:left; transition:.18s; }
+.room-cell:hover { transform:translateY(-2px); box-shadow:0 7px 16px rgba(30,50,80,.13); }
+.room-cell b { display:block; font-size:13px; }
+.room-status,.room-owner { display:block; margin-top:5px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.room-owner { color:#68758a; }
+.rented { background:#e8f7f0; border-color:#a9dfc5; color:#13764d; }
+.empty { background:#eaf7f3; border-color:#a6ded1; color:#187363; }
+.movein { background:#eaf1ff; border-color:#b5cafa; color:#245fbe; }
+.checkout { background:#fff1df; border-color:#f5c98f; color:#b76112; }
+.repair { background:#fff8d9; border-color:#eedc7b; color:#8b7114; }
+.sold { background:#eceff3; border-color:#cbd2dc; color:#5c6572; }
+.forsale { background:#f1edff; border-color:#c9bdf6; color:#6543c4; }
+.disabled { background:#e8eaed; border-color:#c8cbd1; color:#737981; }
+.todo-list { display:grid; gap:1px; }
+.todo { display:grid; grid-template-columns:42px 1fr auto; gap:11px; align-items:center; width:100%; padding:12px 0; border:0; border-bottom:1px solid #edf1f5; background:transparent; text-align:left; cursor:pointer; }
+.todo:last-child { border-bottom:0; }
+.todo-icon { display:grid; width:38px; height:38px; place-items:center; border-radius:10px; font-weight:750; }
+.todo b { display:block; color:#233044; font-size:13px; }
+.todo small { display:block; margin-top:3px; color:#7b8798; font-size:11px; }
+.todo strong { font-size:18px; }
+.todo.danger .todo-icon { background:#fff0f0; color:#d64545; }
+.todo.warning .todo-icon { background:#fff5e8; color:#d87714; }
+.todo.primary .todo-icon { background:#eef3ff; color:#246bfd; }
+.todo.purple .todo-icon { background:#f3efff; color:#7654d7; }
+.todo.green .todo-icon { background:#eef8f5; color:#208262; }
+.composition { display:grid; grid-template-columns:132px 1fr; gap:18px; align-items:center; }
+.donut { display:grid; width:132px; height:132px; place-items:center; align-content:center; border:20px solid #e9f0ff; border-top-color:#22a06b; border-right-color:#7d5ce7; border-radius:50%; }
+.donut span { color:#273449; font-size:25px; font-weight:760; }
+.donut small { color:#7b8798; font-size:11px; }
+.composition ul { display:grid; gap:9px; margin:0; padding:0; list-style:none; color:#657185; font-size:12px; }
+.composition li { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.composition i { width:9px; height:9px; border-radius:50%; }
+.composition .green { background:#22a06b; }
+.composition .purple { background:#7d5ce7; }
+.composition .gray { background:#8c95a3; }
+.composition .muted { background:#c4ccd8; }
+.trend-lines { display:grid; gap:14px; padding:8px 0; }
+.trend-bar { min-width:80px; height:34px; border-radius:8px; color:#fff; padding:8px 12px; transition:width .2s; }
+.trend-bar.expected { background:#246bfd; }
+.trend-bar.received { background:#22a06b; }
+.table-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+@media (max-width:1200px) { .metrics { grid-template-columns:repeat(3,1fr); } .cockpit-grid,.table-grid { grid-template-columns:1fr; } }
+@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition { grid-template-columns:1fr; } }
+</style>
