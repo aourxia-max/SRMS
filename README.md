@@ -42,10 +42,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
 
 ## 使用 Docker 启动
 
-```bash
-cp .env.example .env
-docker compose -f deploy/docker-compose.yml up --build
+Docker 环境与本机开发环境使用不同端口，不会占用本机的 `3306`、`3000`、`5173`。
+
+1. 启动 Docker Desktop。
+2. 复制 [deploy/.env.example](deploy/.env.example) 为 `deploy/.env`，填写强密码、JWT 密钥、证件加密密钥和首名超级管理员信息。
+3. 执行：
+
+```powershell
+docker compose --project-name srms_docker --env-file deploy/.env -f deploy/docker-compose.yml up --build -d
 ```
+
+默认访问地址：
+
+- 前端：http://localhost:15173
+- 后端健康检查：http://localhost:13000/api/health
+- Docker MySQL：localhost:13306
+
+首次启动会自动执行 Prisma migration 并在空库中创建配置的首名超级管理员。上传文件与备份数据使用独立 Docker 卷持久化。
 
 ## 常用命令
 

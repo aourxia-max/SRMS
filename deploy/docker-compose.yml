@@ -27,11 +27,31 @@ services:
       PORT: 3000
       DATABASE_URL: mysql://${MYSQL_USER:-srms}:${MYSQL_PASSWORD:-change_me}@mysql:3306/${MYSQL_DATABASE:-srms}
       CORS_ORIGIN: http://localhost:${WEB_PORT:-5173}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      INITIAL_SUPER_ADMIN_USERNAME: ${INITIAL_SUPER_ADMIN_USERNAME}
+      INITIAL_SUPER_ADMIN_DISPLAY_NAME: ${INITIAL_SUPER_ADMIN_DISPLAY_NAME}
+      INITIAL_SUPER_ADMIN_PASSWORD: ${INITIAL_SUPER_ADMIN_PASSWORD}
+      TENANT_ID_ENCRYPTION_KEY: ${TENANT_ID_ENCRYPTION_KEY}
+      TENANT_ID_HMAC_SECRET: ${TENANT_ID_HMAC_SECRET}
+      TENANT_FILE_MAX_SIZE_BYTES: ${TENANT_FILE_MAX_SIZE_BYTES:-10485760}
+      TENANT_FILE_ALLOWED_MIME_TYPES: ${TENANT_FILE_ALLOWED_MIME_TYPES:-application/pdf,image/png,image/jpeg,image/heic}
+      BACKUP_DIR: /backups
     ports:
       - "${API_PORT:-3000}:3000"
+    volumes:
+      - srms_uploads:/uploads
+      - srms_backups:/backups
     depends_on:
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   web:
     build:
@@ -40,7 +60,10 @@ services:
     ports:
       - "${WEB_PORT:-5173}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   srms_mysql_data:
+  srms_uploads:
+  srms_backups:
