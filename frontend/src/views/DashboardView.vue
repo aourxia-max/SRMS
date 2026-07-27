@@ -35,8 +35,14 @@ const data = ref<any>({
   expiringContracts: [],
   approvals: {},
 })
+const roomMapData = ref<any>({
+  roomSummary: { statusCounts: {}, rooms: [] },
+})
 const buildings = ref<any[]>([])
 const filters = reactive({
+  buildingId: undefined as number | undefined,
+})
+const roomMapFilters = reactive({
   buildingId: undefined as number | undefined,
   statuses: [] as RoomStatus[],
 })
@@ -55,7 +61,7 @@ const statusMeta: Record<RoomStatus, { label: string; className: string; color: 
 }
 const statusOptions = Object.entries(statusMeta).map(([value, item]) => ({ value, ...item }))
 
-const rooms = computed<DashboardRoom[]>(() => data.value.roomSummary?.rooms ?? [])
+const rooms = computed<DashboardRoom[]>(() => roomMapData.value.roomSummary?.rooms ?? [])
 const monthValue = computed(() => new Date().toISOString().slice(0, 7))
 const totalApprovals = computed(() =>
   Number(data.value.approvals?.billAdjustments || 0) +
@@ -128,7 +134,7 @@ function statusClass(status: string) {
   return statusMeta[status as RoomStatus]?.className ?? 'disabled'
 }
 function statusCount(status: string) {
-  return data.value.roomSummary?.statusCounts?.[status] ?? 0
+  return roomMapData.value.roomSummary?.statusCounts?.[status] ?? 0
 }
 function formatMoney(value: unknown) {
   const amount = Number(value || 0)
@@ -146,12 +152,17 @@ function tenantName(row: any) {
 async function load() {
   const params: any = {}
   if (filters.buildingId) params.buildingId = filters.buildingId
-  if (filters.statuses.length) params.statuses = filters.statuses.join(',')
   data.value = (await http.get('/dashboard', { params })).data.data
+}
+async function loadRoomMap() {
+  const params: any = {}
+  if (roomMapFilters.buildingId) params.buildingId = roomMapFilters.buildingId
+  if (roomMapFilters.statuses.length) params.statuses = roomMapFilters.statuses.join(',')
+  roomMapData.value = (await http.get('/dashboard', { params })).data.data
 }
 async function init() {
   buildings.value = (await http.get('/properties/buildings')).data.data
-  await load()
+  await Promise.all([load(), loadRoomMap()])
 }
 onMounted(init)
 </script>
@@ -217,13 +228,26 @@ onMounted(init)
               </div>
               <div class="room-tools">
                 <el-select
-                  v-model="filters.statuses"
+                  v-model="roomMapFilters.buildingId"
+                  clearable
+                  placeholder="筛选楼栋"
+                  @change="loadRoomMap"
+                >
+                  <el-option
+                    v-for="item in buildings"
+                    :key="item.id"
+                    :label="item.buildingName || item.buildingNo"
+                    :value="item.id"
+                  />
+                </el-select>
+                <el-select
+                  v-model="roomMapFilters.statuses"
                   multiple
                   collapse-tags
                   collapse-tags-tooltip
                   clearable
                   placeholder="全部房态"
-                  @change="load"
+                  @change="loadRoomMap"
                 >
                   <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
