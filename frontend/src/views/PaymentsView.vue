@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
 
 const session = useSessionStore()
+const route = useRoute()
 const contracts = ref<any[]>([])
 const bills = ref<any[]>([])
 const payments = ref<any[]>([])
@@ -72,7 +74,14 @@ async function submitVoidRequest() { if (!voidForm.paymentId || !voidForm.reason
 async function approveVoidRequest(id: number) { await http.post(`/payment-void-requests/${id}/approve`); await selectVoidPayment(); await selectContract() }
 async function rejectVoidRequest(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/payment-void-requests/${id}/reject`, { reason }); await selectVoidPayment() } }
 function allocationSummary(payment: any) { return payment.allocations?.reduce((sum: number, item: any) => sum + Number(item.allocatedAmount), 0)?.toFixed(2) ?? '0.00' }
-onMounted(loadContracts)
+onMounted(async () => {
+  await loadContracts()
+  const contractId = Number(route.query.contractId)
+  if (Number.isInteger(contractId) && contracts.value.some((item) => item.id === contractId)) {
+    form.contractId = contractId
+    await selectContract()
+  }
+})
 </script>
 
 <template>
