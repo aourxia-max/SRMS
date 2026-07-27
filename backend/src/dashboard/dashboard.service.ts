@@ -1,10 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
+import { FinanceService } from '../finance/finance.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { currentMonthPeriod } from './rent-collection-overview';
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly finance: FinanceService,
+  ) {}
   async summary(
     user: AuthUser,
     buildingId?: number,
@@ -30,6 +35,7 @@ export class DashboardService {
     in7.setDate(in7.getDate() + rentReminderDays);
     const in30 = new Date(now);
     in30.setDate(in30.getDate() + contractExpiryDays);
+    const monthPeriod = currentMonthPeriod(now);
     const rooms = await this.prisma.db.room.findMany({
       where: {
         deletedAt: null,
@@ -65,6 +71,7 @@ export class DashboardService {
       adjustments,
       refunds,
       rebates,
+      rentCollection,
     ] = await Promise.all([
       this.prisma.db.rentBill.findMany({
         where: {
@@ -130,6 +137,9 @@ export class DashboardService {
       this.prisma.db.pricingRebate.count({
         where: { approvalStatus: 'PENDING' },
       }),
+      user.role === UserRole.SUPER_ADMIN
+        ? this.finance.rentCollection(monthPeriod.from, monthPeriod.to)
+        : Promise.resolve(null),
     ]);
     const result: Record<string, unknown> = {
       roomSummary: {
@@ -158,11 +168,19 @@ export class DashboardService {
         pricingRebates: rebates,
       },
     };
-    if (user.role === UserRole.SUPER_ADMIN)
+    if (user.role === UserRole.SUPER_ADMIN) {
       result['arrearsTotal'] = arrears.reduce(
         (sum, item) => sum.plus(item.outstandingAmount),
         new Prisma.Decimal(0),
       );
+      result['rentCollectionOverview'] = {
+        period: monthPeriod,
+        netReceivable: rentCollection!.total.netReceivable,
+        validReceived: rentCollection!.total.validReceived,
+        outstanding: rentCollection!.total.outstanding,
+        collectionRate: rentCollection!.collectionRate,
+      };
+    }
     return result;
   }
 }

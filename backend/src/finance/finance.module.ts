@@ -15,5 +15,6 @@ import { SystemModule } from '../system/system.module';
     FinanceExportService,
     ExportTasksService,
   ],
+  exports: [FinanceService],
 })
 export class FinanceModule {}

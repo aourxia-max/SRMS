@@ -34,6 +34,7 @@ const data = ref<any>({
   arrears: [],
   expiringContracts: [],
   approvals: {},
+  rentCollectionOverview: null,
 })
 const roomMapData = ref<any>({
   roomSummary: { statusCounts: {}, rooms: [] },
@@ -68,6 +69,22 @@ const totalApprovals = computed(() =>
   Number(data.value.approvals?.paymentRefunds || 0) +
   Number(data.value.approvals?.pricingRebates || 0),
 )
+const rentCollection = computed(() => data.value.rentCollectionOverview)
+const collectionRate = computed(() => {
+  const value = rentCollection.value?.collectionRate
+  return value === null || value === undefined ? null : Number(value)
+})
+const collectionProgress = computed(() => Math.min(Math.max(collectionRate.value ?? 0, 0), 100))
+const collectionMonth = computed(() => {
+  const from = rentCollection.value?.period?.from as string | undefined
+  return from ? `${from.slice(0, 4)}年${Number(from.slice(5, 7))}月` : '本月'
+})
+const collectionState = computed(() => {
+  if (!rentCollection.value || Number(rentCollection.value.netReceivable || 0) === 0) return '本月暂无应收租金'
+  if (data.value.arrears?.length) return '存在逾期欠租，请优先跟进'
+  if (collectionRate.value === 100) return '本月租金已全部收齐'
+  return '仍有本月租金待收'
+})
 const todoItems = computed(() => [
   {
     title: '逾期未收',
@@ -284,19 +301,29 @@ onMounted(init)
           <template #header>
             <div class="panel-head">
               <div>
-                <h2>租金趋势</h2>
-                <small>当前版本展示实时待收和欠租规模，后续接入月度趋势接口。</small>
+                <h2>本月租金收缴概览</h2>
+                <small>按账期经营口径统计 · {{ collectionMonth }}</small>
               </div>
               <el-button text type="primary" @click="router.push('/finance')">查看财务中心</el-button>
             </div>
           </template>
-          <div class="trend-lines">
-            <div class="trend-bar expected" :style="{ width: `${Math.min(data.rentReminders.length * 12, 100)}%` }">
-              <span>待收提醒 {{ data.rentReminders.length }}</span>
+          <div v-if="isSuper && rentCollection" class="collection-overview">
+            <div class="collection-metrics">
+              <div class="collection-metric primary"><span>本月应收</span><b>{{ formatMoney(rentCollection.netReceivable) }}</b></div>
+              <div class="collection-metric success"><span>本月已收</span><b>{{ formatMoney(rentCollection.validReceived) }}</b></div>
+              <div class="collection-metric warning"><span>本月未收</span><b>{{ formatMoney(rentCollection.outstanding) }}</b></div>
+              <div class="collection-metric danger"><span>逾期欠租</span><b>{{ formatMoney(data.arrearsTotal) }}</b></div>
             </div>
-            <div class="trend-bar received" :style="{ width: `${Math.min(data.arrears.length * 12, 100)}%` }">
-              <span>逾期欠租 {{ data.arrears.length }}</span>
+            <div class="collection-progress-head">
+              <span>本月收缴率 <b>{{ collectionRate === null ? '-' : `${collectionRate}%` }}</b></span>
+              <small>{{ collectionState }}</small>
             </div>
+            <el-progress :percentage="collectionProgress" :show-text="false" :stroke-width="10" :color="data.arrears.length ? '#e5484d' : '#25a26f'" />
+          </div>
+          <div v-else class="collection-safe-summary">
+            <div><span>待收提醒</span><b>{{ data.rentReminders.length }} 笔</b></div>
+            <div><span>逾期欠租</span><b>{{ data.arrears.length }} 笔</b></div>
+            <small>金额与收缴率仅对超级管理员展示。</small>
           </div>
         </el-card>
       </div>
@@ -444,11 +471,15 @@ onMounted(init)
 .composition .purple { background:#7d5ce7; }
 .composition .gray { background:#8c95a3; }
 .composition .muted { background:#c4ccd8; }
-.trend-lines { display:grid; gap:14px; padding:8px 0; }
-.trend-bar { min-width:80px; height:34px; border-radius:8px; color:#fff; padding:8px 12px; transition:width .2s; }
-.trend-bar.expected { background:#246bfd; }
-.trend-bar.received { background:#22a06b; }
+.collection-overview { display:grid; gap:17px; padding:2px 0 4px; }
+.collection-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.collection-metric { min-width:0; padding:12px; border:1px solid #e8edf4; border-radius:10px; background:#f8fafc; }
+.collection-metric span { display:block; color:#748197; font-size:12px; }
+.collection-metric b { display:block; margin-top:7px; overflow:hidden; color:#24334a; font-size:18px; text-overflow:ellipsis; white-space:nowrap; }
+.collection-metric.primary { background:#f0f5ff; border-color:#d9e6ff; }.collection-metric.success { background:#effaf5; border-color:#d7f0e4; }.collection-metric.warning { background:#fff8ea; border-color:#f8e5b7; }.collection-metric.danger { background:#fff2f2; border-color:#ffd9da; }.collection-metric.danger b { color:#d33f46; }
+.collection-progress-head { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#506078; font-size:12px; }.collection-progress-head b { color:#24334a; font-size:16px; }.collection-progress-head small { color:#7b8798; }
+.collection-safe-summary { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }.collection-safe-summary > div { padding:12px; border-radius:10px; background:#f8fafc; }.collection-safe-summary span,.collection-safe-summary b { display:block; }.collection-safe-summary span,.collection-safe-summary small { color:#748197; font-size:12px; }.collection-safe-summary b { margin-top:6px; color:#24334a; font-size:19px; }.collection-safe-summary small { grid-column:1/-1; }
 .table-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
 @media (max-width:1200px) { .metrics { grid-template-columns:repeat(3,1fr); } .cockpit-grid,.table-grid { grid-template-columns:1fr; } }
-@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition { grid-template-columns:1fr; } }
+@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition,.collection-metrics { grid-template-columns:1fr; }.collection-progress-head { align-items:flex-start; flex-direction:column; gap:4px; } }
 </style>
