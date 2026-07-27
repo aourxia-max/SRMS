@@ -67,6 +67,25 @@ const DEFAULTS: Record<
 
 type JsonObject = { [key: string]: JsonLike };
 type JsonLike = null | boolean | number | string | JsonLike[] | JsonObject;
+type PreRestoreBackup = {
+  backupNo: string;
+  status: BackupStatus;
+  databasePath: string | null;
+  manifestPath: string | null;
+  sizeBytes: string | null;
+  checksum: string | null;
+  retentionUntil: Date;
+  createdBy: number | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+};
+type BackupMetadataSource = {
+  backupNo: string;
+  backupType: BackupType;
+  retentionUntil: Date;
+  createdBy: number | null;
+  startedAt: Date | null;
+};
 
 const stableJson = (value: JsonLike): string => {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
@@ -453,9 +472,19 @@ export class SystemService {
     confirmation: string,
     user: AuthUser,
   ) {
-    const backup = await this.prisma.db.backupRecord.findUnique({
+    let backup = await this.prisma.db.backupRecord.findUnique({
       where: { id },
     });
+    if (backup && backup.status !== BackupStatus.SUCCESS) {
+      await this.rehydrateBackupMetadata({
+        backupNo: backup.backupNo,
+        backupType: backup.backupType,
+        retentionUntil: backup.retentionUntil,
+        createdBy: backup.createdBy,
+        startedAt: backup.startedAt,
+      });
+      backup = await this.prisma.db.backupRecord.findUnique({ where: { id } });
+    }
     if (!backup || backup.status !== BackupStatus.SUCCESS)
       throw new BadRequestException('只能恢复成功完成的备份');
     if (confirmation !== '确认恢复')
@@ -493,10 +522,18 @@ export class SystemService {
         ],
         { windowsHide: true },
       );
+      await this.rehydrateBackupMetadata({
+        backupNo: backup.backupNo,
+        backupType: backup.backupType,
+        retentionUntil: backup.retentionUntil,
+        createdBy: backup.createdBy,
+        startedAt: backup.startedAt,
+      });
       await this.prisma.db.authRefreshToken.updateMany({
         where: { revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      await this.persistPreRestoreBackup(preRestore);
       await this.prisma.db.backupRecord.update({
         where: { id },
         data: {
@@ -579,5 +616,73 @@ export class SystemService {
       ...backup,
       sizeBytes: backup.sizeBytes?.toString() ?? null,
     };
+  }
+
+  async persistPreRestoreBackup(backup: PreRestoreBackup) {
+    const data = {
+      backupNo: backup.backupNo,
+      backupType: BackupType.PRE_RESTORE,
+      status: backup.status,
+      databasePath: backup.databasePath,
+      manifestPath: backup.manifestPath,
+      sizeBytes: backup.sizeBytes ? BigInt(backup.sizeBytes) : null,
+      checksum: backup.checksum,
+      retentionUntil: backup.retentionUntil,
+      createdBy: backup.createdBy,
+      startedAt: backup.startedAt,
+      completedAt: backup.completedAt,
+    };
+    return this.prisma.db.backupRecord.upsert({
+      where: { backupNo: backup.backupNo },
+      create: data,
+      update: data,
+    });
+  }
+
+  async rehydrateBackupMetadata(backup: BackupMetadataSource) {
+    const backupDir = resolve(this.config.getOrThrow<string>('BACKUP_DIR'));
+    const databasePath = resolve(backupDir, `${backup.backupNo}.sql`);
+    const attachmentPath = resolve(
+      backupDir,
+      `${backup.backupNo}.attachments.zip`,
+    );
+    const manifestPath = resolve(backupDir, `${backup.backupNo}.manifest.json`);
+    if (
+      !databasePath.startsWith(backupDir) ||
+      !attachmentPath.startsWith(backupDir) ||
+      !manifestPath.startsWith(backupDir)
+    )
+      throw new BadRequestException('备份目录配置无效');
+    const [database, attachment, manifestContent] = await Promise.all([
+      readFile(databasePath),
+      readFile(attachmentPath),
+      readFile(manifestPath, 'utf8'),
+    ]);
+    const manifest = JSON.parse(String(manifestContent)) as {
+      backupNo?: string;
+    };
+    if (manifest.backupNo !== backup.backupNo)
+      throw new BadRequestException('备份清单与备份编号不一致');
+    const metadata = {
+      status: BackupStatus.SUCCESS,
+      databasePath,
+      manifestPath,
+      sizeBytes: BigInt(database.length + attachment.length),
+      checksum: createHash('sha256').update(database).digest('hex'),
+      failureReason: null,
+      completedAt: new Date(),
+    };
+    return this.prisma.db.backupRecord.upsert({
+      where: { backupNo: backup.backupNo },
+      create: {
+        backupNo: backup.backupNo,
+        backupType: backup.backupType,
+        retentionUntil: backup.retentionUntil,
+        createdBy: backup.createdBy,
+        startedAt: backup.startedAt,
+        ...metadata,
+      },
+      update: metadata,
+    });
   }
 }

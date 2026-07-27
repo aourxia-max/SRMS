@@ -1,7 +1,71 @@
 import { createHash } from 'crypto';
+import { readFile } from 'fs/promises';
 import { SystemService } from './system.service';
 
+jest.mock('fs/promises', () => ({ readFile: jest.fn() }));
+
 describe('SystemService', () => {
+  it('rehydrates restored backup metadata from controlled backup files', async () => {
+    const upsert = jest.fn().mockResolvedValue({});
+    jest
+      .mocked(readFile)
+      .mockResolvedValueOnce(Buffer.from('database backup'))
+      .mockResolvedValueOnce(Buffer.from('attachment backup'))
+      .mockResolvedValueOnce(Buffer.from('{"backupNo":"BK-1"}'));
+    const service = new SystemService(
+      { db: { backupRecord: { upsert } } } as never,
+      {
+        getOrThrow: jest.fn().mockReturnValue('D:/controlled-backups'),
+      } as never,
+    );
+
+    await service.rehydrateBackupMetadata({
+      backupNo: 'BK-1',
+      backupType: 'MANUAL',
+      retentionUntil: new Date('2026-08-27T00:00:00.000Z'),
+      createdBy: 1,
+      startedAt: new Date('2026-07-28T00:00:00.000Z'),
+    });
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { backupNo: 'BK-1' },
+        update: expect.objectContaining({ status: 'SUCCESS' }),
+      }),
+    );
+  });
+
+  it('re-registers a pre-restore backup after database restoration', async () => {
+    const upsert = jest.fn().mockResolvedValue({});
+    const service = new SystemService(
+      { db: { backupRecord: { upsert } } } as never,
+      {} as never,
+    );
+
+    await service.persistPreRestoreBackup({
+      backupNo: 'BK-PRE-1',
+      status: 'SUCCESS',
+      databasePath: 'D:/backups/BK-PRE-1.sql',
+      manifestPath: 'D:/backups/BK-PRE-1.manifest.json',
+      sizeBytes: '1024',
+      checksum: 'a'.repeat(64),
+      retentionUntil: new Date('2026-08-27T00:00:00.000Z'),
+      createdBy: 1,
+      startedAt: new Date('2026-07-28T00:00:00.000Z'),
+      completedAt: new Date('2026-07-28T00:01:00.000Z'),
+    });
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { backupNo: 'BK-PRE-1' },
+        create: expect.objectContaining({
+          backupType: 'PRE_RESTORE',
+          sizeBytes: 1024n,
+        }),
+      }),
+    );
+  });
+
   it('serializes backup sizes for JSON responses', async () => {
     const service = new SystemService(
       {
