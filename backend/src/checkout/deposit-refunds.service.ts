@@ -7,7 +7,7 @@ import { SubmitDepositRefundDto } from './dto/submit-deposit-refund.dto';
 export class DepositRefundsService {
   constructor(private readonly prisma: PrismaService) {}
   async list(contractId?: number) {
-    return this.prisma.db.depositRefund.findMany({
+    const refunds = await this.prisma.db.depositRefund.findMany({
       where: contractId ? { contractId } : undefined,
       include: {
         files: { include: { fileAsset: true } },
@@ -15,6 +15,7 @@ export class DepositRefundsService {
       },
       orderBy: { id: 'desc' },
     });
+    return refunds.map((refund) => this.serializeFiles(refund));
   }
   async submit(dto: SubmitDepositRefundDto, user: AuthUser) {
     const amount = new Prisma.Decimal(dto.refundAmount);
@@ -150,5 +151,19 @@ export class DepositRefundsService {
       });
       return refund;
     });
+  }
+  private serializeFiles<
+    T extends { files: Array<{ fileAsset: { sizeBytes: bigint } }> },
+  >(refund: T) {
+    return {
+      ...refund,
+      files: refund.files.map((file) => ({
+        ...file,
+        fileAsset: {
+          ...file.fileAsset,
+          sizeBytes: file.fileAsset.sizeBytes.toString(),
+        },
+      })),
+    };
   }
 }

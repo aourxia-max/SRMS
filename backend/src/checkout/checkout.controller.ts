@@ -76,4 +76,16 @@ export class CheckoutController {
       data: await this.checkout.reject(id, dto.reason, user),
     };
   }
+  @Post(':id/return-to-draft')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async returnToDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.returnToDraft(id, user),
+    };
+  }
 }

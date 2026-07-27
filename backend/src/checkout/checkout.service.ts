@@ -298,6 +298,19 @@ export class CheckoutService {
       },
     });
   }
+  async returnToDraft(id: number, user: AuthUser) {
+    void user;
+    const settlement =
+      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+      });
+    if (settlement.status !== 'REJECTED')
+      throw new BadRequestException('只有已驳回结算单可以退回草稿');
+    return this.prisma.db.checkoutSettlement.update({
+      where: { id },
+      data: { status: 'DRAFT' },
+    });
+  }
   private async completeWithoutDepositRefund(
     tx: Prisma.TransactionClient,
     settlement: {
