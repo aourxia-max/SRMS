@@ -1,8 +1,3 @@
-/*
-  This migration originally ran before the tenant/file migration it depends on.
-  It is intentionally retained as a no-op so existing database migration history
-  remains valid. The executable copy follows task005 as 20260722160000.
-
 -- DropForeignKey
 ALTER TABLE `file_assets` DROP FOREIGN KEY `file_assets_uploaded_by_fkey`;
 
@@ -140,4 +135,3 @@ ALTER TABLE `room_status_histories` RENAME INDEX `room_status_histories_room_cha
 
 -- RenameIndex
 ALTER TABLE `rooms` RENAME INDEX `rooms_building_floor_house_idx` TO `rooms_building_id_floor_no_house_no_idx`;
-*/

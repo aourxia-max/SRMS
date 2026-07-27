@@ -1,4 +1,4 @@
-CREATE TABLE `tenants` (
+CREATE TABLE IF NOT EXISTS `tenants` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_type` ENUM('INDIVIDUAL', 'COMPANY') NOT NULL DEFAULT 'INDIVIDUAL',
   `name` VARCHAR(100) NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE `tenants` (
   KEY `tenants_id_no_hash_idx` (`id_no_hash`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `file_assets` (
+CREATE TABLE IF NOT EXISTS `file_assets` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `storage_key` VARCHAR(500) NOT NULL,
   `original_name` VARCHAR(255) NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE `file_assets` (
   CONSTRAINT `file_assets_uploaded_by_fkey` FOREIGN KEY (`uploaded_by`) REFERENCES `users`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE `tenant_files` (
+CREATE TABLE IF NOT EXISTS `tenant_files` (
   `tenant_id` INT UNSIGNED NOT NULL,
   `file_asset_id` INT UNSIGNED NOT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
