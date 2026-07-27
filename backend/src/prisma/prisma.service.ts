@@ -19,6 +19,9 @@ export class PrismaService implements OnModuleDestroy {
         user: decodeURIComponent(url.username),
         password: decodeURIComponent(url.password),
         database: url.pathname.replace(/^\//, ''),
+        allowPublicKeyRetrieval:
+          url.searchParams.get('allowPublicKeyRetrieval') === 'true' ||
+          config.get<string>('NODE_ENV') !== 'production',
       }),
     });
   }
