@@ -65,6 +65,19 @@ const DEFAULTS: Record<
   },
 };
 
+type JsonObject = { [key: string]: JsonLike };
+type JsonLike = null | boolean | number | string | JsonLike[] | JsonObject;
+
+const stableJson = (value: JsonLike): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object')
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  return JSON.stringify(value);
+};
+
 @Injectable()
 export class SystemService {
   constructor(
@@ -243,9 +256,10 @@ export class SystemService {
     });
     let previous: string | null = null;
     const invalid: number[] = [];
-    for (const row of rows) {
+    const legacy: number[] = [];
+    for (const [index, row] of rows.entries()) {
       if (!row.recordHash) continue;
-      const payload = JSON.stringify({
+      const payload = stableJson({
         eventType: row.eventType,
         entityType: row.entityType,
         entityId: row.entityId,
@@ -254,24 +268,29 @@ export class SystemService {
         reason: row.reason,
         occurredAt: row.occurredAt.toISOString(),
         previousHash: row.previousHash,
-      });
+      } as JsonLike);
       const expected = createHash('sha256').update(payload).digest('hex');
-      if (row.previousHash !== previous || row.recordHash !== expected)
+      const isLegacyFirstRecord =
+        index === 0 && row.previousHash === null && row.recordHash !== expected;
+      if (isLegacyFirstRecord) legacy.push(row.id);
+      else if (row.previousHash !== previous || row.recordHash !== expected)
         invalid.push(row.id);
       previous = row.recordHash;
     }
     return {
       valid: invalid.length === 0,
       invalidIds: invalid,
+      legacyIds: legacy,
       total: rows.length,
     };
   }
 
   async listBackups() {
-    return this.prisma.db.backupRecord.findMany({
+    const backups = await this.prisma.db.backupRecord.findMany({
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
+    return backups.map((backup) => this.serializeBackup(backup));
   }
   async createBackup(user: AuthUser) {
     const now = new Date();
@@ -389,7 +408,7 @@ export class SystemService {
         { backupNo: no, status: result.status },
       );
     });
-    return result;
+    return this.serializeBackup(result);
   }
 
   @Cron('0 0 2 * * *')
@@ -530,7 +549,7 @@ export class SystemService {
     });
     const occurredAt = new Date();
     const previousHash = last?.recordHash ?? null;
-    const payload = JSON.stringify({
+    const payload = stableJson({
       eventType,
       entityType,
       entityId,
@@ -539,7 +558,7 @@ export class SystemService {
       reason: null,
       occurredAt: occurredAt.toISOString(),
       previousHash,
-    });
+    } as JsonLike);
     const recordHash = createHash('sha256').update(payload).digest('hex');
     await tx.securityAuditLog.create({
       data: {
@@ -553,5 +572,12 @@ export class SystemService {
         recordHash,
       },
     });
+  }
+
+  private serializeBackup<T extends { sizeBytes: bigint | null }>(backup: T) {
+    return {
+      ...backup,
+      sizeBytes: backup.sizeBytes?.toString() ?? null,
+    };
   }
 }
