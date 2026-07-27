@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
 
 const session = useSessionStore()
+const router = useRouter()
 const canManage = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
 const buildings = ref<any[]>([])
 const rooms = ref<any[]>([])
@@ -58,7 +60,7 @@ onMounted(reload)
       <el-table :data="rooms.filter(r => (!buildingFilter || r.buildingId === buildingFilter) && (!statusFilter || r.roomStatus === statusFilter))" stripe>
         <el-table-column prop="fullHouseNo" label="完整房号" /><el-table-column label="楼栋"><template #default="{ row }">{{ row.building?.buildingNo }}</template></el-table-column><el-table-column prop="floorNo" label="楼层" /><el-table-column prop="roomType" label="类型" /><el-table-column prop="area" label="面积（㎡）" /><el-table-column prop="ownerName" label="业主" />
         <el-table-column label="房态" width="150"><template #default="{ row }"><el-select v-if="canManage" :model-value="row.roomStatus" size="small" @change="changeStatus(row, String($event))"><el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" /></el-select><span v-else>{{ statusLabels[row.roomStatus] }}</span></template></el-table-column>
-        <el-table-column label="操作" width="210"><template #default="{ row }"><el-button size="small" @click="showHistory(row)">历史</el-button><el-button v-if="canManage" size="small" @click="openRoom(row)">编辑</el-button><el-button v-if="canManage" size="small" type="danger" plain @click="removeRoom(row)">删除</el-button></template></el-table-column>
+        <el-table-column label="操作" width="270"><template #default="{ row }"><el-button size="small" type="primary" plain @click="router.push({ name: 'room-detail', params: { id: row.id } })">查看详情</el-button><el-button size="small" @click="showHistory(row)">历史</el-button><el-button v-if="canManage" size="small" @click="openRoom(row)">编辑</el-button><el-button v-if="canManage" size="small" type="danger" plain @click="removeRoom(row)">删除</el-button></template></el-table-column>
       </el-table>
     </el-card>
     <el-dialog v-model="buildingDialog" :title="editingBuildingId ? '编辑楼栋' : '新增楼栋'" width="520"><el-form :model="buildingForm" label-position="top"><el-form-item label="楼栋编号"><el-input v-model="buildingForm.buildingNo" placeholder="例如：1栋" /></el-form-item><el-form-item label="楼栋名称"><el-input v-model="buildingForm.buildingName" /></el-form-item><el-form-item label="楼层数"><el-input-number v-model="buildingForm.floorCount" :min="1" /></el-form-item><el-form-item label="显示顺序"><el-input-number v-model="buildingForm.sortOrder" /></el-form-item><el-form-item label="状态"><el-select v-model="buildingForm.status"><el-option label="启用" value="ACTIVE" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item><el-form-item label="备注"><el-input v-model="buildingForm.remark" type="textarea" /></el-form-item></el-form><template #footer><el-button @click="buildingDialog = false">取消</el-button><el-button type="primary" @click="saveBuilding">保存</el-button></template></el-dialog>
