@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { http } from '../services/http'
 
 type Concession = {
@@ -14,6 +15,7 @@ type Concession = {
 }
 
 const rooms = ref<any[]>([])
+const route = useRoute()
 const tenants = ref<any[]>([])
 const contracts = ref<any[]>([])
 const bills = ref<any[]>([])
@@ -25,6 +27,8 @@ const form = reactive({
   depositRequired: '0', paymentCycleMonths: 1, primaryTenantId: 0, secondaryTenantIds: [] as number[],
 })
 const cycleMonths: Record<string, number> = { MONTHLY: 1, QUARTERLY: 3, HALF_YEARLY: 6, YEARLY: 12 }
+const selectedRoomId = computed(() => Number(route.query.roomId) || 0)
+const visibleContracts = computed(() => selectedRoomId.value ? contracts.value.filter((item) => item.roomId === selectedRoomId.value) : contracts.value)
 
 async function load() {
   rooms.value = (await http.get('/properties/rooms')).data.data
@@ -67,7 +71,7 @@ function changeConcessionType(item: Concession) {
 }
 function removeConcession(index: number) { concessions.value.splice(index, 1) }
 async function showBills(row: any) { bills.value = (await http.get(`/contracts/${row.id}/bills`)).data.data }
-onMounted(async () => { const settings = await http.get('/system/defaults').catch(() => null); const cycle = settings?.data?.data?.defaultPaymentCycle; if (cycle && cycleMonths[cycle]) form.paymentCycleMonths = cycleMonths[cycle]; await load() })
+onMounted(async () => { const settings = await http.get('/system/defaults').catch(() => null); const cycle = settings?.data?.data?.defaultPaymentCycle; if (cycle && cycleMonths[cycle]) form.paymentCycleMonths = cycleMonths[cycle]; await load(); if (selectedRoomId.value && rooms.value.some((item) => item.id === selectedRoomId.value)) form.roomId = selectedRoomId.value })
 </script>
 
 <template>
@@ -108,6 +112,6 @@ onMounted(async () => { const settings = await http.get('/system/defaults').catc
       </el-table>
     </el-card>
     <el-button style="margin-top: 16px" type="primary" @click="submit">确认并生成账单</el-button>
-    <el-card header="已确认合同" style="margin-top: 16px"><el-table :data="contracts"><el-table-column prop="contractNo" label="合同编号" /><el-table-column label="房源"><template #default="{ row }">{{ row.room?.fullHouseNo }}</template></el-table-column><el-table-column prop="status" label="状态" /><el-table-column label="账单"><template #default="{ row }"><el-button size="small" @click="showBills(row)">查看</el-button></template></el-table-column></el-table><el-table v-if="bills.length" :data="bills" style="margin-top: 16px"><el-table-column prop="periodSeq" label="期数" /><el-table-column prop="baseRentAmount" label="原始租金" /><el-table-column prop="rentFreeAmount" label="免租" /><el-table-column prop="discountAmount" label="优惠" /><el-table-column prop="payableAmount" label="最终应收" /></el-table></el-card>
+    <el-card header="已确认合同" style="margin-top: 16px"><el-alert v-if="selectedRoomId" title="已按房源筛选合同，并已预选该房源用于新建合同。" type="info" :closable="false" style="margin-bottom:12px" /><el-table :data="visibleContracts"><el-table-column prop="contractNo" label="合同编号" /><el-table-column label="房源"><template #default="{ row }">{{ row.room?.fullHouseNo }}</template></el-table-column><el-table-column prop="status" label="状态" /><el-table-column label="账单"><template #default="{ row }"><el-button size="small" @click="showBills(row)">查看</el-button></template></el-table-column></el-table><el-table v-if="bills.length" :data="bills" style="margin-top: 16px"><el-table-column prop="periodSeq" label="期数" /><el-table-column prop="baseRentAmount" label="原始租金" /><el-table-column prop="rentFreeAmount" label="免租" /><el-table-column prop="discountAmount" label="优惠" /><el-table-column prop="payableAmount" label="最终应收" /></el-table></el-card>
   </main>
 </template>

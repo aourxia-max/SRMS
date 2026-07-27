@@ -33,7 +33,7 @@ onMounted(load)
           <div class="title-row"><h1>{{ room.fullHouseNo }}</h1><el-tag effect="light" type="success">{{ statusLabel(room.roomStatus) }}</el-tag></div>
           <p>{{ room.building?.buildingName || room.building?.buildingNo }} · {{ room.floorNo }} 层 · 状态更新于 {{ date(room.statusChangedAt) }}</p>
         </div>
-        <div class="detail-actions"><el-button @click="router.push('/properties')">前往房源管理</el-button><el-button @click="router.push('/contracts')">合同管理</el-button><el-button type="primary" @click="router.push(focusContract ? { path: '/payments', query: { contractId: focusContract.id } } : '/payments')">收款登记</el-button></div>
+        <div class="detail-actions"><el-button @click="router.push('/properties')">前往房源管理</el-button><el-button @click="router.push({ path: '/contracts', query: { roomId: room.id } })">合同管理</el-button><el-button type="primary" @click="router.push(focusContract ? { path: '/payments', query: { contractId: focusContract.id } } : '/payments')">收款登记</el-button></div>
       </header>
 
       <section class="risk-row"><el-tag v-for="label in detail.riskLabels" :key="label" :type="label === '当前无待办' ? 'success' : 'warning'" effect="light">{{ label }}</el-tag></section>
