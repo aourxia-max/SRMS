@@ -1,5 +1,11 @@
 # Task009 阶梯退差验收记录
 
+## 2026-07-27 本机 TEST 数据补充核验
+
+- `TEST-HT-20260727224941`（合同 ID 7）已在服务启动补偿检查中从 `PENDING_START` 自动转为 `ACTIVE`，并写入 `activated_at`。
+- 对应房源 ID 4 自动从 `PENDING_MOVE_IN` 转为 `RENTED`；房态历史中存在且仅存在 1 条 `business_type=CONTRACT`、目标状态为 `RENTED` 的自动流转记录。
+- 阶梯达档、实际退款凭证和转预收款仍需使用独立的阶梯 TEST 合同继续验收；本记录不将其提前标记为通过。
+
 ## 已实现
 
 - 新增 `pricing_rebates`、`pricing_rebate_files`，以及合同当前档位、已完成整月、下一档日期字段；固定租金手工退差强制关联有效租金账单。

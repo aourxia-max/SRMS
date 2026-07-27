@@ -493,6 +493,7 @@ model Contract {
   depositRequired Decimal @default(0) @map("deposit_required") @db.Decimal(14,2)
   status ContractStatus @default(DRAFT)
   billingGeneratedAt DateTime? @map("billing_generated_at") @db.DateTime(3)
+  activatedAt DateTime? @map("activated_at") @db.DateTime(3)
   paidThroughDate DateTime? @map("paid_through_date") @db.Date
   nextDueDate DateTime? @map("next_due_date") @db.Date
   qualifiedMonths Int @default(0) @map("qualified_months")
