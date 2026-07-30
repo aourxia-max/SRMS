@@ -51,9 +51,11 @@ onMounted(() => void app.loadProjectName())
     </aside>
     <section class="srms-main"><header class="srms-topbar"><button class="collapse-button" @click="collapsed = !collapsed">☰</button><span class="srms-crumb">首页 / <b>{{ currentPage }}</b></span><div class="srms-user"><span class="srms-avatar">{{ initial }}</span><span>{{ session.user?.displayName }}</span><el-button link type="primary" @click="logout">退出登录</el-button></div></header><main class="srms-content"><router-view /></main></section>
   </div>
+  <footer v-if="!isPublicPage" class="icp-footer"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">琼ICP备2026011136号-1</a></footer>
 </template>
 
 <style>
+.icp-footer { padding:0 28px 24px; color:#8390a2; font-size:12px; text-align:center; }.icp-footer a { color:inherit; text-decoration:none; }.icp-footer a:hover { color:#246bfd; text-decoration:underline; }
 .srms-shell { min-height:100vh; background:#f3f6fb; color:#233044; }
 .srms-sidebar { position:fixed; inset:0 auto 0 0; z-index:50; width:222px; overflow-y:auto; background:#162338; color:#c6d1e2; padding:22px 14px; transition:width .2s ease; }
 .srms-brand { display:flex; align-items:center; gap:10px; min-height:56px; padding:0 8px 18px; border-bottom:1px solid rgba(255,255,255,.09); }

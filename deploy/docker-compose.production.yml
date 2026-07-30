@@ -1,0 +1,29 @@
+services:
+  mysql:
+    ports: !reset []
+
+  api:
+    ports: !reset []
+    environment:
+      CORS_ORIGIN: https://www.hetfw.cn
+
+  web:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - srms_caddy_data:/data
+      - srms_caddy_config:/config
+    depends_on:
+      web:
+        condition: service_started
+
+volumes:
+  srms_caddy_data:
+  srms_caddy_config:

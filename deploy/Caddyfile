@@ -1,0 +1,8 @@
+hetfw.cn {
+  redir https://www.hetfw.cn{uri} permanent
+}
+
+www.hetfw.cn {
+  encode zstd gzip
+  reverse_proxy web:80
+}
