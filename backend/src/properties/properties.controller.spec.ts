@@ -83,6 +83,12 @@ describe('PropertiesController', () => {
             .fn()
             .mockResolvedValue({ id: 2, buildingNo: '2栋' }),
         },
+        $transaction: jest.fn((callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            room: { update },
+            roomStatusHistory: { create: jest.fn() },
+          }),
+        ),
       },
     };
     const controller = new PropertiesController(prisma as never);
@@ -123,6 +129,12 @@ describe('PropertiesController', () => {
             .fn()
             .mockResolvedValue({ id: 1, buildingNo: '1栋' }),
         },
+        $transaction: jest.fn((callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            room: { update },
+            roomStatusHistory: { create: jest.fn() },
+          }),
+        ),
       },
     };
     const controller = new PropertiesController(prisma as never);
@@ -158,5 +170,55 @@ describe('PropertiesController', () => {
       include: { building: true },
     });
     expect(update.mock.calls[0][0].data).not.toHaveProperty('roomStatus');
+  });
+
+  it('records a status history entry when detail editing changes room status', async () => {
+    const update = jest
+      .fn()
+      .mockResolvedValue({ id: 11, roomStatus: 'RENTED' });
+    const historyCreate = jest.fn().mockResolvedValue({ id: 2 });
+    const prisma = {
+      db: {
+        room: {
+          findFirstOrThrow: jest.fn().mockResolvedValue({
+            id: 11,
+            buildingId: 1,
+            houseNo: '101',
+            roomStatus: 'EMPTY',
+            deletedAt: null,
+          }),
+          update,
+        },
+        building: {
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ id: 1, buildingNo: '1栋' }),
+        },
+        roomStatusHistory: { create: historyCreate },
+        $transaction: jest.fn((callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            room: { update },
+            roomStatusHistory: { create: historyCreate },
+          }),
+        ),
+      },
+    };
+    const controller = new PropertiesController(prisma as never);
+
+    await controller.updateRoom(
+      11,
+      { roomStatus: 'RENTED' } as never,
+      authUser,
+    );
+
+    expect(historyCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        roomId: 11,
+        fromStatus: 'EMPTY',
+        toStatus: 'RENTED',
+        changeReason: '详情页编辑房态',
+        changedBy: 7,
+      }),
+    });
   });
 });

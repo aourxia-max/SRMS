@@ -22,6 +22,7 @@ const editForm = reactive({
   floorNo: 1,
   area: undefined as number | undefined,
   roomType: 'RESIDENTIAL',
+  roomStatus: 'EMPTY',
   decorationStatus: 'UNKNOWN',
   usageType: 'RESIDENCE',
   ownerName: '',
@@ -44,6 +45,7 @@ function openEdit() {
     floorNo: room.value.floorNo ?? 1,
     area: room.value.area === null || room.value.area === undefined ? undefined : Number(room.value.area),
     roomType: room.value.roomType ?? 'RESIDENTIAL',
+    roomStatus: room.value.roomStatus ?? 'EMPTY',
     decorationStatus: room.value.decorationStatus ?? 'UNKNOWN',
     usageType: room.value.usageType ?? 'RESIDENCE',
     ownerName: room.value.ownerName ?? '',
@@ -61,6 +63,7 @@ async function saveEdit() {
       floorNo: editForm.floorNo,
       area: editForm.area,
       roomType: editForm.roomType,
+      roomStatus: editForm.roomStatus,
       decorationStatus: editForm.decorationStatus,
       usageType: editForm.usageType,
       ownerName: editForm.ownerName,
@@ -117,6 +120,7 @@ onMounted(load)
             <el-col :span="12"><el-form-item label="楼层"><el-input-number v-model="editForm.floorNo" :min="1" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="面积（㎡）"><el-input-number v-model="editForm.area" :min="0" :precision="2" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="房源类型"><el-select v-model="editForm.roomType"><el-option label="住宅" value="RESIDENTIAL" /><el-option label="商铺" value="SHOP" /></el-select></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="房态"><el-select v-model="editForm.roomStatus"><el-option v-for="(label, value) in statusLabels" :key="value" :label="label" :value="value" /></el-select></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="装修状态"><el-select v-model="editForm.decorationStatus"><el-option label="未知" value="UNKNOWN" /><el-option label="已装修" value="RENOVATED" /><el-option label="未装修" value="UNRENOVATED" /><el-option label="装修中" value="RENOVATING" /></el-select></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="使用用途"><el-select v-model="editForm.usageType"><el-option label="居住" value="RESIDENCE" /><el-option label="商铺" value="SHOP" /><el-option label="办公" value="OFFICE" /><el-option label="仓储" value="STORAGE" /><el-option label="其他" value="OTHER" /></el-select></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="业主姓名"><el-input v-model="editForm.ownerName" /></el-form-item></el-col>

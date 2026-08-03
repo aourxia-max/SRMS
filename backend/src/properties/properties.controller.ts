@@ -172,6 +172,7 @@ export class PropertiesController {
   async updateRoom(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateRoomDto,
+    @CurrentUser() user?: AuthUser,
   ) {
     const room = await this.prisma.db.room.findFirstOrThrow({
       where: { id, deletedAt: null },
@@ -181,10 +182,24 @@ export class PropertiesController {
     const building = await this.prisma.db.building.findUniqueOrThrow({
       where: { id: buildingId },
     });
-    const updated = await this.prisma.db.room.update({
-      where: { id },
-      data: { ...dto, fullHouseNo: `${building.buildingNo}${houseNo}` },
-      include: { building: true },
+    const updated = await this.prisma.db.$transaction(async (tx) => {
+      const result = await tx.room.update({
+        where: { id },
+        data: { ...dto, fullHouseNo: `${building.buildingNo}${houseNo}` },
+        include: { building: true },
+      });
+      if (dto.roomStatus && dto.roomStatus !== room.roomStatus && user) {
+        await tx.roomStatusHistory.create({
+          data: {
+            roomId: id,
+            fromStatus: room.roomStatus,
+            toStatus: dto.roomStatus,
+            changeReason: '详情页编辑房态',
+            changedBy: user.id,
+          },
+        });
+      }
+      return result;
     });
     return { code: 200, message: 'success', data: updated };
   }
