@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../services/http'
@@ -33,8 +33,8 @@ function resetBuildingForm() { Object.assign(buildingForm, { buildingNo: '', bui
 function resetRoomForm() { Object.assign(roomForm, { buildingId: 0, houseNo: '', floorNo: 1, roomType: 'RESIDENTIAL', area: undefined, decorationStatus: 'UNKNOWN', usageType: 'RESIDENCE', ownerName: '', ownerPhone: '', ownerRemark: '', remark: '' }); editingRoomId.value = null }
 function openBuilding(building?: any) { resetBuildingForm(); if (building) { editingBuildingId.value = building.id; Object.assign(buildingForm, building) }; buildingDialog.value = true }
 function openRoom(room?: any) { resetRoomForm(); if (room) { editingRoomId.value = room.id; Object.assign(roomForm, room) }; roomDialog.value = true }
-async function saveBuilding() { const payload = withoutEmptyFields(buildingForm); if (editingBuildingId.value) await http.patch(`/properties/buildings/${editingBuildingId.value}`, payload); else await http.post('/properties/buildings', payload); await reload(); buildingDialog.value = false }
-async function saveRoom() { const payload = withoutEmptyFields(roomForm); if (editingRoomId.value) await http.patch(`/properties/rooms/${editingRoomId.value}`, payload); else await http.post('/properties/rooms', payload); await reload(); roomDialog.value = false }
+async function saveBuilding() { try { const payload = withoutEmptyFields(buildingForm); if (editingBuildingId.value) await http.patch(`/properties/buildings/${editingBuildingId.value}`, payload); else await http.post('/properties/buildings', payload); await reload(); buildingDialog.value = false; ElMessage.success('楼栋信息已保存') } catch { ElMessage.error('楼栋信息保存失败，请检查填写内容') } }
+async function saveRoom() { try { const payload = withoutEmptyFields(roomForm); if (editingRoomId.value) await http.patch(`/properties/rooms/${editingRoomId.value}`, payload); else await http.post('/properties/rooms', payload); await reload(); roomDialog.value = false; ElMessage.success('房源信息已保存') } catch { ElMessage.error('房源信息保存失败，请检查填写内容') } }
 async function changeStatus(room: any, status: string) { await http.patch(`/properties/rooms/${room.id}/status`, { roomStatus: status }); await reload() }
 async function showHistory(room: any) { histories.value = (await http.get(`/properties/rooms/${room.id}/history`)).data.data; historyDialog.value = true }
 async function removeRoom(room: any) { await ElMessageBox.confirm(`确认删除房源 ${room.fullHouseNo} 吗？`, '删除确认', { type: 'warning' }); await http.delete(`/properties/rooms/${room.id}`); await reload() }

@@ -13,6 +13,10 @@ import {
   Length,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+
+const blankToUndefined = ({ value }: { value: unknown }) =>
+  value === '' ? undefined : value;
 
 export class UpdateRoomDto {
   @IsOptional() @IsInt() buildingId?: number;
@@ -23,8 +27,27 @@ export class UpdateRoomDto {
   @IsOptional() @IsEnum(DecorationStatus) decorationStatus?: DecorationStatus;
   @IsOptional() @IsEnum(UsageType) usageType?: UsageType;
   @IsOptional() @IsEnum(RoomStatus) roomStatus?: RoomStatus;
-  @IsOptional() @IsString() @Length(1, 100) ownerName?: string;
-  @IsOptional() @IsString() @Length(1, 30) ownerPhone?: string;
-  @IsOptional() @IsString() @Length(1, 500) ownerRemark?: string;
-  @IsOptional() @IsString() @Length(1, 500) remark?: string;
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  ownerName?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @Length(1, 30)
+  ownerPhone?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  ownerRemark?: string;
+
+  @Transform(blankToUndefined)
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  remark?: string;
 }

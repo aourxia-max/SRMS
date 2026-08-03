@@ -38,6 +38,7 @@ function date(value: string | null | undefined) { return value ? new Date(value)
 function money(value: unknown) { return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function statusLabel(value: string) { return statusLabels[value] ?? value }
 async function load() { loading.value = true; try { detail.value = (await http.get(`/properties/rooms/${route.params.id}/detail`)).data.data } finally { loading.value = false } }
+const withoutEmptyFields = (form: Record<string, unknown>) => Object.fromEntries(Object.entries(form).filter(([, value]) => value !== '' && value !== undefined))
 function openEdit() {
   if (!room.value) return
   Object.assign(editForm, {
@@ -58,7 +59,7 @@ function openEdit() {
 async function saveEdit() {
   editSaving.value = true
   try {
-    await http.patch(`/properties/rooms/${route.params.id}`, {
+    await http.patch(`/properties/rooms/${route.params.id}`, withoutEmptyFields({
       houseNo: editForm.houseNo,
       floorNo: editForm.floorNo,
       area: editForm.area,
@@ -70,7 +71,7 @@ async function saveEdit() {
       ownerPhone: editForm.ownerPhone,
       ownerRemark: editForm.ownerRemark,
       remark: editForm.remark,
-    })
+    }))
     editDialog.value = false
     ElMessage.success('房源信息已保存')
     await load()
