@@ -32,7 +32,26 @@ async function reload() {
 function resetBuildingForm() { Object.assign(buildingForm, { buildingNo: '', buildingName: '', floorCount: 6, sortOrder: 0, status: 'ACTIVE', remark: '' }); editingBuildingId.value = null }
 function resetRoomForm() { Object.assign(roomForm, { buildingId: 0, houseNo: '', floorNo: 1, roomType: 'RESIDENTIAL', area: undefined, decorationStatus: 'UNKNOWN', usageType: 'RESIDENCE', ownerName: '', ownerPhone: '', ownerRemark: '', remark: '' }); editingRoomId.value = null }
 function openBuilding(building?: any) { resetBuildingForm(); if (building) { editingBuildingId.value = building.id; Object.assign(buildingForm, building) }; buildingDialog.value = true }
-function openRoom(room?: any) { resetRoomForm(); if (room) { editingRoomId.value = room.id; Object.assign(roomForm, room) }; roomDialog.value = true }
+function openRoom(room?: any) {
+  resetRoomForm()
+  if (room) {
+    editingRoomId.value = room.id
+    Object.assign(roomForm, {
+      buildingId: room.buildingId,
+      houseNo: room.houseNo,
+      floorNo: room.floorNo,
+      roomType: room.roomType,
+      area: room.area === null || room.area === undefined ? undefined : Number(room.area),
+      decorationStatus: room.decorationStatus,
+      usageType: room.usageType,
+      ownerName: room.ownerName ?? '',
+      ownerPhone: room.ownerPhone ?? '',
+      ownerRemark: room.ownerRemark ?? '',
+      remark: room.remark ?? '',
+    })
+  }
+  roomDialog.value = true
+}
 async function saveBuilding() { try { const payload = withoutEmptyFields(buildingForm); if (editingBuildingId.value) await http.patch(`/properties/buildings/${editingBuildingId.value}`, payload); else await http.post('/properties/buildings', payload); await reload(); buildingDialog.value = false; ElMessage.success('楼栋信息已保存') } catch { ElMessage.error('楼栋信息保存失败，请检查填写内容') } }
 async function saveRoom() { try { const payload = withoutEmptyFields(roomForm); if (editingRoomId.value) await http.patch(`/properties/rooms/${editingRoomId.value}`, payload); else await http.post('/properties/rooms', payload); await reload(); roomDialog.value = false; ElMessage.success('房源信息已保存') } catch { ElMessage.error('房源信息保存失败，请检查填写内容') } }
 async function changeStatus(room: any, status: string) { await http.patch(`/properties/rooms/${room.id}/status`, { roomStatus: status }); await reload() }
