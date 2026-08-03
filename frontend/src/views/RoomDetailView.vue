@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
@@ -10,9 +11,24 @@ const session = useSessionStore()
 const detail = ref<any>(null)
 const loading = ref(true)
 const isSuper = computed(() => session.user?.role === 'SUPER_ADMIN')
+const canManage = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
 const room = computed(() => detail.value?.room)
 const focusContract = computed(() => room.value?.contracts?.find((item: any) => item.id === detail.value?.focusContractId) ?? null)
 const financial = computed(() => detail.value?.financial)
+const editDialog = ref(false)
+const editSaving = ref(false)
+const editForm = reactive({
+  houseNo: '',
+  floorNo: 1,
+  area: undefined as number | undefined,
+  roomType: 'RESIDENTIAL',
+  decorationStatus: 'UNKNOWN',
+  usageType: 'RESIDENCE',
+  ownerName: '',
+  ownerPhone: '',
+  ownerRemark: '',
+  remark: '',
+})
 
 const statusLabels: Record<string, string> = { EMPTY: '空置', PENDING_MOVE_IN: '待入住', RENTED: '已出租', PENDING_CHECKOUT: '待退房', MAINTENANCE: '维修中', FOR_SALE: '待出售', SOLD: '已出售', DISABLED: '停用', OTHER: '其他' }
 const decorationLabels: Record<string, string> = { RENOVATED: '已装修', UNRENOVATED: '未装修', RENOVATING: '装修中', UNKNOWN: '未知' }
@@ -21,6 +37,46 @@ function date(value: string | null | undefined) { return value ? new Date(value)
 function money(value: unknown) { return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function statusLabel(value: string) { return statusLabels[value] ?? value }
 async function load() { loading.value = true; try { detail.value = (await http.get(`/properties/rooms/${route.params.id}/detail`)).data.data } finally { loading.value = false } }
+function openEdit() {
+  if (!room.value) return
+  Object.assign(editForm, {
+    houseNo: room.value.houseNo ?? '',
+    floorNo: room.value.floorNo ?? 1,
+    area: room.value.area === null || room.value.area === undefined ? undefined : Number(room.value.area),
+    roomType: room.value.roomType ?? 'RESIDENTIAL',
+    decorationStatus: room.value.decorationStatus ?? 'UNKNOWN',
+    usageType: room.value.usageType ?? 'RESIDENCE',
+    ownerName: room.value.ownerName ?? '',
+    ownerPhone: room.value.ownerPhone ?? '',
+    ownerRemark: room.value.ownerRemark ?? '',
+    remark: room.value.remark ?? '',
+  })
+  editDialog.value = true
+}
+async function saveEdit() {
+  editSaving.value = true
+  try {
+    await http.patch(`/properties/rooms/${route.params.id}`, {
+      houseNo: editForm.houseNo,
+      floorNo: editForm.floorNo,
+      area: editForm.area,
+      roomType: editForm.roomType,
+      decorationStatus: editForm.decorationStatus,
+      usageType: editForm.usageType,
+      ownerName: editForm.ownerName,
+      ownerPhone: editForm.ownerPhone,
+      ownerRemark: editForm.ownerRemark,
+      remark: editForm.remark,
+    })
+    editDialog.value = false
+    ElMessage.success('房源信息已保存')
+    await load()
+  } catch {
+    ElMessage.error('保存房源信息失败，请稍后重试')
+  } finally {
+    editSaving.value = false
+  }
+}
 onMounted(load)
 </script>
 
@@ -33,7 +89,7 @@ onMounted(load)
           <div class="title-row"><h1>{{ room.fullHouseNo }}</h1><el-tag effect="light" type="success">{{ statusLabel(room.roomStatus) }}</el-tag></div>
           <p>{{ room.building?.buildingName || room.building?.buildingNo }} · {{ room.floorNo }} 层 · 状态更新于 {{ date(room.statusChangedAt) }}</p>
         </div>
-        <div class="detail-actions"><el-button @click="router.push('/properties')">前往房源管理</el-button><el-button @click="router.push({ path: '/contracts', query: { roomId: room.id } })">合同管理</el-button><el-button type="primary" @click="router.push(focusContract ? { path: '/payments', query: { contractId: focusContract.id } } : '/payments')">收款登记</el-button></div>
+        <div class="detail-actions"><el-button @click="router.push('/properties')">前往房源管理</el-button><el-button v-if="canManage" @click="openEdit">编辑房源</el-button><el-button @click="router.push({ path: '/contracts', query: { roomId: room.id } })">合同管理</el-button><el-button type="primary" @click="router.push(focusContract ? { path: '/payments', query: { contractId: focusContract.id } } : '/payments')">收款登记</el-button></div>
       </header>
 
       <section class="risk-row"><el-tag v-for="label in detail.riskLabels" :key="label" :type="label === '当前无待办' ? 'success' : 'warning'" effect="light">{{ label }}</el-tag></section>
@@ -54,6 +110,23 @@ onMounted(load)
       </el-card>
 
       <el-collapse class="history-panel"><el-collapse-item title="历史信息（房态变更与历史合同）" name="history"><section class="history-grid"><div><h3>房态变更</h3><el-empty v-if="!room.histories.length" description="暂无房态变更记录" /><el-timeline v-else><el-timeline-item v-for="item in room.histories" :key="item.id" :timestamp="date(item.changedAt)">{{ item.fromStatus ? `${statusLabel(item.fromStatus)} → ${statusLabel(item.toStatus)}` : statusLabel(item.toStatus) }}<small>{{ item.changeReason || '房源建档' }}</small></el-timeline-item></el-timeline></div><div><h3>历史合同</h3><el-empty v-if="!room.contracts.length" description="暂无合同记录" /><el-timeline v-else><el-timeline-item v-for="contract in room.contracts" :key="contract.id" :timestamp="`${date(contract.startDate)} 至 ${date(contract.endDate)}`"><b>{{ contract.contractNo }}</b><small>{{ contractLabels[contract.status] ?? contract.status }} · {{ contract.hasOverdueBill ? '存在逾期账单' : '无逾期账单' }}</small></el-timeline-item></el-timeline></div></section></el-collapse-item></el-collapse>
+      <el-dialog v-model="editDialog" title="编辑房源" width="680">
+        <el-form :model="editForm" label-position="top">
+          <el-row :gutter="16">
+            <el-col :span="12"><el-form-item label="房号"><el-input v-model="editForm.houseNo" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="楼层"><el-input-number v-model="editForm.floorNo" :min="1" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="面积（㎡）"><el-input-number v-model="editForm.area" :min="0" :precision="2" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="房源类型"><el-select v-model="editForm.roomType"><el-option label="住宅" value="RESIDENTIAL" /><el-option label="商铺" value="SHOP" /></el-select></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="装修状态"><el-select v-model="editForm.decorationStatus"><el-option label="未知" value="UNKNOWN" /><el-option label="已装修" value="RENOVATED" /><el-option label="未装修" value="UNRENOVATED" /><el-option label="装修中" value="RENOVATING" /></el-select></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="使用用途"><el-select v-model="editForm.usageType"><el-option label="居住" value="RESIDENCE" /><el-option label="商铺" value="SHOP" /><el-option label="办公" value="OFFICE" /><el-option label="仓储" value="STORAGE" /><el-option label="其他" value="OTHER" /></el-select></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="业主姓名"><el-input v-model="editForm.ownerName" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="业主电话"><el-input v-model="editForm.ownerPhone" /></el-form-item></el-col>
+            <el-col :span="24"><el-form-item label="业主备注"><el-input v-model="editForm.ownerRemark" /></el-form-item></el-col>
+          </el-row>
+          <el-form-item label="房源备注"><el-input v-model="editForm.remark" type="textarea" :rows="3" /></el-form-item>
+        </el-form>
+        <template #footer><el-button @click="editDialog = false">取消</el-button><el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button></template>
+      </el-dialog>
     </template>
   </main>
 </template>
