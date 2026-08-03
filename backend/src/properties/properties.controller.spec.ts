@@ -99,4 +99,64 @@ describe('PropertiesController', () => {
       }),
     );
   });
+
+  it('updates the complete room detail payload and keeps room status out of the update', async () => {
+    const update = jest.fn().mockResolvedValue({
+      id: 11,
+      fullHouseNo: '1栋414-415',
+      roomStatus: 'EMPTY',
+      building: { buildingNo: '1栋' },
+    });
+    const prisma = {
+      db: {
+        room: {
+          findFirstOrThrow: jest.fn().mockResolvedValue({
+            id: 11,
+            buildingId: 1,
+            houseNo: '414-415',
+            deletedAt: null,
+          }),
+          update,
+        },
+        building: {
+          findUniqueOrThrow: jest
+            .fn()
+            .mockResolvedValue({ id: 1, buildingNo: '1栋' }),
+        },
+      },
+    };
+    const controller = new PropertiesController(prisma as never);
+
+    await controller.updateRoom(11, {
+      houseNo: '414-415',
+      floorNo: 4,
+      area: 88.42,
+      roomType: 'RESIDENTIAL',
+      decorationStatus: 'UNKNOWN',
+      usageType: 'RESIDENCE',
+      ownerName: '测试业主',
+      ownerPhone: '13800000000',
+      ownerRemark: '详情页编辑回归测试',
+      remark: '414、415打通合并，一户三室一厅',
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 11 },
+      data: expect.objectContaining({
+        houseNo: '414-415',
+        floorNo: 4,
+        area: 88.42,
+        roomType: 'RESIDENTIAL',
+        decorationStatus: 'UNKNOWN',
+        usageType: 'RESIDENCE',
+        ownerName: '测试业主',
+        ownerPhone: '13800000000',
+        ownerRemark: '详情页编辑回归测试',
+        remark: '414、415打通合并，一户三室一厅',
+        fullHouseNo: '1栋414-415',
+      }),
+      include: { building: true },
+    });
+    expect(update.mock.calls[0][0].data).not.toHaveProperty('roomStatus');
+  });
 });
