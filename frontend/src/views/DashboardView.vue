@@ -449,7 +449,7 @@ onMounted(init)
 .room-owner { color:#68758a; }
 .rented { background:#eaf1ff; border-color:#9dbbf7; color:#174ea6; }
 .empty { background:#e8f7f2; border-color:#91d5c1; color:#116c52; }
-.movein { background:rgba(126,241,255,.3); border-color:#39c9dd; color:#134e5a; }
+.movein { background:rgba(126,241,255,.15); border-color:#39c9dd; color:#134e5a; }
 .checkout { background:#fff1df; border-color:#f5c98f; color:#b76112; }
 .repair { background:#fff8d9; border-color:#eedc7b; color:#8b7114; }
 .sold { background:#eceff3; border-color:#cbd2dc; color:#5c6572; }
