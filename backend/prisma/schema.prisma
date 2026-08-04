@@ -558,7 +558,6 @@ model Contract {
   prepaymentTransactions PrepaymentTransaction[]
   pricingRebates         PricingRebate[]
   depositTransactions    DepositTransaction[]
-  files                  PaymentFile[]
   checkoutSettlements    CheckoutSettlement[]
   depositRefunds         DepositRefund[]
   commissions            ContractCommission[]
@@ -874,8 +873,6 @@ model PaymentFile {
   payment     Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   fileAsset   FileAsset @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
   uploader    User      @relation(fields: [uploadedBy], references: [id], onDelete: Restrict)
-  contract    Contract? @relation(fields: [contractId], references: [id])
-  contractId  Int?      @db.UnsignedInt
 
   @@id([paymentId, fileAssetId])
   @@index([fileAssetId])

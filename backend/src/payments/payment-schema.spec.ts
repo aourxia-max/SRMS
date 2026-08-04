@@ -11,6 +11,11 @@ describe('payment workflow Prisma model', () => {
   it('exposes payment proof and refund adjustment decision relations', () => {
     expect(model('PaymentFile')).toBeDefined();
     expect(model('PaymentRefundAdjustmentDecision')).toBeDefined();
+    expect(
+      model('PaymentFile')?.fields
+        .filter((field) => field.kind === 'scalar')
+        .map((field) => field.name),
+    ).not.toContain('contractId');
   });
 
   it('persists a stable allocation order and allocation origin', () => {
