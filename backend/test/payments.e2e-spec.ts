@@ -7,16 +7,19 @@ import { RolesGuard } from '../src/authorization/roles.guard';
 import { FilesService } from '../src/files/files.service';
 import { PaymentsController } from '../src/payments/payments.controller';
 import { PaymentsService } from '../src/payments/payments.service';
+import { PaymentReviewsController } from '../src/payments/payment-reviews.controller';
+import { PaymentReviewsService } from '../src/payments/payment-reviews.service';
 
 describe('payments API authorization (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
     const moduleFixture = await Test.createTestingModule({
-      controllers: [PaymentsController],
+      controllers: [PaymentsController, PaymentReviewsController],
       providers: [
         { provide: PaymentsService, useValue: {} },
         { provide: FilesService, useValue: {} },
+        { provide: PaymentReviewsService, useValue: {} },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -56,6 +59,13 @@ describe('payments API authorization (e2e)', () => {
     await request(app.getHttpServer())
       .patch('/api/payments/81')
       .send({ amount: '600.00', editReason: '修正金额' })
+      .expect(401);
+  });
+
+  it('protects the unified payment review queue and detail', async () => {
+    await request(app.getHttpServer()).get('/api/payment-reviews').expect(401);
+    await request(app.getHttpServer())
+      .get('/api/payment-reviews/REFUND/201')
       .expect(401);
   });
 });
