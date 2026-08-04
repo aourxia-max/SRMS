@@ -22,6 +22,7 @@ import { RolesGuard } from '../authorization/roles.guard';
 import { FilesService } from '../files/files.service';
 import type { UploadedFile as StoredFile } from '../files/files.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { PaymentListQueryDto } from './dto/payment-list-query.dto';
 import { PaymentsService } from './payments.service';
 
 @Controller('payments')
@@ -32,13 +33,14 @@ export class PaymentsController {
     private readonly files: FilesService,
   ) {}
   @Get()
-  async list(@Query('contractId') contractId?: string) {
+  async list(
+    @Query() query: PaymentListQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return {
       code: 200,
       message: 'success',
-      data: await this.payments.list(
-        contractId ? Number(contractId) : undefined,
-      ),
+      data: await this.payments.list(query, user),
     };
   }
   @Get('prepayments')
@@ -95,5 +97,29 @@ export class PaymentsController {
       `attachment; filename*=UTF-8''${encodeURIComponent(asset.originalName)}`,
     );
     response.send(content);
+  }
+
+  @Get(':id/receipt')
+  async receipt(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.payments.receipt(id, user),
+    };
+  }
+
+  @Get(':id')
+  async detail(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.payments.detail(id, user),
+    };
   }
 }

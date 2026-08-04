@@ -1,20 +1,254 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma, RentBillStatus } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, RentBillStatus, UserRole } from '@prisma/client';
 import { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { PaymentListQueryDto } from './dto/payment-list-query.dto';
+import { chineseUppercaseMoney, receiptTypeFor } from './payment-presenter';
 import { resolveAllocationPlan } from './payment-policy';
 
 @Injectable()
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(contractId?: number) {
-    return this.prisma.db.payment.findMany({
-      where: contractId ? { contractId } : undefined,
-      include: { allocations: { include: { rentBill: true } }, contract: true },
+  async list(query: PaymentListQueryDto = {}, user?: AuthUser) {
+    const rows = await this.prisma.db.payment.findMany({
+      where: {
+        ...(query.contractId ? { contractId: query.contractId } : {}),
+        ...(query.receiptNo
+          ? { receiptNo: { contains: query.receiptNo } }
+          : {}),
+        ...(query.dateFrom || query.dateTo
+          ? {
+              paymentDate: {
+                ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+                ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+              },
+            }
+          : {}),
+        ...(query.roomKeyword || query.tenantKeyword
+          ? {
+              contract: {
+                ...(query.roomKeyword
+                  ? {
+                      room: {
+                        fullHouseNo: { contains: query.roomKeyword },
+                      },
+                    }
+                  : {}),
+                ...(query.tenantKeyword
+                  ? {
+                      members: {
+                        some: {
+                          isCurrent: true,
+                          tenant: { name: { contains: query.tenantKeyword } },
+                        },
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+      include: {
+        contract: {
+          include: {
+            room: true,
+            members: {
+              where: { memberRole: 'PRIMARY', isCurrent: true },
+              include: { tenant: true },
+            },
+          },
+        },
+        adjustments: true,
+      },
       orderBy: { id: 'desc' },
     });
+    return rows.map((row) => {
+      const tenant = row.contract.members[0]?.tenant;
+      return {
+        id: row.id,
+        receiptNo: row.receiptNo,
+        paymentDate: row.paymentDate,
+        amount: this.money(row.amount),
+        method: row.method,
+        status: row.status,
+        receiptType: receiptTypeFor(row.status, row.adjustments),
+        contract: {
+          id: row.contract.id,
+          contractNo: row.contract.contractNo,
+          room: row.contract.room,
+        },
+        tenant: tenant ? this.presentTenant(tenant, user?.role) : null,
+      };
+    });
+  }
+
+  async detail(id: number, user: AuthUser) {
+    const payment = await this.prisma.db.payment.findUnique({
+      where: { id },
+      include: {
+        contract: {
+          include: {
+            room: true,
+            members: {
+              where: { memberRole: 'PRIMARY', isCurrent: true },
+              include: { tenant: true },
+            },
+          },
+        },
+        allocations: {
+          include: { rentBill: true },
+          orderBy: { allocationOrder: 'asc' },
+        },
+        adjustments: { orderBy: { submittedAt: 'asc' } },
+        prepaymentTransactions: { orderBy: { id: 'asc' } },
+        paymentFiles: { include: { fileAsset: true } },
+        refunds: { include: { allocations: true }, orderBy: { id: 'desc' } },
+        voidRequests: { orderBy: { id: 'desc' } },
+      },
+    });
+    if (!payment) throw new NotFoundException('收款记录不存在');
+
+    const [operator, operationLogs] = await Promise.all([
+      this.prisma.db.user.findUnique({
+        where: { id: payment.operatorId },
+        select: { id: true, displayName: true },
+      }),
+      this.prisma.db.operationLog.findMany({
+        where: { entityType: 'PAYMENT', entityId: payment.id },
+        orderBy: { occurredAt: 'desc' },
+      }),
+    ]);
+    const tenant = payment.contract.members[0]?.tenant;
+    const receiptType = receiptTypeFor(payment.status, payment.adjustments);
+    const confirmedAdjustmentAmount = payment.adjustments
+      .filter(
+        (item) =>
+          item.approvalStatus === 'APPROVED' && item.direction === 'DECREASE',
+      )
+      .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+    const prepaymentAmount = payment.prepaymentTransactions.reduce(
+      (sum, item) =>
+        item.transactionType === 'CREDIT_RECEIPT'
+          ? sum.plus(item.amount)
+          : item.transactionType === 'REVERSAL'
+            ? sum.minus(item.amount)
+            : sum,
+      new Prisma.Decimal(0),
+    );
+    const allocations = payment.allocations.map((item) => ({
+      id: item.id,
+      allocationOrder: item.allocationOrder,
+      allocationType: item.allocationType,
+      allocatedAmount: this.money(item.allocatedAmount),
+      reversedAmount: this.money(item.reversedAmount),
+      effectiveAmount: this.money(
+        new Prisma.Decimal(item.allocatedAmount).minus(item.reversedAmount),
+      ),
+      bill: {
+        ...item.rentBill,
+        unitMonthlyRent: this.money(item.rentBill.unitMonthlyRent),
+        baseRentAmount: this.money(item.rentBill.baseRentAmount),
+        rentFreeAmount: this.money(item.rentBill.rentFreeAmount),
+        discountAmount: this.money(item.rentBill.discountAmount),
+        adjustmentAmount: this.money(item.rentBill.adjustmentAmount),
+        payableAmount: this.money(item.rentBill.payableAmount),
+        receivedAmount: this.money(item.rentBill.receivedAmount),
+        outstandingAmount: this.money(item.rentBill.outstandingAmount),
+      },
+    }));
+    const adjustments = payment.adjustments.map((item) => ({
+      ...item,
+      amount: this.money(item.amount),
+      beforeAmount: this.money(item.beforeAmount),
+      afterAmount: this.money(item.afterAmount),
+    }));
+    const prepayments = payment.prepaymentTransactions.map((item) => ({
+      ...item,
+      amount: this.money(item.amount),
+      balanceAfter: this.money(item.balanceAfter),
+    }));
+    const files = payment.paymentFiles.map((item) => ({
+      id: item.fileAsset.id,
+      purpose: item.purpose,
+      originalName: item.fileAsset.originalName,
+      mimeType: item.fileAsset.mimeType,
+      sizeBytes: item.fileAsset.sizeBytes.toString(),
+      uploadedAt: item.fileAsset.uploadedAt,
+    }));
+    const originalReceivable = payment.allocations.reduce(
+      (sum, item) => sum.plus(item.rentBill.payableAmount),
+      new Prisma.Decimal(0),
+    );
+
+    return {
+      id: payment.id,
+      receiptNo: payment.receiptNo,
+      receiptType,
+      contractId: payment.contractId,
+      paymentCategory: payment.paymentCategory,
+      paymentDate: payment.paymentDate,
+      amount: this.money(payment.amount),
+      method: payment.method,
+      externalReference: payment.externalReference,
+      status: payment.status,
+      voidReason: payment.voidReason,
+      voidedAt: payment.voidedAt,
+      editReason: payment.editReason,
+      remark: payment.remark,
+      contract: {
+        id: payment.contract.id,
+        contractNo: payment.contract.contractNo,
+        room: payment.contract.room,
+      },
+      tenant: tenant ? this.presentTenant(tenant, user.role) : null,
+      operator,
+      metrics: {
+        receivedAmount: this.money(payment.amount),
+        confirmedAdjustmentAmount: this.money(confirmedAdjustmentAmount),
+        prepaymentAmount: this.money(prepaymentAmount),
+        coveredBillCount: payment.allocations.length,
+      },
+      allocations,
+      adjustments,
+      prepayments,
+      files,
+      refunds: payment.refunds.map((item) => ({
+        ...item,
+        refundAmount: this.money(item.refundAmount),
+        allocations: item.allocations.map((allocation) => ({
+          ...allocation,
+          reversedAmount: this.money(allocation.reversedAmount),
+        })),
+      })),
+      voidRequests: payment.voidRequests,
+      operationLogs,
+      receipt: {
+        type: receiptType,
+        receiptNo: payment.receiptNo,
+        originalReceivable: this.money(originalReceivable),
+        confirmedAdjustmentAmount: this.money(confirmedAdjustmentAmount),
+        actualPaid: this.money(payment.amount),
+        amountUppercase: chineseUppercaseMoney(payment.amount),
+        lines: allocations.map((item) => ({
+          allocationOrder: item.allocationOrder,
+          billNo: item.bill.billNo,
+          periodStart: item.bill.periodStart,
+          periodEnd: item.bill.periodEnd,
+          payableAmount: item.bill.payableAmount,
+          allocatedAmount: item.allocatedAmount,
+        })),
+      },
+    };
+  }
+
+  async receipt(id: number, user: AuthUser) {
+    return (await this.detail(id, user)).receipt;
   }
 
   async prepayments(contractId: number) {
@@ -317,6 +551,24 @@ export class PaymentsService {
           : null,
       },
     });
+  }
+
+  private money(value: Prisma.Decimal.Value) {
+    return new Prisma.Decimal(value).toDecimalPlaces(2).toFixed(2);
+  }
+
+  private presentTenant(
+    tenant: { id: number; name: string; phone: string | null },
+    role?: UserRole,
+  ) {
+    if (role !== UserRole.VISITOR) return tenant;
+    return {
+      id: tenant.id,
+      name: tenant.name ? `${tenant.name.slice(0, 1)}*` : '',
+      phone: tenant.phone
+        ? `${tenant.phone.slice(0, 3)}****${tenant.phone.slice(-4)}`
+        : null,
+    };
   }
 
   private async receiptNo(tx: Prisma.TransactionClient) {

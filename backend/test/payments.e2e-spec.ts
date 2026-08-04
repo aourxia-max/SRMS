@@ -44,4 +44,11 @@ describe('payments API authorization (e2e)', () => {
       .get('/api/payments/81/files/31')
       .expect(401);
   });
+
+  it('protects payment detail and printable receipt data', async () => {
+    await request(app.getHttpServer()).get('/api/payments/81').expect(401);
+    await request(app.getHttpServer())
+      .get('/api/payments/81/receipt')
+      .expect(401);
+  });
 });

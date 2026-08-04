@@ -204,3 +204,201 @@ describe('PaymentsService.record', () => {
     expect(tx.payment.create).not.toHaveBeenCalled();
   });
 });
+
+describe('PaymentsService payment views', () => {
+  const admin = {
+    id: 3,
+    username: 'cashier',
+    displayName: '收款员',
+    role: UserRole.ADMIN,
+  };
+
+  const payment = {
+    id: 81,
+    receiptNo: 'SK-TEST-81',
+    contractId: 7,
+    paymentCategory: 'RENT',
+    paymentDate: new Date('2026-08-04'),
+    amount: '570.00',
+    method: 'BANK_TRANSFER',
+    externalReference: 'BANK-001',
+    operatorId: 3,
+    status: 'CONFIRMED',
+    voidReason: null,
+    voidedBy: null,
+    voidedAt: null,
+    editReason: null,
+    remark: '八月租金',
+    contract: {
+      id: 7,
+      contractNo: 'HT-000007-20260801-1栋201',
+      room: { id: 21, fullHouseNo: '1栋201' },
+      members: [
+        {
+          memberRole: 'PRIMARY',
+          isCurrent: true,
+          tenant: { id: 9, name: '张三', phone: '13800008000' },
+        },
+      ],
+    },
+    allocations: [
+      {
+        id: 101,
+        allocationOrder: 1,
+        allocationType: 'AUTO_OLDEST_FIRST',
+        allocatedAmount: '570.00',
+        reversedAmount: '0.00',
+        rentBill: {
+          id: 11,
+          billNo: 'ZD-001',
+          periodSeq: 1,
+          periodStart: new Date('2026-08-01'),
+          periodEnd: new Date('2026-08-31'),
+          dueDate: new Date('2026-08-01'),
+          contractPricingTierId: null,
+          unitMonthlyRent: '600.00',
+          baseRentAmount: '600.00',
+          rentFreeAmount: '0.00',
+          discountAmount: '0.00',
+          adjustmentAmount: '0.00',
+          payableAmount: '600.00',
+          receivedAmount: '570.00',
+          outstandingAmount: '30.00',
+          status: 'PARTIAL',
+        },
+      },
+    ],
+    adjustments: [
+      {
+        id: 501,
+        adjustmentNo: 'TZ-501',
+        rentBillId: 11,
+        adjustmentType: 'DISCOUNT',
+        direction: 'DECREASE',
+        amount: '30.00',
+        beforeAmount: '600.00',
+        afterAmount: '570.00',
+        reason: '一次性优惠',
+        sourcePaymentId: 81,
+        contractChangeId: null,
+        approvalStatus: 'PENDING',
+        submittedBy: 3,
+        submittedAt: new Date('2026-08-04'),
+        approvedBy: null,
+        approvedAt: null,
+        rejectedReason: null,
+        reversedByAdjustmentId: null,
+      },
+    ],
+    prepaymentTransactions: [],
+    paymentFiles: [
+      {
+        fileAssetId: 31,
+        purpose: 'PAYMENT_PROOF',
+        fileAsset: {
+          id: 31,
+          originalName: 'receipt.webp',
+          mimeType: 'image/webp',
+          sizeBytes: 16n,
+          uploadedAt: new Date('2026-08-04'),
+        },
+      },
+    ],
+    refunds: [],
+    voidRequests: [],
+  };
+
+  it('returns a serialized detail with a provisional receipt', async () => {
+    const service = new PaymentsService({
+      db: {
+        payment: { findUnique: jest.fn().mockResolvedValue(payment) },
+        user: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 3,
+            displayName: '收款员',
+          }),
+        },
+        operationLog: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const result = await service.detail(81, admin);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 81,
+        amount: '570.00',
+        receiptType: 'PROVISIONAL',
+        tenant: { id: 9, name: '张三', phone: '13800008000' },
+        metrics: {
+          receivedAmount: '570.00',
+          confirmedAdjustmentAmount: '0.00',
+          prepaymentAmount: '0.00',
+          coveredBillCount: 1,
+        },
+        receipt: expect.objectContaining({
+          type: 'PROVISIONAL',
+          amountUppercase: '伍佰柒拾元整',
+        }),
+      }),
+    );
+    expect(result.files[0].sizeBytes).toBe('16');
+  });
+
+  it('masks tenant identity for a visitor', async () => {
+    const service = new PaymentsService({
+      db: {
+        payment: { findUnique: jest.fn().mockResolvedValue(payment) },
+        user: { findUnique: jest.fn().mockResolvedValue(null) },
+        operationLog: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const result = await service.detail(81, {
+      ...admin,
+      role: UserRole.VISITOR,
+    });
+
+    expect(result.tenant).toEqual({
+      id: 9,
+      name: '张*',
+      phone: '138****8000',
+    });
+  });
+
+  it('translates list filters to contract, room, tenant, receipt and date conditions', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new PaymentsService({
+      db: { payment: { findMany } },
+    } as never);
+
+    await service.list(
+      {
+        contractId: 7,
+        roomKeyword: '1栋201',
+        tenantKeyword: '张',
+        receiptNo: 'SK-TEST',
+        dateFrom: '2026-08-01',
+        dateTo: '2026-08-31',
+      },
+      admin,
+    );
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contractId: 7,
+          receiptNo: { contains: 'SK-TEST' },
+          paymentDate: {
+            gte: new Date('2026-08-01'),
+            lte: new Date('2026-08-31'),
+          },
+          contract: expect.objectContaining({
+            room: { fullHouseNo: { contains: '1栋201' } },
+            members: expect.anything(),
+          }),
+        }),
+      }),
+    );
+  });
+});
