@@ -35,6 +35,8 @@ const data = ref<any>({
   expiringContracts: [],
   approvals: {},
   rentCollectionOverview: null,
+  monthlyMoveInCount: 0,
+  monthlyCheckoutCount: 0,
 })
 const roomMapData = ref<any>({
   roomSummary: { statusCounts: {}, rooms: [] },
@@ -50,9 +52,9 @@ const roomMapFilters = reactive({
 
 const isSuper = computed(() => session.user?.role === 'SUPER_ADMIN')
 const statusMeta: Record<RoomStatus, { label: string; className: string; color: string }> = {
-  EMPTY: { label: '空置', className: 'empty', color: '#51ae97' },
-  PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#397be5' },
-  RENTED: { label: '已出租', className: 'rented', color: '#22a06b' },
+  EMPTY: { label: '空置', className: 'empty', color: '#20a37a' },
+  PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#7d5ce7' },
+  RENTED: { label: '已出租', className: 'rented', color: '#246bfd' },
   PENDING_CHECKOUT: { label: '待退租', className: 'checkout', color: '#e98216' },
   MAINTENANCE: { label: '维修中', className: 'repair', color: '#d4b52a' },
   FOR_SALE: { label: '待出售', className: 'forsale', color: '#7d5ce7' },
@@ -236,6 +238,40 @@ onMounted(init)
 
     <section class="cockpit-grid">
       <div class="left-stack">
+        <el-card class="panel-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <h2>本月租金收缴概览</h2>
+                <small>按账期经营口径统计 · {{ collectionMonth }}</small>
+              </div>
+              <el-button text type="primary" @click="router.push('/finance')">查看财务中心</el-button>
+            </div>
+          </template>
+          <div v-if="isSuper && rentCollection" class="collection-overview">
+            <div class="collection-metrics">
+              <div class="collection-metric primary"><span>本月应收</span><b>{{ formatMoney(rentCollection.netReceivable) }}</b></div>
+              <div class="collection-metric success"><span>本月已收</span><b>{{ formatMoney(rentCollection.validReceived) }}</b></div>
+              <div class="collection-metric warning"><span>本月未收</span><b>{{ formatMoney(rentCollection.outstanding) }}</b></div>
+              <div class="collection-metric danger"><span>逾期欠租</span><b>{{ formatMoney(data.arrearsTotal) }}</b></div>
+              <div class="collection-metric move-in"><span>本月新增租房</span><b>{{ data.monthlyMoveInCount || 0 }}</b><small>合同开始日期在本月</small></div>
+              <div class="collection-metric checkout-count"><span>本月实际退租</span><b>{{ data.monthlyCheckoutCount || 0 }}</b><small>已完成退租结算</small></div>
+            </div>
+            <div class="collection-progress-head">
+              <span>本月收缴率 <b>{{ collectionRate === null ? '-' : `${collectionRate}%` }}</b></span>
+              <small>{{ collectionState }}</small>
+            </div>
+            <el-progress :percentage="collectionProgress" :show-text="false" :stroke-width="10" :color="data.arrears.length ? '#e5484d' : '#25a26f'" />
+          </div>
+          <div v-else class="collection-safe-summary">
+            <div><span>待收提醒</span><b>{{ data.rentReminders.length }} 笔</b></div>
+            <div><span>逾期欠租</span><b>{{ data.arrears.length }} 笔</b></div>
+            <div><span>本月新增租房</span><b>{{ data.monthlyMoveInCount || 0 }}</b></div>
+            <div><span>本月实际退租</span><b>{{ data.monthlyCheckoutCount || 0 }}</b></div>
+            <small>金额与收缴率仅对超级管理员展示。</small>
+          </div>
+        </el-card>
+
         <el-card class="panel-card room-map-card" shadow="never">
           <template #header>
             <div class="panel-head">
@@ -297,35 +333,6 @@ onMounted(init)
           </div>
         </el-card>
 
-        <el-card class="panel-card" shadow="never">
-          <template #header>
-            <div class="panel-head">
-              <div>
-                <h2>本月租金收缴概览</h2>
-                <small>按账期经营口径统计 · {{ collectionMonth }}</small>
-              </div>
-              <el-button text type="primary" @click="router.push('/finance')">查看财务中心</el-button>
-            </div>
-          </template>
-          <div v-if="isSuper && rentCollection" class="collection-overview">
-            <div class="collection-metrics">
-              <div class="collection-metric primary"><span>本月应收</span><b>{{ formatMoney(rentCollection.netReceivable) }}</b></div>
-              <div class="collection-metric success"><span>本月已收</span><b>{{ formatMoney(rentCollection.validReceived) }}</b></div>
-              <div class="collection-metric warning"><span>本月未收</span><b>{{ formatMoney(rentCollection.outstanding) }}</b></div>
-              <div class="collection-metric danger"><span>逾期欠租</span><b>{{ formatMoney(data.arrearsTotal) }}</b></div>
-            </div>
-            <div class="collection-progress-head">
-              <span>本月收缴率 <b>{{ collectionRate === null ? '-' : `${collectionRate}%` }}</b></span>
-              <small>{{ collectionState }}</small>
-            </div>
-            <el-progress :percentage="collectionProgress" :show-text="false" :stroke-width="10" :color="data.arrears.length ? '#e5484d' : '#25a26f'" />
-          </div>
-          <div v-else class="collection-safe-summary">
-            <div><span>待收提醒</span><b>{{ data.rentReminders.length }} 笔</b></div>
-            <div><span>逾期欠租</span><b>{{ data.arrears.length }} 笔</b></div>
-            <small>金额与收缴率仅对超级管理员展示。</small>
-          </div>
-        </el-card>
       </div>
 
       <aside class="right-stack">
@@ -440,9 +447,9 @@ onMounted(init)
 .room-cell b { display:block; font-size:13px; }
 .room-status,.room-owner { display:block; margin-top:5px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .room-owner { color:#68758a; }
-.rented { background:#e8f7f0; border-color:#a9dfc5; color:#13764d; }
-.empty { background:#eaf7f3; border-color:#a6ded1; color:#187363; }
-.movein { background:#eaf1ff; border-color:#b5cafa; color:#245fbe; }
+.rented { background:#eaf1ff; border-color:#9dbbf7; color:#174ea6; }
+.empty { background:#e8f7f2; border-color:#91d5c1; color:#116c52; }
+.movein { background:#f1edff; border-color:#c9bdf6; color:#6543c4; }
 .checkout { background:#fff1df; border-color:#f5c98f; color:#b76112; }
 .repair { background:#fff8d9; border-color:#eedc7b; color:#8b7114; }
 .sold { background:#eceff3; border-color:#cbd2dc; color:#5c6572; }
@@ -472,14 +479,16 @@ onMounted(init)
 .composition .gray { background:#8c95a3; }
 .composition .muted { background:#c4ccd8; }
 .collection-overview { display:grid; gap:17px; padding:2px 0 4px; }
-.collection-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.collection-metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .collection-metric { min-width:0; padding:12px; border:1px solid #e8edf4; border-radius:10px; background:#f8fafc; }
 .collection-metric span { display:block; color:#748197; font-size:12px; }
 .collection-metric b { display:block; margin-top:7px; overflow:hidden; color:#24334a; font-size:18px; text-overflow:ellipsis; white-space:nowrap; }
 .collection-metric.primary { background:#f0f5ff; border-color:#d9e6ff; }.collection-metric.success { background:#effaf5; border-color:#d7f0e4; }.collection-metric.warning { background:#fff8ea; border-color:#f8e5b7; }.collection-metric.danger { background:#fff2f2; border-color:#ffd9da; }.collection-metric.danger b { color:#d33f46; }
+.collection-metric.move-in { background:#eef9f5; border-color:#ccebdd; }.collection-metric.move-in b { color:#14795b; }
+.collection-metric.checkout-count { background:#f2f5ff; border-color:#d8e1ff; }.collection-metric.checkout-count b { color:#315fc4; }
 .collection-progress-head { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#506078; font-size:12px; }.collection-progress-head b { color:#24334a; font-size:16px; }.collection-progress-head small { color:#7b8798; }
-.collection-safe-summary { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }.collection-safe-summary > div { padding:12px; border-radius:10px; background:#f8fafc; }.collection-safe-summary span,.collection-safe-summary b { display:block; }.collection-safe-summary span,.collection-safe-summary small { color:#748197; font-size:12px; }.collection-safe-summary b { margin-top:6px; color:#24334a; font-size:19px; }.collection-safe-summary small { grid-column:1/-1; }
+.collection-safe-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }.collection-safe-summary > div { padding:12px; border-radius:10px; background:#f8fafc; }.collection-safe-summary span,.collection-safe-summary b { display:block; }.collection-safe-summary span,.collection-safe-summary small { color:#748197; font-size:12px; }.collection-safe-summary b { margin-top:6px; color:#24334a; font-size:19px; }.collection-safe-summary small { grid-column:1/-1; }
 .table-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
-@media (max-width:1200px) { .metrics { grid-template-columns:repeat(3,1fr); } .cockpit-grid,.table-grid { grid-template-columns:1fr; } }
-@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition,.collection-metrics { grid-template-columns:1fr; }.collection-progress-head { align-items:flex-start; flex-direction:column; gap:4px; } }
+@media (max-width:1200px) { .metrics { grid-template-columns:repeat(3,1fr); } .cockpit-grid,.table-grid { grid-template-columns:1fr; } .collection-safe-summary { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition,.collection-metrics,.collection-safe-summary { grid-template-columns:1fr; }.collection-progress-head { align-items:flex-start; flex-direction:column; gap:4px; } }
 </style>
