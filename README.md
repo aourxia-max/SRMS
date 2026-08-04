@@ -90,3 +90,5 @@ Task002—005 的验收记录见 `docs/task002-acceptance.md` 至 `docs/task005-
 Task013 的验收记录见 `docs/task013-acceptance.md`。
 
 Task006 至 Task013 已在本机 MySQL TEST 数据中完成验收；完整记录见各任务验收文档。跨环境部署前仍应在目标环境复核备份目录、MySQL 工具路径和中文字体配置。
+
+收款管理工作流已按原型完成三页重设计，并补齐收款凭证、账期分配、收款更正及退款／作废审核闭环；验收结果见 `docs/payment-management-redesign-acceptance.md`。

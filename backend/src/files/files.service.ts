@@ -84,7 +84,6 @@ export class FilesService {
     const allowedPaymentTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (
       !allowedPaymentTypes.includes(file.mimetype) ||
-      !this.allowedTypes().includes(file.mimetype) ||
       !signatures[file.mimetype]?.(file.buffer)
     )
       throw new BadRequestException('附件类型或内容不符合限制');

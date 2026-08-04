@@ -3,6 +3,8 @@ import {
   Prisma,
   RefundAdjustmentDecision,
 } from '@prisma/client';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 describe('payment workflow Prisma model', () => {
   const model = (name: string) =>
@@ -38,5 +40,20 @@ describe('payment workflow Prisma model', () => {
       'REVERSE',
       'KEEP',
     ]);
+  });
+
+  it('keeps explicit MySQL index and constraint names within 64 characters', () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        'prisma/migrations/20260804233000_payment_management_redesign/migration.sql',
+      ),
+      'utf8',
+    );
+    const identifiers = [
+      ...migration.matchAll(/(?:KEY|CONSTRAINT)\s+`([^`]+)`/g),
+    ].map((match) => match[1]);
+
+    expect(identifiers.filter((name) => name.length > 64)).toEqual([]);
   });
 });

@@ -28,7 +28,7 @@ describe('FilesService payment proofs', () => {
         get: jest.fn((key: string) =>
           key === 'TENANT_FILE_MAX_SIZE_BYTES'
             ? '10485760'
-            : 'image/jpeg,image/png,image/webp',
+            : 'application/pdf,image/jpeg,image/png,image/heic',
         ),
       } as never,
     );

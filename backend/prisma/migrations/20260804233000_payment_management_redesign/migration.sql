@@ -46,7 +46,7 @@ CREATE TABLE `payment_refund_adjustment_decisions` (
   `decided_by` INT UNSIGNED NOT NULL,
   `decided_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `payment_refund_adjustment_decisions_payment_refund_id_bill_adjustment_id_key`
+  UNIQUE KEY `refund_adjustment_decision_refund_adjustment_uq`
     (`payment_refund_id`, `bill_adjustment_id`),
   KEY `payment_refund_adjustment_decisions_bill_adjustment_id_idx` (`bill_adjustment_id`),
   KEY `payment_refund_adjustment_decisions_reversal_adjustment_id_idx` (`reversal_adjustment_id`),

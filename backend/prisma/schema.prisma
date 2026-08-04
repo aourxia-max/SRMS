@@ -894,7 +894,7 @@ model PaymentRefundAdjustmentDecision {
   reversalAdjustment   BillAdjustment?          @relation("RefundDecisionReversalAdjustment", fields: [reversalAdjustmentId], references: [id], onDelete: Restrict)
   decisionMaker        User                     @relation(fields: [decidedBy], references: [id], onDelete: Restrict)
 
-  @@unique([paymentRefundId, billAdjustmentId])
+  @@unique([paymentRefundId, billAdjustmentId], map: "refund_adjustment_decision_refund_adjustment_uq")
   @@index([billAdjustmentId])
   @@index([reversalAdjustmentId])
   @@index([decidedBy, decidedAt])
