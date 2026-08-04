@@ -36,6 +36,8 @@ export class DashboardService {
     const in30 = new Date(now);
     in30.setDate(in30.getDate() + contractExpiryDays);
     const monthPeriod = currentMonthPeriod(now);
+    const monthFrom = new Date(monthPeriod.from);
+    const monthTo = new Date(monthPeriod.to);
     const rooms = await this.prisma.db.room.findMany({
       where: {
         deletedAt: null,
@@ -72,6 +74,8 @@ export class DashboardService {
       refunds,
       rebates,
       rentCollection,
+      monthlyMoveInCount,
+      monthlyCheckoutCount,
     ] = await Promise.all([
       this.prisma.db.rentBill.findMany({
         where: {
@@ -140,6 +144,20 @@ export class DashboardService {
       user.role === UserRole.SUPER_ADMIN
         ? this.finance.rentCollection(monthPeriod.from, monthPeriod.to)
         : Promise.resolve(null),
+      this.prisma.db.contract.count({
+        where: {
+          status: { not: 'DRAFT' },
+          startDate: { gte: monthFrom, lte: monthTo },
+          ...(buildingId ? { room: { buildingId } } : {}),
+        },
+      }),
+      this.prisma.db.checkoutSettlement.count({
+        where: {
+          status: 'COMPLETED',
+          actualCheckoutDate: { gte: monthFrom, lte: monthTo },
+          ...(buildingId ? { contract: { room: { buildingId } } } : {}),
+        },
+      }),
     ]);
     const result: Record<string, unknown> = {
       roomSummary: {
@@ -162,6 +180,8 @@ export class DashboardService {
       contractExpiryDays,
       longVacancyRooms,
       longVacancyDays,
+      monthlyMoveInCount,
+      monthlyCheckoutCount,
       approvals: {
         billAdjustments: adjustments,
         paymentRefunds: refunds,
