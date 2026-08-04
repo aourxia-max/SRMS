@@ -10,7 +10,9 @@ import {
   IsString,
   Length,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { RecordPaymentAdjustmentDto } from './record-payment-adjustment.dto';
 
 export class RecordPaymentDto {
   @Type(() => Number) @IsInt() @Min(1) contractId!: number;
@@ -25,4 +27,22 @@ export class RecordPaymentDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   selectedBillIds?: number[];
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  manualAllocationReason?: string;
+
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  proofFileIds?: number[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RecordPaymentAdjustmentDto)
+  adjustments?: RecordPaymentAdjustmentDto[];
 }
