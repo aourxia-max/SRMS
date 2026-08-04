@@ -7,8 +7,10 @@ import { RefundsController } from './refunds.controller';
 import { RefundsService } from './refunds.service';
 import { VoidRequestsController } from './void-requests.controller';
 import { VoidRequestsService } from './void-requests.service';
+import { FilesModule } from '../files/files.module';
 
 @Module({
+  imports: [FilesModule],
   controllers: [
     PaymentsController,
     AdjustmentsController,

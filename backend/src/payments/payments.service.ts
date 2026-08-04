@@ -3,7 +3,7 @@ import { Prisma, RentBillStatus } from '@prisma/client';
 import { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
-import { allocatePayment } from './payment-allocation';
+import { resolveAllocationPlan } from './payment-policy';
 
 @Injectable()
 export class PaymentsService {
@@ -30,34 +30,75 @@ export class PaymentsService {
     if (!amount.isFinite() || amount.lte(0))
       throw new BadRequestException('收款金额必须大于零');
     if (
-      dto.selectedBillIds &&
-      new Set(dto.selectedBillIds).size !== dto.selectedBillIds.length
+      dto.proofFileIds &&
+      new Set(dto.proofFileIds).size !== dto.proofFileIds.length
     )
-      throw new BadRequestException('选中的账单不能重复');
+      throw new BadRequestException('收款凭证不能重复');
     return this.prisma.db.$transaction(async (tx) => {
       const contract = await tx.contract.findUniqueOrThrow({
         where: { id: dto.contractId },
       });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${contract.id} FOR UPDATE`,
+      );
       const eligibleBills = await tx.rentBill.findMany({
         where: {
           contractId: dto.contractId,
           status: { notIn: ['VOIDED', 'REFUNDED'] },
           outstandingAmount: { gt: 0 },
-          ...(dto.selectedBillIds?.length
-            ? { id: { in: dto.selectedBillIds } }
-            : {}),
         },
         orderBy: [{ dueDate: 'asc' }, { periodSeq: 'asc' }],
       });
-      if (
-        dto.selectedBillIds?.length &&
-        eligibleBills.length !== dto.selectedBillIds.length
-      )
-        throw new BadRequestException('所选账单不存在、已作废或不属于该合同');
-      const { allocations, prepaymentAmount } = allocatePayment(
-        amount,
+      const plan = resolveAllocationPlan(
         eligibleBills,
+        amount.toFixed(2),
+        dto.selectedBillIds,
+        user.role,
+        dto.manualAllocationReason,
       );
+
+      const proofFileIds = dto.proofFileIds ?? [];
+      if (proofFileIds.length) {
+        const proofFiles = await tx.fileAsset.findMany({
+          where: {
+            id: { in: proofFileIds },
+            category: 'PAYMENT_PROOF',
+            uploadedBy: user.id,
+            lockedAt: null,
+          },
+        });
+        if (proofFiles.length !== proofFileIds.length)
+          throw new BadRequestException(
+            '收款凭证不存在、已被使用或不属于当前操作人',
+          );
+      }
+
+      const selectedBillIds = new Set(
+        plan.allocations.map((item) => item.rentBillId),
+      );
+      const allocatedByBill = new Map(
+        plan.allocations.map((item) => [item.rentBillId, item.amount]),
+      );
+      for (const adjustment of dto.adjustments ?? []) {
+        const bill = eligibleBills.find(
+          (item) => item.id === adjustment.rentBillId,
+        );
+        if (!bill || !selectedBillIds.has(adjustment.rentBillId))
+          throw new BadRequestException('优惠必须归属于本次覆盖的账单');
+        const adjustmentAmount = new Prisma.Decimal(adjustment.amount);
+        const remainingAfterPayment = new Prisma.Decimal(
+          bill.outstandingAmount,
+        ).minus(allocatedByBill.get(bill.id) ?? 0);
+        if (
+          !adjustmentAmount.isFinite() ||
+          adjustmentAmount.lte(0) ||
+          adjustmentAmount.gt(remainingAfterPayment)
+        )
+          throw new BadRequestException(
+            '优惠金额不能超过该账单本次收款后的未收金额',
+          );
+      }
+
       const payment = await tx.payment.create({
         data: {
           receiptNo: await this.receiptNo(tx),
@@ -71,15 +112,17 @@ export class PaymentsService {
           operatorId: user.id,
         },
       });
-      if (allocations.length) {
+      if (plan.allocations.length) {
         await tx.paymentAllocation.createMany({
-          data: allocations.map((item) => ({
+          data: plan.allocations.map((item) => ({
             paymentId: payment.id,
             rentBillId: item.rentBillId,
             allocatedAmount: item.amount,
+            allocationOrder: item.allocationOrder,
+            allocationType: item.allocationType,
           })),
         });
-        for (const allocation of allocations) {
+        for (const allocation of plan.allocations) {
           const bill = eligibleBills.find(
             (item) => item.id === allocation.rentBillId,
           )!;
@@ -98,31 +141,113 @@ export class PaymentsService {
           });
         }
       }
-      if (prepaymentAmount.gt(0)) {
+      if (plan.prepaymentAmount.gt(0)) {
         const latest = await tx.prepaymentTransaction.findFirst({
           where: { contractId: contract.id },
           orderBy: { id: 'desc' },
         });
         const balanceAfter = new Prisma.Decimal(latest?.balanceAfter ?? 0)
-          .plus(prepaymentAmount)
+          .plus(plan.prepaymentAmount)
           .toDecimalPlaces(2);
         await tx.prepaymentTransaction.create({
           data: {
             contractId: contract.id,
             transactionNo: `YS${Date.now()}${payment.id}`,
             transactionType: 'CREDIT_RECEIPT',
-            amount: prepaymentAmount,
+            amount: plan.prepaymentAmount,
             balanceAfter,
             paymentId: payment.id,
             reason: '租金收款超出选定账单应收，转入预收款',
           },
         });
       }
-      await this.refreshContractPaymentSnapshot(tx, contract.id);
-      return tx.payment.findUniqueOrThrow({
-        where: { id: payment.id },
-        include: { allocations: true, prepaymentTransactions: true },
+
+      const adjustmentIds: number[] = [];
+      for (const adjustment of dto.adjustments ?? []) {
+        const bill = eligibleBills.find(
+          (item) => item.id === adjustment.rentBillId,
+        )!;
+        const created = await tx.billAdjustment.create({
+          data: {
+            adjustmentNo: `TZ${Date.now()}${adjustment.rentBillId}`,
+            rentBillId: adjustment.rentBillId,
+            adjustmentType: adjustment.adjustmentType,
+            direction: 'DECREASE',
+            amount: new Prisma.Decimal(adjustment.amount),
+            beforeAmount: bill.payableAmount,
+            afterAmount: Prisma.Decimal.max(
+              0,
+              new Prisma.Decimal(bill.payableAmount).minus(adjustment.amount),
+            ).toDecimalPlaces(2),
+            reason: adjustment.reason,
+            sourcePaymentId: payment.id,
+            approvalStatus: 'PENDING',
+            submittedBy: user.id,
+          },
+        });
+        adjustmentIds.push(created.id);
+      }
+
+      if (proofFileIds.length) {
+        const lockedAt = new Date();
+        await tx.paymentFile.createMany({
+          data: proofFileIds.map((fileAssetId) => ({
+            paymentId: payment.id,
+            fileAssetId,
+            purpose: 'PAYMENT_PROOF',
+            uploadedBy: user.id,
+            lockedAt,
+          })),
+        });
+        await tx.fileAsset.updateMany({
+          where: { id: { in: proofFileIds }, lockedAt: null },
+          data: { lockedAt },
+        });
+      }
+
+      if (plan.manualOverride) {
+        await tx.securityAuditLog.create({
+          data: {
+            eventType: 'PAYMENT_ALLOCATION_OVERRIDDEN',
+            entityType: 'PAYMENT',
+            entityId: payment.id,
+            operatorId: user.id,
+            reason: dto.manualAllocationReason,
+            eventData: {
+              automaticBillIds: eligibleBills
+                .slice(0, dto.selectedBillIds?.length ?? eligibleBills.length)
+                .map((bill) => bill.id),
+              selectedBillIds: dto.selectedBillIds ?? [],
+            },
+          },
+        });
+      }
+
+      await tx.operationLog.create({
+        data: {
+          module: 'PAYMENTS',
+          action: 'PAYMENT_RECORDED',
+          entityType: 'PAYMENT',
+          entityId: payment.id,
+          entityNo: payment.receiptNo,
+          summary: `登记收款 ${payment.receiptNo}`,
+          afterData: {
+            amount: amount.toFixed(2),
+            billIds: plan.allocations.map((item) => item.rentBillId),
+            adjustmentIds,
+            proofFileIds,
+          },
+          operatorId: user.id,
+          operatorRole: user.role,
+        },
       });
+      await this.refreshContractPaymentSnapshot(tx, contract.id);
+      return {
+        id: payment.id,
+        receiptNo: payment.receiptNo,
+        receiptType: adjustmentIds.length ? 'PROVISIONAL' : 'FORMAL',
+        adjustmentIds,
+      } as const;
     });
   }
 
