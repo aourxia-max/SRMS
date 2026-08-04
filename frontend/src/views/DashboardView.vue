@@ -23,8 +23,13 @@ type DashboardRoom = {
   roomStatus: RoomStatus
   decorationStatus?: string | null
   statusChangedAt?: string | null
-  building?: { id: number; buildingName: string }
+  ownerName?: string | null
+  building?: { id: number; buildingNo?: string; buildingName: string }
 }
+
+type RoomSearchSuggestion =
+  | (DashboardRoom & { kind: 'room'; value: string })
+  | { kind: 'all'; value: string; label: string }
 
 const router = useRouter()
 const session = useSessionStore()
@@ -42,6 +47,8 @@ const roomMapData = ref<any>({
   roomSummary: { statusCounts: {}, rooms: [] },
 })
 const buildings = ref<any[]>([])
+const quickSearch = ref('')
+let quickSearchRequest = 0
 const filters = reactive({
   buildingId: undefined as number | undefined,
 })
@@ -168,6 +175,37 @@ function formatDate(value: string | Date | null | undefined) {
 function tenantName(row: any) {
   return row.contract?.members?.[0]?.tenant?.name || '-'
 }
+async function fetchRoomSuggestions(
+  queryString: string,
+  callback: (items: RoomSearchSuggestion[]) => void,
+) {
+  const keyword = queryString.trim()
+  const requestId = ++quickSearchRequest
+  if (!keyword) {
+    callback([])
+    return
+  }
+  try {
+    const response = await http.get('/properties/rooms', { params: { keyword, limit: 8 } })
+    if (requestId !== quickSearchRequest) return
+    const suggestions: RoomSearchSuggestion[] = response.data.data.map((room: DashboardRoom) => ({
+      ...room,
+      kind: 'room' as const,
+      value: room.fullHouseNo,
+    }))
+    suggestions.push({ kind: 'all', value: keyword, label: '查看全部结果' })
+    callback(suggestions)
+  } catch {
+    if (requestId === quickSearchRequest) callback([])
+  }
+}
+function selectRoomSuggestion(item: RoomSearchSuggestion) {
+  if (item.kind === 'all') {
+    void router.push({ path: '/properties', query: { q: quickSearch.value.trim() } })
+    return
+  }
+  void router.push({ name: 'room-detail', params: { id: item.id } })
+}
 async function load() {
   const params: any = {}
   if (filters.buildingId) params.buildingId = filters.buildingId
@@ -195,6 +233,25 @@ onMounted(init)
         <p>按房源状态、租金待办和合同履行情况快速判断今日重点。</p>
       </div>
       <div class="head-actions">
+        <el-autocomplete
+          v-model="quickSearch"
+          class="room-quick-search"
+          clearable
+          placeholder="快速搜索房号、姓名或电话"
+          :fetch-suggestions="fetchRoomSuggestions"
+          :trigger-on-focus="false"
+          popper-class="room-search-popper"
+          @select="selectRoomSuggestion"
+        >
+          <template #default="{ item }">
+            <div v-if="item.kind === 'all'" class="search-all">查看全部“{{ quickSearch }}”的结果</div>
+            <div v-else class="search-room">
+              <b>{{ item.fullHouseNo }}</b>
+              <span>{{ item.building?.buildingName || item.building?.buildingNo || '未分配楼栋' }} · {{ statusLabel(item.roomStatus) }}</span>
+              <small v-if="item.ownerName">{{ item.ownerName }}</small>
+            </div>
+          </template>
+        </el-autocomplete>
         <el-date-picker :model-value="monthValue" type="month" disabled format="YYYY年MM月" />
         <el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" @change="load">
           <el-option v-for="item in buildings" :key="item.id" :label="item.buildingName" :value="item.id" />
@@ -421,6 +478,13 @@ onMounted(init)
 .page-head p { margin:0; color:#748196; }
 .head-actions { display:flex; align-items:center; gap:8px; }
 .head-actions :deep(.el-select) { width:160px; }
+.head-actions :deep(.room-quick-search) { width:260px; }
+:global(.room-search-popper .el-autocomplete-suggestion li) { height:auto; min-height:44px; padding:8px 14px; line-height:1.35; }
+:global(.room-search-popper .search-room) { display:grid; grid-template-columns:auto 1fr; align-items:center; gap:2px 10px; width:100%; }
+:global(.room-search-popper .search-room b) { color:#233044; }
+:global(.room-search-popper .search-room span) { color:#748196; font-size:12px; text-align:right; }
+:global(.room-search-popper .search-room small) { grid-column:1/-1; color:#56657a; }
+:global(.room-search-popper .search-all) { color:#246bfd; font-weight:600; }
 .metrics { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
 .metric { min-height:94px; padding:15px 16px; border:1px solid #e7ecf3; border-radius:12px; background:#fff; box-shadow:0 10px 28px rgba(28,52,84,.07); }
 .metric span { color:#748196; font-size:12px; }
@@ -490,5 +554,5 @@ onMounted(init)
 .collection-safe-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }.collection-safe-summary > div { padding:12px; border-radius:10px; background:#f8fafc; }.collection-safe-summary span,.collection-safe-summary b { display:block; }.collection-safe-summary span,.collection-safe-summary small { color:#748197; font-size:12px; }.collection-safe-summary b { margin-top:6px; color:#24334a; font-size:19px; }.collection-safe-summary small { grid-column:1/-1; }
 .table-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
 @media (max-width:1200px) { .metrics { grid-template-columns:repeat(3,1fr); } .cockpit-grid,.table-grid { grid-template-columns:1fr; } .collection-safe-summary { grid-template-columns:repeat(2,1fr); } }
-@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition,.collection-metrics,.collection-safe-summary { grid-template-columns:1fr; }.collection-progress-head { align-items:flex-start; flex-direction:column; gap:4px; } }
+@media (max-width:760px) { .page-head,.head-actions,.panel-head,.room-tools { align-items:stretch; flex-direction:column; } .head-actions :deep(.room-quick-search) { width:100%; } .metrics { grid-template-columns:1fr; } .floor-row { grid-template-columns:1fr 1fr; } .floor-name { min-height:36px; grid-column:1/-1; } .composition,.collection-metrics,.collection-safe-summary { grid-template-columns:1fr; }.collection-progress-head { align-items:flex-start; flex-direction:column; gap:4px; } }
 </style>
