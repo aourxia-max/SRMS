@@ -9,7 +9,7 @@ describe('RefundsService adjustment decisions', () => {
     role: UserRole.SUPER_ADMIN,
   };
 
-  function fixture() {
+  function fixture(reversedByAdjustmentId: number | null = null) {
     const bill = {
       id: 11,
       contractId: 7,
@@ -33,6 +33,7 @@ describe('RefundsService adjustment decisions', () => {
       amount: '50.00',
       approvalStatus: 'APPROVED',
       reason: '一次性优惠',
+      reversedByAdjustmentId,
     };
     const refund = {
       id: 201,
@@ -133,6 +134,14 @@ describe('RefundsService adjustment decisions', () => {
         decidedBy: 1,
       }),
     });
+    expect(tx.rentBill.update).toHaveBeenCalledWith({
+      where: { id: 11 },
+      data: expect.objectContaining({
+        adjustmentAmount: expect.anything(),
+        payableAmount: expect.anything(),
+        outstandingAmount: expect.anything(),
+      }),
+    });
   });
 
   it('requires a reason to keep an affected discount', async () => {
@@ -160,5 +169,29 @@ describe('RefundsService adjustment decisions', () => {
     await expect(
       service.approve(201, { adjustmentDecisions: [] }, user),
     ).rejects.toThrow('必须逐条确认受退款影响的优惠处理方式');
+  });
+
+  it('enforces super admin approval in the service layer', async () => {
+    const { service } = fixture();
+
+    await expect(
+      service.approve(
+        201,
+        { adjustmentDecisions: [] },
+        {
+          ...user,
+          role: UserRole.ADMIN,
+        },
+      ),
+    ).rejects.toThrow('只有超级管理员可以确认退款');
+  });
+
+  it('does not reverse the same approved discount twice', async () => {
+    const { tx, service } = fixture(502);
+
+    await service.approve(201, { adjustmentDecisions: [] }, user);
+
+    expect(tx.billAdjustment.create).not.toHaveBeenCalled();
+    expect(tx.paymentRefundAdjustmentDecision.create).not.toHaveBeenCalled();
   });
 });

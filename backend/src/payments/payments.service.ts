@@ -131,7 +131,9 @@ export class PaymentsService {
     const confirmedAdjustmentAmount = payment.adjustments
       .filter(
         (item) =>
-          item.approvalStatus === 'APPROVED' && item.direction === 'DECREASE',
+          item.approvalStatus === 'APPROVED' &&
+          item.direction === 'DECREASE' &&
+          !item.reversedByAdjustmentId,
       )
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
     const prepaymentAmount = payment.prepaymentTransactions.reduce(
@@ -183,10 +185,21 @@ export class PaymentsService {
       sizeBytes: item.fileAsset.sizeBytes.toString(),
       uploadedAt: item.fileAsset.uploadedAt,
     }));
-    const originalReceivable = payment.allocations.reduce(
-      (sum, item) => sum.plus(item.rentBill.payableAmount),
-      new Prisma.Decimal(0),
+    const activeAllocations = allocations.filter((item) =>
+      new Prisma.Decimal(item.effectiveAmount).gt(0),
     );
+    const activeBillIds = [
+      ...new Set(activeAllocations.map((item) => item.bill.id)),
+    ];
+    const originalReceivable = activeBillIds.reduce((sum, billId) => {
+      const originalAdjustment = payment.adjustments.find(
+        (item) => item.rentBillId === billId && item.direction === 'DECREASE',
+      );
+      const bill = payment.allocations.find(
+        (item) => item.rentBill.id === billId,
+      )!.rentBill;
+      return sum.plus(originalAdjustment?.beforeAmount ?? bill.payableAmount);
+    }, new Prisma.Decimal(0));
 
     return {
       id: payment.id,
@@ -237,7 +250,7 @@ export class PaymentsService {
         confirmedAdjustmentAmount: this.money(confirmedAdjustmentAmount),
         actualPaid: this.money(payment.amount),
         amountUppercase: chineseUppercaseMoney(payment.amount),
-        lines: allocations.map((item) => ({
+        lines: activeAllocations.map((item) => ({
           allocationOrder: item.allocationOrder,
           billNo: item.bill.billNo,
           periodStart: item.bill.periodStart,
@@ -258,8 +271,24 @@ export class PaymentsService {
       throw new ForbiddenException('只有超级管理员可以修改已确认收款');
 
     return this.prisma.db.$transaction(async (tx) => {
+      const identity = await tx.payment.findUniqueOrThrow({
+        where: { id },
+        select: { contractId: true },
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
+      );
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payment_allocations WHERE payment_id = ${id} ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM prepayment_transactions WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
       );
       const payment = await tx.payment.findUniqueOrThrow({
         where: { id },
@@ -500,6 +529,8 @@ export class PaymentsService {
   }
 
   async record(dto: RecordPaymentDto, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('当前角色不能登记收款');
     const amount = new Prisma.Decimal(dto.amount);
     if (!amount.isFinite() || amount.lte(0))
       throw new BadRequestException('收款金额必须大于零');
@@ -514,6 +545,12 @@ export class PaymentsService {
       });
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM contracts WHERE id = ${contract.id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contract.id} ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM prepayment_transactions WHERE contract_id = ${contract.id} ORDER BY id FOR UPDATE`,
       );
       const eligibleBills = await tx.rentBill.findMany({
         where: {

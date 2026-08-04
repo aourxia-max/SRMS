@@ -203,6 +203,22 @@ describe('PaymentsService.record', () => {
     ).rejects.toThrow('收款凭证不存在、已被使用或不属于当前操作人');
     expect(tx.payment.create).not.toHaveBeenCalled();
   });
+
+  it('rejects visitor payment registration in the service layer', async () => {
+    const { service } = fixture();
+
+    await expect(
+      service.record(
+        {
+          contractId: 7,
+          paymentDate: '2026-08-04',
+          amount: '100.00',
+          method: PaymentMethod.CASH,
+        },
+        { ...user, role: UserRole.VISITOR },
+      ),
+    ).rejects.toThrow('当前角色不能登记收款');
+  });
 });
 
 describe('PaymentsService payment views', () => {

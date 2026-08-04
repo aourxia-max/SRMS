@@ -93,4 +93,28 @@ describe('PaymentReviewsService', () => {
       phone: '138****8000',
     });
   });
+
+  it('includes the complete selected end date', async () => {
+    const refundFindMany = jest.fn().mockResolvedValue([]);
+    const service = new PaymentReviewsService({
+      db: {
+        paymentRefund: { findMany: refundFindMany },
+        paymentVoidRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    await service.list(
+      { type: 'REFUND', dateTo: '2026-08-04' },
+      {
+        id: 1,
+        username: 'admin',
+        displayName: '超级管理员',
+        role: UserRole.SUPER_ADMIN,
+      },
+    );
+
+    expect(
+      refundFindMany.mock.calls[0][0].where.submittedAt.lt.toISOString(),
+    ).toBe('2026-08-05T00:00:00.000Z');
+  });
 });

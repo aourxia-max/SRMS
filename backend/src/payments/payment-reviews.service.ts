@@ -39,7 +39,13 @@ export class PaymentReviewsService {
       query.dateFrom || query.dateTo
         ? {
             ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-            ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+            ...(query.dateTo
+              ? {
+                  lt: new Date(
+                    new Date(query.dateTo).getTime() + 24 * 60 * 60 * 1000,
+                  ),
+                }
+              : {}),
           }
         : undefined;
     const include = {

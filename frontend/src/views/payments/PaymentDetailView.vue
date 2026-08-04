@@ -6,6 +6,7 @@ import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { PaymentDetail, PaymentListItem, PaymentMethod } from '../../types/payments'
+import { refundableAllocationTotal } from './payment-review'
 
 const route = useRoute(); const router = useRouter(); const session = useSessionStore()
 const rows = ref<PaymentListItem[]>([]); const detail = ref<PaymentDetail | null>(null); const loading = ref(false)
@@ -36,7 +37,7 @@ async function download(file: PaymentDetail['files'][number]) {
   const response = await paymentApi.downloadProof(detail.value.id, file.id); const url = URL.createObjectURL(response.data)
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = file.originalName; anchor.click(); URL.revokeObjectURL(url)
 }
-function prepareRefund() { if (!detail.value) return; refund.refundAmount = detail.value.amount; refund.reason = ''; refund.allocations = Object.fromEntries(detail.value.allocations.filter((item) => Number(item.effectiveAmount)>0).map((item) => [item.id,item.effectiveAmount])); refundOpen.value = true }
+function prepareRefund() { if (!detail.value) return; const active=detail.value.allocations.filter((item)=>Number(item.effectiveAmount)>0); refund.refundAmount=refundableAllocationTotal(active); refund.reason=''; refund.allocations=Object.fromEntries(active.map((item)=>[item.id,item.effectiveAmount])); refundOpen.value=true }
 async function submitRefund() {
   if (!detail.value || Number(refund.refundAmount)<=0 || !refund.reason.trim()) return ElMessage.warning('请填写退款金额和原因')
   await paymentApi.submitRefund({ paymentId:detail.value.id, refundAmount:refund.refundAmount, refundDate:refund.refundDate, refundMethod:refund.refundMethod, reason:refund.reason, allocations:Object.entries(refund.allocations).filter(([,amount])=>Number(amount)>0).map(([id,amount])=>({paymentAllocationId:Number(id),amount})) })

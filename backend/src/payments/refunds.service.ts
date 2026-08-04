@@ -1,5 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
+import { Prisma, UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubmitRefundDto } from './dto/submit-refund.dto';
@@ -21,6 +25,8 @@ export class RefundsService {
     });
   }
   async submit(dto: SubmitRefundDto, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('当前角色不能提交退款');
     const refundAmount = new Prisma.Decimal(dto.refundAmount);
     if (
       !refundAmount.isFinite() ||
@@ -83,9 +89,27 @@ export class RefundsService {
     });
   }
   async approve(id: number, dto: ApproveRefundDto, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN)
+      throw new ForbiddenException('只有超级管理员可以确认退款');
     return this.prisma.db.$transaction(async (tx) => {
+      const identity = await tx.paymentRefund.findUniqueOrThrow({
+        where: { id },
+        select: { paymentId: true, contractId: true },
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payments WHERE id = ${identity.paymentId} FOR UPDATE`,
+      );
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM payment_refunds WHERE id = ${id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payment_allocations WHERE payment_id = ${identity.paymentId} ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
       );
       const refund = await tx.paymentRefund.findUniqueOrThrow({
         where: { id },
@@ -107,7 +131,8 @@ export class RefundsService {
       const affectedAdjustments = refund.payment.adjustments.filter(
         (item) =>
           affectedBillIds.has(item.rentBillId) &&
-          ['PENDING', 'APPROVED'].includes(item.approvalStatus),
+          ['PENDING', 'APPROVED'].includes(item.approvalStatus) &&
+          !item.reversedByAdjustmentId,
       );
       const decisions = new Map(
         dto.adjustmentDecisions.map((item) => [item.billAdjustmentId, item]),
@@ -223,6 +248,8 @@ export class RefundsService {
         await tx.rentBill.update({
           where: { id: bill.id },
           data: {
+            adjustmentAmount: bill.adjustmentAmount,
+            payableAmount: bill.payableAmount,
             receivedAmount,
             outstandingAmount,
             status: receivedAmount.gt(0) ? 'PARTIAL' : 'PENDING',
@@ -273,6 +300,8 @@ export class RefundsService {
     });
   }
   async reject(id: number, reason: string, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN)
+      throw new ForbiddenException('只有超级管理员可以驳回退款');
     const refund = await this.prisma.db.paymentRefund.findUniqueOrThrow({
       where: { id },
     });
