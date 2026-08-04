@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -23,6 +24,7 @@ import { FilesService } from '../files/files.service';
 import type { UploadedFile as StoredFile } from '../files/files.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
 import { PaymentListQueryDto } from './dto/payment-list-query.dto';
+import { EditPaymentDto } from './dto/edit-payment.dto';
 import { PaymentsService } from './payments.service';
 
 @Controller('payments')
@@ -120,6 +122,20 @@ export class PaymentsController {
       code: 200,
       message: 'success',
       data: await this.payments.detail(id, user),
+    };
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.SUPER_ADMIN)
+  async edit(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EditPaymentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.payments.edit(id, dto, user),
     };
   }
 }

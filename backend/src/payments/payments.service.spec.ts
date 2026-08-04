@@ -402,3 +402,179 @@ describe('PaymentsService payment views', () => {
     );
   });
 });
+
+describe('PaymentsService.edit', () => {
+  const superAdmin = {
+    id: 1,
+    username: 'admin',
+    displayName: '超级管理员',
+    role: UserRole.SUPER_ADMIN,
+  };
+
+  function editFixture(refunds: Array<{ approvalStatus: string }> = []) {
+    const payment = {
+      id: 81,
+      receiptNo: 'SK-TEST-81',
+      contractId: 7,
+      paymentDate: new Date('2026-08-04'),
+      amount: '570.00',
+      method: 'BANK_TRANSFER',
+      externalReference: 'BANK-001',
+      remark: '原备注',
+      editReason: null,
+      status: 'CONFIRMED',
+      allocations: [
+        {
+          id: 101,
+          rentBillId: 11,
+          allocatedAmount: '570.00',
+          reversedAmount: '0.00',
+          allocationOrder: 1,
+        },
+      ],
+      prepaymentTransactions: [],
+      refunds,
+      voidRequests: [],
+    };
+    const bills = [
+      {
+        id: 11,
+        contractId: 7,
+        periodSeq: 1,
+        dueDate: new Date('2026-08-01'),
+        periodEnd: new Date('2026-08-31'),
+        payableAmount: '600.00',
+        receivedAmount: '570.00',
+        outstandingAmount: '30.00',
+        status: 'PARTIAL',
+      },
+    ];
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 81 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(payment),
+        update: jest.fn().mockResolvedValue({ ...payment, amount: '600.00' }),
+      },
+      rentBill: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce(bills)
+          .mockResolvedValueOnce(bills),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      paymentAllocation: {
+        update: jest.fn().mockResolvedValue({}),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({}),
+      },
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 7,
+          startDate: new Date('2026-08-01'),
+          pricingTiers: [],
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      securityAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      operationLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    };
+    return { tx, prisma, service: new PaymentsService(prisma as never) };
+  }
+
+  it('rejects a non-super-administrator in the service layer', async () => {
+    const { prisma, service } = editFixture();
+
+    await expect(
+      service.edit(
+        81,
+        { amount: '600.00', editReason: '修正录入金额' },
+        { ...superAdmin, role: UserRole.ADMIN },
+      ),
+    ).rejects.toThrow('只有超级管理员可以修改已确认收款');
+    expect(prisma.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('blocks editing while a confirmed or pending refund exists', async () => {
+    const { service } = editFixture([{ approvalStatus: 'PENDING' }]);
+
+    await expect(
+      service.edit(
+        81,
+        { amount: '600.00', editReason: '修正录入金额' },
+        superAdmin,
+      ),
+    ).rejects.toThrow('存在待处理或已确认退款，不能直接修改收款');
+  });
+
+  it('reverses old allocation, writes the corrected allocation and appends audit', async () => {
+    const { tx, service } = editFixture();
+
+    const result = await service.edit(
+      81,
+      {
+        paymentDate: '2026-08-05',
+        amount: '600.00',
+        method: PaymentMethod.CASH,
+        selectedBillIds: [11],
+        remark: null,
+        editReason: '银行流水录入错误，按现金收据修正',
+      },
+      superAdmin,
+    );
+
+    expect(result).toEqual({ id: 81, receiptNo: 'SK-TEST-81' });
+    expect(tx.paymentAllocation.update).toHaveBeenCalledWith({
+      where: { id: 101 },
+      data: { reversedAmount: expect.anything() },
+    });
+    expect(tx.paymentAllocation.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          paymentId: 81,
+          rentBillId: 11,
+          allocatedAmount: expect.anything(),
+          allocationOrder: 1,
+        }),
+      ],
+    });
+    expect(tx.payment.update).toHaveBeenCalledWith({
+      where: { id: 81 },
+      data: expect.objectContaining({
+        amount: expect.anything(),
+        method: PaymentMethod.CASH,
+        remark: null,
+        editReason: '银行流水录入错误，按现金收据修正',
+      }),
+    });
+    expect(tx.payment.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          receiptNo: expect.anything(),
+          contractId: expect.anything(),
+        }),
+      }),
+    );
+    expect(tx.securityAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        eventType: 'PAYMENT_CORRECTED',
+        entityId: 81,
+        operatorId: 1,
+        reason: '银行流水录入错误，按现金收据修正',
+        eventData: expect.objectContaining({
+          before: expect.objectContaining({ amount: '570.00' }),
+          after: expect.objectContaining({ amount: '600.00' }),
+        }),
+      }),
+    });
+  });
+});

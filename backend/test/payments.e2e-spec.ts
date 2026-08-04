@@ -51,4 +51,11 @@ describe('payments API authorization (e2e)', () => {
       .get('/api/payments/81/receipt')
       .expect(401);
   });
+
+  it('protects payment correction', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/payments/81')
+      .send({ amount: '600.00', editReason: '修正金额' })
+      .expect(401);
+  });
 });

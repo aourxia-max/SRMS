@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
 import { PaymentListQueryDto } from './dto/payment-list-query.dto';
+import { EditPaymentDto } from './dto/edit-payment.dto';
 import { chineseUppercaseMoney, receiptTypeFor } from './payment-presenter';
 import { resolveAllocationPlan } from './payment-policy';
 
@@ -249,6 +251,244 @@ export class PaymentsService {
 
   async receipt(id: number, user: AuthUser) {
     return (await this.detail(id, user)).receipt;
+  }
+
+  async edit(id: number, dto: EditPaymentDto, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN)
+      throw new ForbiddenException('只有超级管理员可以修改已确认收款');
+
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payments WHERE id = ${id} FOR UPDATE`,
+      );
+      const payment = await tx.payment.findUniqueOrThrow({
+        where: { id },
+        include: {
+          allocations: { orderBy: { id: 'asc' } },
+          prepaymentTransactions: { orderBy: { id: 'asc' } },
+          refunds: true,
+          voidRequests: true,
+        },
+      });
+      if (['VOIDED', 'FULLY_REFUNDED'].includes(payment.status))
+        throw new BadRequestException('已作废或已全额退款的收款不能修改');
+      if (
+        payment.refunds.some((item) =>
+          ['PENDING', 'APPROVED'].includes(item.approvalStatus),
+        )
+      )
+        throw new BadRequestException(
+          '存在待处理或已确认退款，不能直接修改收款',
+        );
+      if (
+        payment.voidRequests.some((item) => item.approvalStatus === 'PENDING')
+      )
+        throw new BadRequestException('存在待处理作废申请，不能直接修改收款');
+
+      const amount = new Prisma.Decimal(dto.amount ?? payment.amount);
+      if (!amount.isFinite() || amount.lte(0))
+        throw new BadRequestException('收款金额必须大于零');
+
+      const bills = await tx.rentBill.findMany({
+        where: {
+          contractId: payment.contractId,
+          status: { notIn: ['VOIDED', 'REFUNDED'] },
+        },
+        orderBy: [{ dueDate: 'asc' }, { periodSeq: 'asc' }],
+      });
+      const restoredBills = bills.map((bill) => ({
+        ...bill,
+        receivedAmount: new Prisma.Decimal(bill.receivedAmount),
+        outstandingAmount: new Prisma.Decimal(bill.outstandingAmount),
+      }));
+      const billById = new Map(restoredBills.map((bill) => [bill.id, bill]));
+      const previousActiveBillIds: number[] = [];
+
+      for (const allocation of payment.allocations) {
+        const effectiveAmount = new Prisma.Decimal(
+          allocation.allocatedAmount,
+        ).minus(allocation.reversedAmount);
+        if (effectiveAmount.lte(0)) continue;
+        previousActiveBillIds.push(allocation.rentBillId);
+        const bill = billById.get(allocation.rentBillId);
+        if (!bill)
+          throw new BadRequestException('原收款分配账单不存在，不能修改');
+        bill.receivedAmount = Prisma.Decimal.max(
+          0,
+          bill.receivedAmount.minus(effectiveAmount),
+        ).toDecimalPlaces(2);
+        bill.outstandingAmount = new Prisma.Decimal(bill.payableAmount)
+          .minus(bill.receivedAmount)
+          .toDecimalPlaces(2);
+        await tx.paymentAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            reversedAmount: new Prisma.Decimal(allocation.reversedAmount).plus(
+              effectiveAmount,
+            ),
+          },
+        });
+        await tx.rentBill.update({
+          where: { id: bill.id },
+          data: {
+            receivedAmount: bill.receivedAmount,
+            outstandingAmount: bill.outstandingAmount,
+            status: bill.receivedAmount.gt(0) ? 'PARTIAL' : 'PENDING',
+          },
+        });
+      }
+
+      const latestPrepayment = await tx.prepaymentTransaction.findFirst({
+        where: { contractId: payment.contractId },
+        orderBy: { id: 'desc' },
+      });
+      let prepaymentBalance = new Prisma.Decimal(
+        latestPrepayment?.balanceAfter ?? 0,
+      );
+      const priorPrepayment = payment.prepaymentTransactions.reduce(
+        (sum, item) =>
+          item.transactionType === 'CREDIT_RECEIPT'
+            ? sum.plus(item.amount)
+            : item.transactionType === 'REVERSAL'
+              ? sum.minus(item.amount)
+              : sum,
+        new Prisma.Decimal(0),
+      );
+      if (priorPrepayment.gt(0)) {
+        if (prepaymentBalance.lt(priorPrepayment))
+          throw new BadRequestException('预收款余额不足，不能修改该收款');
+        prepaymentBalance = prepaymentBalance.minus(priorPrepayment);
+        await tx.prepaymentTransaction.create({
+          data: {
+            contractId: payment.contractId,
+            transactionNo: `YSREV${Date.now()}${payment.id}`,
+            transactionType: 'REVERSAL',
+            amount: priorPrepayment,
+            balanceAfter: prepaymentBalance,
+            paymentId: payment.id,
+            reason: `修改收款 ${payment.receiptNo} 前逆转原预收款`,
+          },
+        });
+      }
+
+      const eligibleBills = restoredBills.filter((bill) =>
+        bill.outstandingAmount.gt(0),
+      );
+      const selectedBillIds =
+        dto.selectedBillIds ??
+        (previousActiveBillIds.length ? previousActiveBillIds : undefined);
+      const plan = resolveAllocationPlan(
+        eligibleBills,
+        amount.toFixed(2),
+        selectedBillIds,
+        user.role,
+        dto.manualAllocationReason ?? dto.editReason,
+      );
+
+      if (plan.allocations.length) {
+        await tx.paymentAllocation.createMany({
+          data: plan.allocations.map((item) => ({
+            paymentId: payment.id,
+            rentBillId: item.rentBillId,
+            allocatedAmount: item.amount,
+            allocationOrder: item.allocationOrder,
+            allocationType: item.allocationType,
+          })),
+        });
+        for (const allocation of plan.allocations) {
+          const bill = billById.get(allocation.rentBillId)!;
+          bill.receivedAmount = bill.receivedAmount.plus(allocation.amount);
+          bill.outstandingAmount = new Prisma.Decimal(bill.payableAmount)
+            .minus(bill.receivedAmount)
+            .toDecimalPlaces(2);
+          await tx.rentBill.update({
+            where: { id: bill.id },
+            data: {
+              receivedAmount: bill.receivedAmount,
+              outstandingAmount: bill.outstandingAmount,
+              status: bill.outstandingAmount.isZero() ? 'PAID' : 'PARTIAL',
+            },
+          });
+        }
+      }
+      if (plan.prepaymentAmount.gt(0)) {
+        prepaymentBalance = prepaymentBalance.plus(plan.prepaymentAmount);
+        await tx.prepaymentTransaction.create({
+          data: {
+            contractId: payment.contractId,
+            transactionNo: `YS${Date.now()}${payment.id}`,
+            transactionType: 'CREDIT_RECEIPT',
+            amount: plan.prepaymentAmount,
+            balanceAfter: prepaymentBalance,
+            paymentId: payment.id,
+            reason: `修改收款 ${payment.receiptNo} 后的超额金额转入预收款`,
+          },
+        });
+      }
+
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          paymentDate: dto.paymentDate
+            ? new Date(dto.paymentDate)
+            : payment.paymentDate,
+          amount,
+          method: dto.method ?? payment.method,
+          externalReference:
+            dto.externalReference === undefined
+              ? payment.externalReference
+              : dto.externalReference,
+          remark: dto.remark === undefined ? payment.remark : dto.remark,
+          editReason: dto.editReason,
+        },
+      });
+      const before = {
+        paymentDate: payment.paymentDate.toISOString().slice(0, 10),
+        amount: this.money(payment.amount),
+        method: payment.method,
+        externalReference: payment.externalReference,
+        remark: payment.remark,
+        selectedBillIds: previousActiveBillIds,
+      };
+      const after = {
+        paymentDate: dto.paymentDate ?? before.paymentDate,
+        amount: amount.toFixed(2),
+        method: dto.method ?? payment.method,
+        externalReference:
+          dto.externalReference === undefined
+            ? payment.externalReference
+            : dto.externalReference,
+        remark: dto.remark === undefined ? payment.remark : dto.remark,
+        selectedBillIds: plan.allocations.map((item) => item.rentBillId),
+      };
+      await tx.securityAuditLog.create({
+        data: {
+          eventType: 'PAYMENT_CORRECTED',
+          entityType: 'PAYMENT',
+          entityId: payment.id,
+          operatorId: user.id,
+          reason: dto.editReason,
+          eventData: { before, after },
+        },
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'PAYMENTS',
+          action: 'PAYMENT_CORRECTED',
+          entityType: 'PAYMENT',
+          entityId: payment.id,
+          entityNo: payment.receiptNo,
+          summary: `修改收款 ${payment.receiptNo}`,
+          beforeData: before,
+          afterData: after,
+          reason: dto.editReason,
+          operatorId: user.id,
+          operatorRole: user.role,
+        },
+      });
+      await this.refreshContractPaymentSnapshot(tx, payment.contractId);
+      return { id: payment.id, receiptNo: payment.receiptNo };
+    });
   }
 
   async prepayments(contractId: number) {
