@@ -53,7 +53,7 @@ const roomMapFilters = reactive({
 const isSuper = computed(() => session.user?.role === 'SUPER_ADMIN')
 const statusMeta: Record<RoomStatus, { label: string; className: string; color: string }> = {
   EMPTY: { label: '空置', className: 'empty', color: '#20a37a' },
-  PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#7d5ce7' },
+  PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#7ef1ff' },
   RENTED: { label: '已出租', className: 'rented', color: '#246bfd' },
   PENDING_CHECKOUT: { label: '待退租', className: 'checkout', color: '#e98216' },
   MAINTENANCE: { label: '维修中', className: 'repair', color: '#d4b52a' },
@@ -238,40 +238,6 @@ onMounted(init)
 
     <section class="cockpit-grid">
       <div class="left-stack">
-        <el-card class="panel-card" shadow="never">
-          <template #header>
-            <div class="panel-head">
-              <div>
-                <h2>本月租金收缴概览</h2>
-                <small>按账期经营口径统计 · {{ collectionMonth }}</small>
-              </div>
-              <el-button text type="primary" @click="router.push('/finance')">查看财务中心</el-button>
-            </div>
-          </template>
-          <div v-if="isSuper && rentCollection" class="collection-overview">
-            <div class="collection-metrics">
-              <div class="collection-metric primary"><span>本月应收</span><b>{{ formatMoney(rentCollection.netReceivable) }}</b></div>
-              <div class="collection-metric success"><span>本月已收</span><b>{{ formatMoney(rentCollection.validReceived) }}</b></div>
-              <div class="collection-metric warning"><span>本月未收</span><b>{{ formatMoney(rentCollection.outstanding) }}</b></div>
-              <div class="collection-metric danger"><span>逾期欠租</span><b>{{ formatMoney(data.arrearsTotal) }}</b></div>
-              <div class="collection-metric move-in"><span>本月新增租房</span><b>{{ data.monthlyMoveInCount || 0 }}</b><small>合同开始日期在本月</small></div>
-              <div class="collection-metric checkout-count"><span>本月实际退租</span><b>{{ data.monthlyCheckoutCount || 0 }}</b><small>已完成退租结算</small></div>
-            </div>
-            <div class="collection-progress-head">
-              <span>本月收缴率 <b>{{ collectionRate === null ? '-' : `${collectionRate}%` }}</b></span>
-              <small>{{ collectionState }}</small>
-            </div>
-            <el-progress :percentage="collectionProgress" :show-text="false" :stroke-width="10" :color="data.arrears.length ? '#e5484d' : '#25a26f'" />
-          </div>
-          <div v-else class="collection-safe-summary">
-            <div><span>待收提醒</span><b>{{ data.rentReminders.length }} 笔</b></div>
-            <div><span>逾期欠租</span><b>{{ data.arrears.length }} 笔</b></div>
-            <div><span>本月新增租房</span><b>{{ data.monthlyMoveInCount || 0 }}</b></div>
-            <div><span>本月实际退租</span><b>{{ data.monthlyCheckoutCount || 0 }}</b></div>
-            <small>金额与收缴率仅对超级管理员展示。</small>
-          </div>
-        </el-card>
-
         <el-card class="panel-card room-map-card" shadow="never">
           <template #header>
             <div class="panel-head">
@@ -330,6 +296,40 @@ onMounted(init)
                 <span class="room-owner">{{ room.building?.buildingName || '未设置楼栋' }}</span>
               </button>
             </div>
+          </div>
+        </el-card>
+
+        <el-card class="panel-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <div>
+                <h2>本月租金收缴概览</h2>
+                <small>按账期经营口径统计 · {{ collectionMonth }}</small>
+              </div>
+              <el-button text type="primary" @click="router.push('/finance')">查看财务中心</el-button>
+            </div>
+          </template>
+          <div v-if="isSuper && rentCollection" class="collection-overview">
+            <div class="collection-metrics">
+              <div class="collection-metric primary"><span>本月应收</span><b>{{ formatMoney(rentCollection.netReceivable) }}</b></div>
+              <div class="collection-metric success"><span>本月已收</span><b>{{ formatMoney(rentCollection.validReceived) }}</b></div>
+              <div class="collection-metric warning"><span>本月未收</span><b>{{ formatMoney(rentCollection.outstanding) }}</b></div>
+              <div class="collection-metric danger"><span>逾期欠租</span><b>{{ formatMoney(data.arrearsTotal) }}</b></div>
+              <div class="collection-metric move-in"><span>本月新增租房</span><b>{{ data.monthlyMoveInCount || 0 }}</b><small>合同开始日期在本月</small></div>
+              <div class="collection-metric checkout-count"><span>本月实际退租</span><b>{{ data.monthlyCheckoutCount || 0 }}</b><small>已完成退租结算</small></div>
+            </div>
+            <div class="collection-progress-head">
+              <span>本月收缴率 <b>{{ collectionRate === null ? '-' : `${collectionRate}%` }}</b></span>
+              <small>{{ collectionState }}</small>
+            </div>
+            <el-progress :percentage="collectionProgress" :show-text="false" :stroke-width="10" :color="data.arrears.length ? '#e5484d' : '#25a26f'" />
+          </div>
+          <div v-else class="collection-safe-summary">
+            <div><span>待收提醒</span><b>{{ data.rentReminders.length }} 笔</b></div>
+            <div><span>逾期欠租</span><b>{{ data.arrears.length }} 笔</b></div>
+            <div><span>本月新增租房</span><b>{{ data.monthlyMoveInCount || 0 }}</b></div>
+            <div><span>本月实际退租</span><b>{{ data.monthlyCheckoutCount || 0 }}</b></div>
+            <small>金额与收缴率仅对超级管理员展示。</small>
           </div>
         </el-card>
 
@@ -449,7 +449,7 @@ onMounted(init)
 .room-owner { color:#68758a; }
 .rented { background:#eaf1ff; border-color:#9dbbf7; color:#174ea6; }
 .empty { background:#e8f7f2; border-color:#91d5c1; color:#116c52; }
-.movein { background:#f1edff; border-color:#c9bdf6; color:#6543c4; }
+.movein { background:#7ef1ff; border-color:#39c9dd; color:#134e5a; }
 .checkout { background:#fff1df; border-color:#f5c98f; color:#b76112; }
 .repair { background:#fff8d9; border-color:#eedc7b; color:#8b7114; }
 .sold { background:#eceff3; border-color:#cbd2dc; color:#5c6572; }
