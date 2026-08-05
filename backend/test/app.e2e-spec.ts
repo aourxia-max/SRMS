@@ -43,6 +43,11 @@ describe('AppController (e2e)', () => {
       .expect(401);
   });
 
+  it('/api/rent-bills endpoints reject unauthenticated requests', async () => {
+    await request(app.getHttpServer()).get('/api/rent-bills').expect(401);
+    await request(app.getHttpServer()).get('/api/rent-bills/1').expect(401);
+  });
+
   it('/api/contracts change endpoints reject unauthenticated requests', async () => {
     await request(app.getHttpServer())
       .get('/api/contracts/1/changes')
