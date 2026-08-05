@@ -295,6 +295,7 @@ model User {
   uploadedFiles             FileAsset[]
   paymentFiles              PaymentFile[]
   refundAdjustmentDecisions PaymentRefundAdjustmentDecision[]
+  contractDrafts            ContractDraft[]
 
   @@index([role, status])
   @@map("users")
@@ -340,6 +341,7 @@ model FileAsset {
   depositRefundFiles          DepositRefundFile[]
   checkoutSettlementItemFiles CheckoutSettlementItemFile[]
   paymentFiles                PaymentFile[]
+  contractFiles               ContractFile[]
   exportTasks                 ExportTask[]
 
   @@index([category, uploadedAt])
@@ -520,6 +522,7 @@ model Room {
   building         Building            @relation(fields: [buildingId], references: [id], onDelete: Restrict)
   histories        RoomStatusHistory[]
   contracts        Contract[]
+  contractDrafts   ContractDraft[]
 
   @@unique([buildingId, houseNo])
   @@index([buildingId, floorNo, houseNo])
@@ -529,7 +532,8 @@ model Room {
 
 model Contract {
   id                     Int                     @id @default(autoincrement()) @db.UnsignedInt
-  contractNo             String                  @unique @map("contract_no") @db.VarChar(40)
+  contractNo             String                  @unique @map("contract_no") @db.VarChar(120)
+  externalContractNo     String?                 @map("external_contract_no") @db.VarChar(80)
   roomId                 Int                     @map("room_id") @db.UnsignedInt
   startDate              DateTime                @map("start_date") @db.Date
   endDate                DateTime                @map("end_date") @db.Date
@@ -561,11 +565,39 @@ model Contract {
   checkoutSettlements    CheckoutSettlement[]
   depositRefunds         DepositRefund[]
   commissions            ContractCommission[]
+  files                  ContractFile[]
   currentPricingTier     ContractPricingTier?    @relation("ContractCurrentPricingTier", fields: [currentPricingTierId], references: [id], onDelete: Restrict)
 
   @@index([roomId, startDate, endDate, status])
   @@index([status, nextDueDate])
   @@map("contracts")
+}
+
+model ContractDraft {
+  id          Int       @id @default(autoincrement()) @db.UnsignedInt
+  roomId      Int?      @map("room_id") @db.UnsignedInt
+  payload     Json      @map("payload")
+  status      String    @default("DRAFT") @db.VarChar(20)
+  createdBy   Int       @map("created_by") @db.UnsignedInt
+  confirmedAt DateTime? @map("confirmed_at") @db.DateTime(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  room        Room?     @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  creator     User      @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([createdBy, status, updatedAt])
+  @@map("contract_drafts")
+}
+
+model ContractFile {
+  contractId  Int       @map("contract_id") @db.UnsignedInt
+  fileAssetId Int       @map("file_asset_id") @db.UnsignedInt
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  contract    Contract  @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  fileAsset   FileAsset @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@id([contractId, fileAssetId])
+  @@map("contract_files")
 }
 
 model ContractCommission {
@@ -716,7 +748,7 @@ model PricingRebateFile {
 
 model RentBill {
   id                      Int                      @id @default(autoincrement()) @db.UnsignedInt
-  billNo                  String                   @unique @map("bill_no") @db.VarChar(40)
+  billNo                  String                   @unique @map("bill_no") @db.VarChar(140)
   contractId              Int                      @map("contract_id") @db.UnsignedInt
   periodSeq               Int                      @map("period_seq")
   periodStart             DateTime                 @map("period_start") @db.Date
