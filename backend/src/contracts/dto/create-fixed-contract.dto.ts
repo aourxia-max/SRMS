@@ -5,8 +5,6 @@ import {
   IsInt,
   IsNumberString,
   IsOptional,
-  IsString,
-  Length,
   Max,
   Min,
   ValidateNested,
@@ -15,7 +13,6 @@ import { PricingTierDto } from './pricing-tier.dto';
 import { ConcessionDto } from './concession.dto';
 
 export class CreateFixedContractDto {
-  @IsString() @Length(1, 40) contractNo!: string;
   @Type(() => Number) @IsInt() roomId!: number;
   @IsDateString() startDate!: string;
   @IsDateString() endDate!: string;

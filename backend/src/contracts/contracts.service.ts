@@ -21,6 +21,10 @@ import {
   assertPricingTiers,
   assertPrimaryTenant,
 } from './contract-validation';
+import {
+  buildContractNumber,
+  buildTemporaryContractNumber,
+} from './contract-number';
 
 @Injectable()
 export class ContractsService {
@@ -481,7 +485,6 @@ export class ContractsService {
   }
 
   async createFixedContract(input: {
-    contractNo: string;
     roomId: number;
     startDate: Date;
     endDate: Date;
@@ -508,9 +511,13 @@ export class ContractsService {
       });
       if (conflict)
         throw new ConflictException('该房源在合同租期内已有有效合同');
+      const primaryTenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: input.primaryTenantId },
+        select: { name: true },
+      });
       const contract = await tx.contract.create({
         data: {
-          contractNo: input.contractNo,
+          contractNo: buildTemporaryContractNumber(),
           roomId: input.roomId,
           startDate: input.startDate,
           endDate: input.endDate,
@@ -544,6 +551,16 @@ export class ContractsService {
               }
             : undefined,
         },
+      });
+      const contractNo = buildContractNumber(
+        contract.id,
+        input.startDate,
+        room.fullHouseNo,
+        primaryTenant.name,
+      );
+      const finalizedContract = await tx.contract.update({
+        where: { id: contract.id },
+        data: { contractNo },
       });
       const bills = buildBillingPeriods(input.startDate, input.endDate).map(
         (period) => {
@@ -596,7 +613,7 @@ export class ContractsService {
           }, new Prisma.Decimal(0));
           const payable = payableAmount(amount, rentFree, discount);
           return {
-            billNo: `${input.contractNo}-B${String(period.sequence).padStart(3, '0')}`,
+            billNo: `${contractNo}-B${String(period.sequence).padStart(3, '0')}`,
             contractId: contract.id,
             periodSeq: period.sequence,
             periodStart: period.start,
@@ -621,17 +638,16 @@ export class ContractsService {
           roomId: room.id,
           fromStatus: room.roomStatus,
           toStatus: 'PENDING_MOVE_IN',
-          changeReason: `合同确认：${input.contractNo}`,
+          changeReason: `合同确认：${contractNo}`,
           businessType: 'CONTRACT',
           businessId: contract.id,
         },
       });
-      return contract;
+      return finalizedContract;
     });
   }
 
   async createTieredContract(input: {
-    contractNo: string;
     roomId: number;
     startDate: Date;
     endDate: Date;
@@ -664,9 +680,13 @@ export class ContractsService {
       });
       if (conflict)
         throw new ConflictException('该房源在合同租期内已有有效合同');
+      const primaryTenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: input.primaryTenantId },
+        select: { name: true },
+      });
       const contract = await tx.contract.create({
         data: {
-          contractNo: input.contractNo,
+          contractNo: buildTemporaryContractNumber(),
           roomId: input.roomId,
           startDate: input.startDate,
           endDate: input.endDate,
@@ -700,6 +720,16 @@ export class ContractsService {
               }
             : undefined,
         },
+      });
+      const contractNo = buildContractNumber(
+        contract.id,
+        input.startDate,
+        room.fullHouseNo,
+        primaryTenant.name,
+      );
+      const finalizedContract = await tx.contract.update({
+        where: { id: contract.id },
+        data: { contractNo },
       });
       const snapshots = await Promise.all(
         [...input.tiers]
@@ -770,7 +800,7 @@ export class ContractsService {
           }, new Prisma.Decimal(0));
           const payable = payableAmount(amount, rentFree, discount);
           return {
-            billNo: `${input.contractNo}-B${String(period.sequence).padStart(3, '0')}`,
+            billNo: `${contractNo}-B${String(period.sequence).padStart(3, '0')}`,
             contractId: contract.id,
             periodSeq: period.sequence,
             periodStart: period.start,
@@ -796,12 +826,12 @@ export class ContractsService {
           roomId: room.id,
           fromStatus: room.roomStatus,
           toStatus: 'PENDING_MOVE_IN',
-          changeReason: `合同确认：${input.contractNo}`,
+          changeReason: `合同确认：${contractNo}`,
           businessType: 'CONTRACT',
           businessId: contract.id,
         },
       });
-      return contract;
+      return finalizedContract;
     });
   }
 }

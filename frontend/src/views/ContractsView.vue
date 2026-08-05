@@ -23,7 +23,7 @@ const pricingMode = ref<'FIXED' | 'TIERED_RETROACTIVE'>('FIXED')
 const tiers = ref([{ tierName: '基础档', thresholdMonths: 0, monthlyRent: '', requiresFullyPaid: true }])
 const concessions = ref<Concession[]>([])
 const form = reactive({
-  contractNo: '', roomId: 0, startDate: '', endDate: '', monthlyRent: '',
+  roomId: 0, startDate: '', endDate: '', monthlyRent: '',
   depositRequired: '0', paymentCycleMonths: 1, primaryTenantId: 0, secondaryTenantIds: [] as number[],
 })
 const cycleMonths: Record<string, number> = { MONTHLY: 1, QUARTERLY: 3, HALF_YEARLY: 6, YEARLY: 12 }
@@ -45,7 +45,7 @@ function concessionValid(item: Concession) {
 }
 
 async function submit() {
-  if (!form.contractNo || !form.roomId || !form.primaryTenantId || !form.startDate || !form.endDate || Number(form.monthlyRent) < 0 || form.endDate < form.startDate) {
+  if (!form.roomId || !form.primaryTenantId || !form.startDate || !form.endDate || Number(form.monthlyRent) < 0 || form.endDate < form.startDate) {
     return alert('请完整填写合同基本信息')
   }
   if (pricingMode.value === 'TIERED_RETROACTIVE' && (tiers.value.some((tier) => !tier.tierName || Number(tier.monthlyRent) < 0) || new Set(tiers.value.map((tier) => tier.thresholdMonths)).size !== tiers.value.length)) {
@@ -81,7 +81,7 @@ onMounted(async () => { const settings = await http.get('/system/defaults').catc
       <el-form :model="form" label-position="top">
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="计价方式"><el-radio-group v-model="pricingMode"><el-radio value="FIXED">固定月租</el-radio><el-radio value="TIERED_RETROACTIVE">阶梯计价</el-radio></el-radio-group></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="合同编号"><el-input v-model="form.contractNo" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="合同编号"><el-text type="info">保存后由系统自动生成</el-text></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="房源"><el-select v-model="form.roomId"><el-option v-for="room in rooms" :key="room.id" :label="room.fullHouseNo" :value="room.id" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="主承租人"><el-select v-model="form.primaryTenantId"><el-option v-for="tenant in tenants" :key="tenant.id" :label="tenant.name" :value="tenant.id" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="共同承租人"><el-select v-model="form.secondaryTenantIds" multiple><el-option v-for="tenant in tenants" :key="tenant.id" :label="tenant.name" :value="tenant.id" /></el-select></el-form-item></el-col>

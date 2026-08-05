@@ -2,7 +2,6 @@ import { ContractsService } from './contracts.service';
 
 describe('ContractsService', () => {
   const input = {
-    contractNo: 'HT-TEST-001',
     roomId: 1,
     startDate: new Date('2026-01-01'),
     endDate: new Date('2026-02-05'),
@@ -36,17 +35,25 @@ describe('ContractsService', () => {
 
   it('generates billing snapshots and changes the room to pending move-in', async () => {
     const createMany = jest.fn().mockResolvedValue({ count: 2 });
-    const update = jest.fn().mockResolvedValue({});
+    const roomUpdate = jest.fn().mockResolvedValue({});
+    const contractUpdate = jest.fn().mockResolvedValue({
+      id: 10,
+      contractNo: 'HT202601010001 | 1栋101 | 李四',
+    });
     const tx = {
       room: {
         findFirstOrThrow: jest
           .fn()
           .mockResolvedValue({ id: 1, roomStatus: 'EMPTY' }),
-        update,
+        update: roomUpdate,
       },
       contract: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 10 }),
+        update: contractUpdate,
+      },
+      tenant: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ name: '李四' }),
       },
       rentBill: { createMany },
       roomStatusHistory: { create: jest.fn().mockResolvedValue({}) },
@@ -66,7 +73,7 @@ describe('ContractsService', () => {
         ]),
       }),
     );
-    expect(update).toHaveBeenCalledWith(
+    expect(roomUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ roomStatus: 'PENDING_MOVE_IN' }),
       }),
@@ -122,6 +129,13 @@ describe('ContractsService', () => {
       contract: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 10 }),
+        update: jest.fn().mockResolvedValue({
+          id: 10,
+          contractNo: 'HT202601010001 | 1栋101 | 李四',
+        }),
+      },
+      tenant: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ name: '李四' }),
       },
       contractPricingTier: { create: tierCreate },
       rentBill: { createMany },
