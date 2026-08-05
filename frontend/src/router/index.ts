@@ -15,6 +15,7 @@ import FinanceView from '../views/FinanceView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import SystemManagementView from '../views/SystemManagementView.vue'
 import RoomDetailView from '../views/RoomDetailView.vue'
+import RentBillsView from '../views/RentBillsView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -33,6 +34,7 @@ export const router = createRouter({
     { path: '/contracts', name: 'contracts', component: ContractsView, meta: { requiresAuth: true } },
     { path: '/contracts/changes', name: 'contract-changes', component: ContractChangesView, meta: { requiresAuth: true } },
     { path: '/payments', name: 'payments', component: PaymentsView, meta: { requiresAuth: true } },
+    { path: '/rent-bills', name: 'rent-bills', component: RentBillsView, meta: { requiresAuth: true } },
     { path: '/pricing-rebates', name: 'pricing-rebates', component: PricingRebatesView, meta: { requiresAuth: true } },
     { path: '/checkout', name: 'checkout', component: CheckoutView, meta: { requiresAuth: true } },
     { path: '/finance', name: 'finance', component: FinanceView, meta: { requiresAuth: true } },

@@ -14,7 +14,7 @@ const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
 const isAdmin = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
 const pageNames: Record<string, string> = {
   session: '经营驾驶舱', properties: '房源管理', tenants: '承租人管理', contracts: '合同管理',
-  'contract-changes': '合同变更', payments: '收款管理', 'pricing-rebates': '阶梯退差',
+  'contract-changes': '合同变更', 'rent-bills': '租金账单', payments: '收款管理', 'pricing-rebates': '阶梯退差',
   checkout: '退租结算', finance: '财务中心', users: '用户管理', 'system-management': '系统管理',
 }
 const currentPage = computed(() => pageNames[String(route.name)] ?? 'SRMS')
@@ -40,6 +40,7 @@ onMounted(() => void app.loadProjectName())
         <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b></router-link>
         <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b></router-link>
         <p v-show="!collapsed">租赁财务</p>
+        <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
         <router-link to="/payments" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b></router-link>
         <router-link v-if="isAdmin" to="/pricing-rebates" class="srms-nav-item"><span>≈</span><b v-show="!collapsed">阶梯退差</b></router-link>
         <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b></router-link>
