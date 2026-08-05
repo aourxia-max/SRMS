@@ -3,6 +3,60 @@ import { Prisma, RentBillStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListRentBillsDto } from './dto/list-rent-bills.dto';
 
+const rentBillInclude = {
+  contract: {
+    include: {
+      room: { include: { building: true } },
+      members: {
+        where: { memberRole: 'PRIMARY', isCurrent: true },
+        include: { tenant: { select: { id: true, name: true } } },
+      },
+    },
+  },
+} satisfies Prisma.RentBillInclude;
+
+const rentBillDetailInclude = {
+  ...rentBillInclude,
+  adjustments: {
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      adjustmentNo: true,
+      adjustmentType: true,
+      direction: true,
+      amount: true,
+      approvalStatus: true,
+      reason: true,
+      submittedAt: true,
+    },
+  },
+  allocations: {
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      allocatedAmount: true,
+      reversedAmount: true,
+      payment: { select: { receiptNo: true, paymentDate: true, status: true } },
+    },
+  },
+  prepaymentTransactions: {
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      transactionNo: true,
+      transactionType: true,
+      amount: true,
+      occurredAt: true,
+    },
+  },
+} satisfies Prisma.RentBillInclude;
+
+type RentBillRow = Prisma.RentBillGetPayload<{
+  include: typeof rentBillInclude;
+}>;
+type RentBillDetailRow = Prisma.RentBillGetPayload<{
+  include: typeof rentBillDetailInclude;
+}>;
 const money = (value: Prisma.Decimal | string | number) =>
   new Prisma.Decimal(value).toFixed(2);
 
@@ -14,13 +68,16 @@ export class RentBillsService {
     const keyword = dto.keyword?.trim();
     const where: Prisma.RentBillWhereInput = {
       ...(dto.status ? { status: dto.status } : {}),
-      ...(dto.buildingId ? { contract: { room: { buildingId: dto.buildingId } } } : {}),
+      ...(dto.buildingId
+        ? { contract: { room: { buildingId: dto.buildingId } } }
+        : {}),
     };
     if (dto.month) {
       const [year, month] = dto.month.split('-').map(Number);
-      const from = new Date(Date.UTC(year, month - 1, 1));
-      const to = new Date(Date.UTC(year, month, 1));
-      where.periodStart = { gte: from, lt: to };
+      where.periodStart = {
+        gte: new Date(Date.UTC(year, month - 1, 1)),
+        lt: new Date(Date.UTC(year, month, 1)),
+      };
     }
     if (keyword) {
       where.OR = [
@@ -43,21 +100,7 @@ export class RentBillsService {
     return where;
   }
 
-  private include() {
-    return {
-      contract: {
-        include: {
-          room: { include: { building: true } },
-          members: {
-            where: { memberRole: 'PRIMARY', isCurrent: true },
-            include: { tenant: { select: { id: true, name: true } } },
-          },
-        },
-      },
-    } as const;
-  }
-
-  private mapRow(bill: any) {
+  private mapRow(bill: RentBillRow) {
     const member = bill.contract.members[0];
     return {
       id: bill.id,
@@ -90,13 +133,14 @@ export class RentBillsService {
     const [all, total] = await Promise.all([
       this.prisma.db.rentBill.findMany({
         where,
-        include: this.include(),
+        include: rentBillInclude,
         orderBy: [{ periodStart: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.db.rentBill.count({ where }),
     ]);
     const businessRows = all.filter(
-      (item) => !(['VOIDED', 'REFUNDED'] as RentBillStatus[]).includes(item.status),
+      (item) =>
+        !(['VOIDED', 'REFUNDED'] as RentBillStatus[]).includes(item.status),
     );
     const summary = businessRows.reduce(
       (result, bill) => {
@@ -115,9 +159,10 @@ export class RentBillsService {
     );
     const page = dto.page ?? 1;
     const pageSize = dto.pageSize ?? 20;
-    const items = all.slice((page - 1) * pageSize, page * pageSize).map((bill) => this.mapRow(bill));
     return {
-      items,
+      items: all
+        .slice((page - 1) * pageSize, page * pageSize)
+        .map((bill) => this.mapRow(bill)),
       page,
       pageSize,
       total,
@@ -132,48 +177,24 @@ export class RentBillsService {
   }
 
   async detail(id: number) {
-    const bill: any = await this.prisma.db.rentBill.findUnique({
-      where: { id },
-      include: {
-        ...this.include(),
-        adjustments: {
-          orderBy: { id: 'desc' },
-          select: {
-            id: true,
-            adjustmentNo: true,
-            adjustmentType: true,
-            direction: true,
-            amount: true,
-            approvalStatus: true,
-            reason: true,
-            submittedAt: true,
-          },
-        },
-        allocations: {
-          orderBy: { id: 'asc' },
-          select: {
-            id: true,
-            allocatedAmount: true,
-            reversedAmount: true,
-            payment: { select: { receiptNo: true, paymentDate: true, status: true } },
-          },
-        },
-        prepaymentTransactions: {
-          orderBy: { id: 'desc' },
-          select: { id: true, transactionNo: true, transactionType: true, amount: true, occurredAt: true },
-        },
-      },
-    });
+    const bill: RentBillDetailRow | null =
+      await this.prisma.db.rentBill.findUnique({
+        where: { id },
+        include: rentBillDetailInclude,
+      });
     if (!bill) throw new NotFoundException('租金账单不存在');
     return {
       ...this.mapRow(bill),
-      adjustments: bill.adjustments.map((item: any) => ({ ...item, amount: money(item.amount) })),
-      allocations: bill.allocations.map((item: any) => ({
+      adjustments: bill.adjustments.map((item) => ({
+        ...item,
+        amount: money(item.amount),
+      })),
+      allocations: bill.allocations.map((item) => ({
         ...item,
         allocatedAmount: money(item.allocatedAmount),
         reversedAmount: money(item.reversedAmount),
       })),
-      prepaymentTransactions: bill.prepaymentTransactions.map((item: any) => ({
+      prepaymentTransactions: bill.prepaymentTransactions.map((item) => ({
         ...item,
         amount: money(item.amount),
       })),

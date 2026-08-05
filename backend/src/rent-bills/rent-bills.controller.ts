@@ -1,4 +1,11 @@
-import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../authorization/roles.guard';
 import { ListRentBillsDto } from './dto/list-rent-bills.dto';
@@ -11,11 +18,19 @@ export class RentBillsController {
 
   @Get()
   async list(@Query() dto: ListRentBillsDto) {
-    return { code: 200, message: 'success', data: await this.rentBills.list(dto) };
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.rentBills.list(dto),
+    };
   }
 
   @Get(':id')
   async detail(@Param('id', ParseIntPipe) id: number) {
-    return { code: 200, message: 'success', data: await this.rentBills.detail(id) };
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.rentBills.detail(id),
+    };
   }
 }

@@ -7,7 +7,6 @@ import {
   IsOptional,
   IsString,
   Matches,
-  Max,
   Min,
 } from 'class-validator';
 
@@ -17,5 +16,6 @@ export class ListRentBillsDto {
   @IsOptional() @IsEnum(RentBillStatus) status?: RentBillStatus;
   @IsOptional() @Matches(/^\d{4}-\d{2}$/) month?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page = 1;
-  @IsOptional() @Type(() => Number) @IsInt() @IsIn([10, 20, 50, 100]) pageSize = 20;
+  @IsOptional() @Type(() => Number) @IsInt() @IsIn([10, 20, 50, 100]) pageSize =
+    20;
 }
