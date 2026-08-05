@@ -13,8 +13,10 @@ const isPublicPage = computed(() => route.name === 'login' || route.name === 'ta
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
 const isAdmin = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
 const pageNames: Record<string, string> = {
+  'rent-bills': '租金账单',
   session: '经营驾驶舱', properties: '房源管理', tenants: '承租人管理', contracts: '合同管理',
-  'contract-changes': '合同变更', 'rent-bills': '租金账单', payments: '收款管理', 'pricing-rebates': '阶梯退差',
+  'contract-changes': '合同变更', 'payment-collect': '收款登记', 'payment-detail': '收款详情',
+  'payment-reviews': '退款/作废确认', 'pricing-rebates': '阶梯退差',
   checkout: '退租结算', finance: '财务中心', users: '用户管理', 'system-management': '系统管理',
 }
 const currentPage = computed(() => pageNames[String(route.name)] ?? 'SRMS')
@@ -33,6 +35,7 @@ onMounted(() => void app.loadProjectName())
     <aside class="srms-sidebar">
       <div class="srms-brand"><div class="srms-logo">S</div><div v-show="!collapsed"><b>SRMS</b><small>{{ app.projectName }}</small></div></div>
       <nav class="srms-nav">
+        <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
         <p v-show="!collapsed">工作台</p>
         <router-link to="/" class="srms-nav-item"><span>▦</span><b v-show="!collapsed">经营驾驶舱</b></router-link>
         <router-link to="/properties" class="srms-nav-item"><span>⌂</span><b v-show="!collapsed">房源管理</b></router-link>
@@ -40,8 +43,7 @@ onMounted(() => void app.loadProjectName())
         <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b></router-link>
         <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b></router-link>
         <p v-show="!collapsed">租赁财务</p>
-        <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
-        <router-link to="/payments" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b></router-link>
+        <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b></router-link>
         <router-link v-if="isAdmin" to="/pricing-rebates" class="srms-nav-item"><span>≈</span><b v-show="!collapsed">阶梯退差</b></router-link>
         <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b></router-link>
         <router-link v-if="isSuperAdmin" to="/finance" class="srms-nav-item"><span>¥</span><b v-show="!collapsed">财务中心</b></router-link>
