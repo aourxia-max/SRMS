@@ -35,7 +35,6 @@ onMounted(() => void app.loadProjectName())
     <aside class="srms-sidebar">
       <div class="srms-brand"><div class="srms-logo">S</div><div v-show="!collapsed"><b>SRMS</b><small>{{ app.projectName }}</small></div></div>
       <nav class="srms-nav">
-        <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
         <p v-show="!collapsed">工作台</p>
         <router-link to="/" class="srms-nav-item"><span>▦</span><b v-show="!collapsed">经营驾驶舱</b></router-link>
         <router-link to="/properties" class="srms-nav-item"><span>⌂</span><b v-show="!collapsed">房源管理</b></router-link>
@@ -43,6 +42,7 @@ onMounted(() => void app.loadProjectName())
         <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b></router-link>
         <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b></router-link>
         <p v-show="!collapsed">租赁财务</p>
+        <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
         <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b></router-link>
         <router-link v-if="isAdmin" to="/pricing-rebates" class="srms-nav-item"><span>≈</span><b v-show="!collapsed">阶梯退差</b></router-link>
         <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b></router-link>
