@@ -15,6 +15,7 @@ import { CheckoutModule } from './checkout/checkout.module';
 import { FinanceModule } from './finance/finance.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { SystemModule } from './system/system.module';
+import { RentBillsModule } from './rent-bills/rent-bills.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { SystemModule } from './system/system.module';
     FinanceModule,
     DashboardModule,
     SystemModule,
+    RentBillsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
