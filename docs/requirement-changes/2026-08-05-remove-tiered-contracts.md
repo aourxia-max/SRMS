@@ -16,7 +16,7 @@
 
 ## 数据库与兼容性
 
-- 增加或明确 `contract_drafts`、`contract_files`、`external_contract_no`。
+- 增加或明确 `contract_drafts`、`contract_files`、`external_contract_no VARCHAR(80)`（可选、可重复）。
 - `contracts.contract_no` 为 `VARCHAR(120)`，`rent_bills.bill_no` 为 `VARCHAR(140)`。
 - 数据库枚举可保留 `TIERED_RETROACTIVE`，仅用于旧备份兼容识别；当前业务不得创建或写入该值。
 - 清理前必须备份、预检关联合同、账单、收款、退款、预收款、押金、退租、文件、审计与财务统计；清理后复核数量、外键、余额和报表口径，并写安全审计。

@@ -115,8 +115,10 @@
 erDiagram
     BUILDINGS ||--o{ ROOMS : contains
     ROOMS ||--o{ CONTRACTS : leased_by
+    ROOMS ||--o{ CONTRACT_DRAFTS : reserved_by
     TENANTS ||--o{ CONTRACT_MEMBERS : joins
     CONTRACTS ||--|{ CONTRACT_MEMBERS : has
+    CONTRACTS ||--o{ CONTRACT_FILES : attaches
     CONTRACTS ||--o{ CONTRACT_CONCESSIONS : applies
     CONTRACTS ||--o{ CONTRACT_CHANGES : changes
     CONTRACTS ||--o{ PRICING_REBATES : earns
@@ -268,7 +270,7 @@ erDiagram
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | contract_no | VARCHAR(120) | 是 | 系统合同编号，唯一，例如HT2026070001 |
-| external_contract_no | VARCHAR(120) | 否 | 纸质或外部合同编号 |
+| external_contract_no | VARCHAR(80) | 否 | 可重复的纸质或外部合同编号 |
 | previous_contract_id | INT UNSIGNED | 否 | 续签来源合同 |
 | room_id | INT UNSIGNED | 是 | 一份合同一个房源 |
 | start_date | DATE | 是 | 合同开始日期 |
@@ -315,7 +317,6 @@ erDiagram
 建议索引：
 
 - `UNIQUE(contract_no)`。
-- `UNIQUE(external_contract_no)`（非空值）。
 - `idx_contracts_room_period(room_id, start_date, end_date, status)`。
 - `idx_contracts_status_end(status, end_date)`：驾驶舱到期提醒。
 - `idx_contracts_next_due(status, next_due_date)`：催租提醒。
@@ -339,7 +340,7 @@ erDiagram
 
 合同录入在确认前保存为草稿，草稿不得生成账单、收款、押金、退差或房态变更。
 
-主要字段：`draft_no VARCHAR(120)`、`room_id`、`payload JSON`、`status`（`DRAFT`、`SUBMITTED`、`CANCELLED`）、`created_by`、`submitted_at`、`expires_at`。确认时在同一事务中校验草稿版本、创建固定月租合同及成员和优惠，再将草稿标记为已使用；草稿不直接转为可编辑的正式合同记录。
+主要字段：`draft_no VARCHAR(120)`、`room_id`、`payload JSON`、`status`（`DRAFT`、`CONFIRMED`、`CANCELLED`）、`created_by`、`confirmed_at`、`expires_at`。确认时在同一事务中校验草稿版本、创建固定月租合同及成员和优惠，再将草稿状态更新为`CONFIRMED`；草稿不直接转为可编辑的正式合同记录。
 
 ### 8.4 contract_changes
 
