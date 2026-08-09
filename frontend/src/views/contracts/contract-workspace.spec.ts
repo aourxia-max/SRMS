@@ -11,6 +11,9 @@ import {
   buildFixedRentRebatePayload,
   contractConcessionError,
   createLatestRequestGuard,
+  filterFixedRentRebateContracts,
+  fixedRentRebateContractLabel,
+  isFixedRentRebateEligible,
   normalizeConcessionType,
   toContractPayload,
 } from '../../services/contracts'
@@ -135,6 +138,31 @@ const activeContract = (): ContractDetail => ({
 })
 
 describe('合同工作区复审边界', () => {
+  it('只把履行中的固定月租合同认定为可退差', () => {
+    expect(isFixedRentRebateEligible(activeContract())).toBe(true)
+    expect(isFixedRentRebateEligible({ ...activeContract(), status: 'PENDING_START' })).toBe(false)
+    expect(isFixedRentRebateEligible({ ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' })).toBe(false)
+    expect(isFixedRentRebateEligible(null)).toBe(false)
+  })
+
+  it.each([
+    ['合同编号', '050012'],
+    ['楼栋房号', '1栋301'],
+    ['主租户姓名', '张三'],
+  ])('按%s搜索符合退差条件的合同', (_field, keyword) => {
+    const eligible = activeContract()
+    const ineligible = { ...activeContract(), id: 13, contractNo: 'HT-OTHER', status: 'PENDING_START' }
+    expect(filterFixedRentRebateContracts([eligible, ineligible], keyword).map((item) => item.id)).toEqual([12])
+  })
+
+  it('搜索忽略首尾空格和英文大小写并生成完整标签', () => {
+    const eligible = activeContract()
+    expect(filterFixedRentRebateContracts([eligible], '  ht2026  ')).toEqual([eligible])
+    expect(fixedRentRebateContractLabel(eligible)).toContain('HT202608050012')
+    expect(fixedRentRebateContractLabel(eligible)).toContain('1栋301')
+    expect(fixedRentRebateContractLabel(eligible)).toContain('张三')
+  })
+
   it('仅允许最新预览请求更新状态', () => {
     const guard = createLatestRequestGuard()
     const first = guard.next()
