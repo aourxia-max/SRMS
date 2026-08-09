@@ -94,3 +94,13 @@ Task013 的验收记录见 `docs/task013-acceptance.md`。
 Task006 至 Task013 已在本机 MySQL TEST 数据中完成验收；完整记录见各任务验收文档。跨环境部署前仍应在目标环境复核备份目录、MySQL 工具路径和中文字体配置。
 
 收款管理工作流已按原型完成三页重设计，并补齐收款凭证、账期分配、收款更正及退款／作废审核闭环；验收结果见 `docs/payment-management-redesign-acceptance.md`。
+
+固定月租合同管理已按确认后的需求变更完成重构：新合同仅支持固定月租，包含草稿、账单预览、正式确认、合同附件、合同详情和固定月租退差；新建阶梯合同及阶梯退差已由后端强制停用。完整验证结果、测试环境地址、未完成的视觉复核和历史清理前置条件见 `docs/fixed-contract-management-acceptance.md`。
+
+本地 Docker 测试环境使用项目名 `srms_test`：
+
+- 合同管理：http://localhost:15173/contracts
+- API 健康检查：http://localhost:13000/api/health
+- MySQL：localhost:13306
+
+历史阶梯合同清理不会随 migration 或应用启动自动执行。清理工具默认仅预检；任何环境的实际执行都必须先完成备份核验、范围复核和单独授权，生产环境尤其不得直接运行 `execute`。
