@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
-import { buildFixedRentRebatePayload, uploadPricingRebateProof } from '../../services/contracts'
+import {
+  buildFixedRentRebatePayload,
+  filterFixedRentRebateContracts,
+  fixedRentRebateContractLabel,
+  isFixedRentRebateEligible,
+  uploadPricingRebateProof,
+} from '../../services/contracts'
 import type { ContractDetail, ContractListItem, ContractRole, PricingRebate, RentBill } from '../../types/contracts'
 
 const props = withDefaults(defineProps<{
@@ -22,6 +28,8 @@ const emit = defineEmits<{
 }>()
 
 const proofUploading = ref(false)
+const contractKeyword = ref('')
+const searchContractId = ref<number | null>(null)
 const form = reactive({
   rentBillId: null as number | null,
   periodStart: '', periodEnd: '', actualAmount: '', differenceReason: '',
@@ -29,8 +37,8 @@ const form = reactive({
   refundDate: '', refundMethod: 'WECHAT', remark: '', proofFileIds: [] as number[],
 })
 
-const eligibleContracts = computed(() => props.contracts.filter((item) => item.status === 'ACTIVE' && item.pricingMode === 'FIXED'))
-const eligibleContract = computed(() => props.contract?.status === 'ACTIVE' && props.contract.pricingMode === 'FIXED' ? props.contract : null)
+const eligibleContracts = computed(() => filterFixedRentRebateContracts(props.contracts, contractKeyword.value))
+const eligibleContract = computed(() => isFixedRentRebateEligible(props.contract) ? props.contract : null)
 const selectedBill = computed(() => props.bills.find((item) => item.id === form.rentBillId))
 const eligibleBills = computed(() => props.bills.filter((item) => !['VOIDED', 'REFUNDED'].includes(item.status || '')))
 const canSubmit = computed(() => Boolean(
@@ -39,6 +47,18 @@ const canSubmit = computed(() => Boolean(
   (form.settlementMethod === 'PREPAYMENT_CREDIT' || (form.refundDate && form.refundMethod && form.proofFileIds.length)),
 ))
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
+
+watch(() => props.contract?.id, (id) => {
+  searchContractId.value = id ?? null
+}, { immediate: true })
+
+function setContractKeyword(value: string) {
+  contractKeyword.value = value
+}
+
+function selectSearchContract(id?: number) {
+  if (id) emit('select-contract', id)
+}
 
 function applyBill() {
   if (!selectedBill.value) return
@@ -85,10 +105,27 @@ function submit() {
 
 <template>
   <section>
-    <el-empty v-if="!eligibleContract" description="请选择履行中的固定月租合同">
-      <el-select v-if="eligibleContracts.length" placeholder="选择可退差合同" @change="(id: number) => emit('select-contract', id)">
-        <el-option v-for="item in eligibleContracts" :key="item.id" :value="item.id" :label="`${item.contractNo}｜${item.room?.fullHouseNo || `房源${item.roomId}`}`" />
+    <div class="contract-search-card">
+      <span>搜索可退差合同</span>
+      <el-select
+        v-model="searchContractId"
+        data-test="fixed-rebate-contract-search"
+        filterable
+        clearable
+        :filter-method="setContractKeyword"
+        placeholder="搜索合同编号、楼栋房号或租户姓名"
+        no-match-text="未找到符合退差条件的合同"
+        @change="selectSearchContract"
+      >
+        <el-option
+          v-for="item in eligibleContracts"
+          :key="item.id"
+          :value="item.id"
+          :label="fixedRentRebateContractLabel(item)"
+        />
       </el-select>
+    </div>
+    <el-empty v-if="!eligibleContract" description="请选择履行中的固定月租合同">
       <el-button type="primary" @click="emit('back')">返回合同列表</el-button>
     </el-empty>
     <template v-else>
@@ -146,6 +183,10 @@ function submit() {
 </template>
 
 <style scoped>
+.contract-search-card { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 14px; margin-bottom: 16px; padding: 16px 18px; background: #fff; border: 1px solid #e7ecf3; border-radius: 12px; }
+.contract-search-card > span { color: #344054; font-weight: 600; }
+.contract-search-card :deep(.el-select) { width: 100%; }
+@media (max-width: 760px) { .contract-search-card { grid-template-columns: 1fr; } }
 .page-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; }.page-head h1 { margin: 0 0 5px; font-size: 22px; }.page-head p { margin: 0; color: #748196; }
 .rebate-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 15px; }.contract-card { margin-bottom: 15px; overflow: hidden; background: #fff; border: 1px solid #e7ecf3; border-radius: 12px; box-shadow: 0 10px 28px rgb(28 52 84 / 7%); }.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 17px; border-bottom: 1px solid #edf1f5; }.card-head h2 { margin: 0; font-size: 16px; }.card-head span { color: #748196; font-size: 12px; }.card-body, .rebate-form { padding: 17px; }.checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 17px; }.checks span { padding: 10px; color: #18825a; background: #e8f7f0; border-radius: 8px; }.form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 14px; }.rebate-form :deep(.el-select), .rebate-form :deep(.el-date-editor), .card-body :deep(.el-select), .card-body :deep(.el-date-editor) { width: 100%; }.refund-fields { margin-top: 16px; }.submit-row { display: flex; justify-content: flex-end; gap: 8px; }.summary-list, .rebate-list { display: grid; gap: 12px; padding: 17px; }.summary-list > div { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 1px dashed #e2e7ee; }.summary-list span { color: #748196; }.money-blue { color: #246bfd; }.rebate-item { padding: 10px; border: 1px solid #e7ecf3; border-radius: 8px; }.rebate-item > div:first-child { display: flex; justify-content: space-between; }.rebate-item small { color: #748196; }.review-actions { display: flex; justify-content: flex-end; }
 </style>
