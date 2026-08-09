@@ -7,9 +7,10 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user.type';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -19,6 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { ChangeRoomStatusDto } from './dto/change-room-status.dto';
+import { ListRoomsQueryDto } from './dto/list-rooms-query.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { RoomDetailsService } from './room-details.service';
@@ -205,18 +207,36 @@ export class PropertiesController {
   }
 
   @Get('rooms')
-  async rooms() {
+  async rooms(@Query() query: ListRoomsQueryDto) {
+    const keyword = query.keyword?.trim();
+    const where: Prisma.RoomWhereInput = {
+      deletedAt: null,
+      ...(query.buildingId ? { buildingId: query.buildingId } : {}),
+      ...(query.status ? { roomStatus: query.status } : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { fullHouseNo: { contains: keyword } },
+              { houseNo: { contains: keyword } },
+              { ownerName: { contains: keyword } },
+              { ownerPhone: { contains: keyword } },
+            ],
+          }
+        : {}),
+    };
+
     return {
       code: 200,
       message: 'success',
       data: await this.prisma.db.room.findMany({
-        where: { deletedAt: null },
+        where,
         include: { building: true },
         orderBy: [
           { buildingId: 'asc' },
           { floorNo: 'asc' },
           { houseNo: 'asc' },
         ],
+        ...(query.limit ? { take: query.limit } : {}),
       }),
     };
   }

@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 import HomeView from '../views/HomeView.vue'
 import LoginView from '../views/LoginView.vue'
@@ -8,17 +8,17 @@ import TenantsView from '../views/TenantsView.vue'
 import ContractsView from '../views/ContractsView.vue'
 import ConcessionsPreviewView from '../views/ConcessionsPreviewView.vue'
 import ContractChangesView from '../views/ContractChangesView.vue'
-import PaymentsView from '../views/PaymentsView.vue'
-import PricingRebatesView from '../views/PricingRebatesView.vue'
+import PaymentCollectView from '../views/payments/PaymentCollectView.vue'
+import PaymentDetailView from '../views/payments/PaymentDetailView.vue'
+import PaymentReviewsView from '../views/payments/PaymentReviewsView.vue'
 import CheckoutView from '../views/CheckoutView.vue'
 import FinanceView from '../views/FinanceView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import SystemManagementView from '../views/SystemManagementView.vue'
 import RoomDetailView from '../views/RoomDetailView.vue'
+import RentBillsView from '../views/RentBillsView.vue'
 
-export const router = createRouter({
-  history: createWebHistory(),
-  routes: [
+export const routes: RouteRecordRaw[] = [
     {
       path: '/',
       name: 'session',
@@ -31,9 +31,16 @@ export const router = createRouter({
     { path: '/properties/:id', name: 'room-detail', component: RoomDetailView, meta: { requiresAuth: true } },
     { path: '/tenants', name: 'tenants', component: TenantsView, meta: { requiresAuth: true } },
     { path: '/contracts', name: 'contracts', component: ContractsView, meta: { requiresAuth: true } },
+    {
+      path: '/pricing-rebates',
+      redirect: (to) => ({ name: 'contracts', query: { ...to.query, tab: 'fixed-rebate' } }),
+    },
     { path: '/contracts/changes', name: 'contract-changes', component: ContractChangesView, meta: { requiresAuth: true } },
-    { path: '/payments', name: 'payments', component: PaymentsView, meta: { requiresAuth: true } },
-    { path: '/pricing-rebates', name: 'pricing-rebates', component: PricingRebatesView, meta: { requiresAuth: true } },
+    { path: '/payments', redirect: (to) => ({ path: '/payments/collect', query: to.query }) },
+    { path: '/payments/collect', name: 'payment-collect', component: PaymentCollectView, meta: { requiresAuth: true } },
+    { path: '/payments/detail/:id?', name: 'payment-detail', component: PaymentDetailView, meta: { requiresAuth: true } },
+    { path: '/payments/reviews', name: 'payment-reviews', component: PaymentReviewsView, meta: { requiresAuth: true } },
+    { path: '/rent-bills', name: 'rent-bills', component: RentBillsView, meta: { requiresAuth: true } },
     { path: '/checkout', name: 'checkout', component: CheckoutView, meta: { requiresAuth: true } },
     { path: '/finance', name: 'finance', component: FinanceView, meta: { requiresAuth: true } },
     { path: '/contracts/concessions-preview', name: 'concessions-preview', component: ConcessionsPreviewView, meta: { requiresAuth: true } },
@@ -47,7 +54,11 @@ export const router = createRouter({
       name: 'task001-preview',
       component: HomeView,
     },
-  ],
+  ]
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes,
 })
 
 router.beforeEach(async (to) => {

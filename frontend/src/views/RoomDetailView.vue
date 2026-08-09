@@ -38,7 +38,6 @@ function date(value: string | null | undefined) { return value ? new Date(value)
 function money(value: unknown) { return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function statusLabel(value: string) { return statusLabels[value] ?? value }
 async function load() { loading.value = true; try { detail.value = (await http.get(`/properties/rooms/${route.params.id}/detail`)).data.data } finally { loading.value = false } }
-const withoutEmptyFields = (form: Record<string, unknown>) => Object.fromEntries(Object.entries(form).filter(([, value]) => value !== '' && value !== undefined))
 function openEdit() {
   if (!room.value) return
   Object.assign(editForm, {
@@ -59,7 +58,7 @@ function openEdit() {
 async function saveEdit() {
   editSaving.value = true
   try {
-    await http.patch(`/properties/rooms/${route.params.id}`, withoutEmptyFields({
+    await http.patch(`/properties/rooms/${route.params.id}`, {
       houseNo: editForm.houseNo,
       floorNo: editForm.floorNo,
       area: editForm.area,
@@ -71,7 +70,7 @@ async function saveEdit() {
       ownerPhone: editForm.ownerPhone,
       ownerRemark: editForm.ownerRemark,
       remark: editForm.remark,
-    }))
+    })
     editDialog.value = false
     ElMessage.success('房源信息已保存')
     await load()
@@ -100,7 +99,7 @@ onMounted(load)
 
       <section class="detail-grid">
         <el-card shadow="never"><template #header><h2>房屋现状</h2></template><dl class="info-grid"><dt>房源类型</dt><dd>{{ room.roomType === 'SHOP' ? '商铺' : '住宅' }}</dd><dt>面积</dt><dd>{{ room.area ? `${room.area} ㎡` : '-' }}</dd><dt>装修状态</dt><dd>{{ decorationLabels[room.decorationStatus] ?? room.decorationStatus }}</dd><dt>使用用途</dt><dd>{{ room.usageType === 'RESIDENCE' ? '居住' : room.usageType }}</dd><dt>房源备注</dt><dd>{{ room.remark || '-' }}</dd></dl></el-card>
-        <el-card shadow="never"><template #header><h2>业主信息</h2></template><dl class="info-grid"><dt>业主姓名</dt><dd>{{ room.ownerName || '-' }}</dd><dt>联系电话</dt><dd>{{ room.ownerPhone || '-' }}</dd><dt>业主备注</dt><dd>{{ room.ownerRemark || '-' }}</dd></dl></el-card>
+        <el-card shadow="never"><template #header><h2>业主/租户信息</h2></template><dl class="info-grid"><dt>业主/租户姓名</dt><dd>{{ room.ownerName || '-' }}</dd><dt>业主/租户电话</dt><dd>{{ room.ownerPhone || '-' }}</dd><dt>业主/租户备注</dt><dd>{{ room.ownerRemark || '-' }}</dd></dl></el-card>
       </section>
 
       <el-card shadow="never" class="contract-card"><template #header><div class="card-head"><div><h2>合同与租户</h2><small>{{ focusContract ? '优先展示当前合同；可展开查看历史合同' : '当前暂无合同记录' }}</small></div><el-button text type="primary" @click="router.push('/contracts')">查看合同管理</el-button></div></template>
@@ -124,9 +123,9 @@ onMounted(load)
             <el-col :span="12"><el-form-item label="房态"><el-select v-model="editForm.roomStatus"><el-option v-for="(label, value) in statusLabels" :key="value" :label="label" :value="value" /></el-select></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="装修状态"><el-select v-model="editForm.decorationStatus"><el-option label="未知" value="UNKNOWN" /><el-option label="已装修" value="RENOVATED" /><el-option label="未装修" value="UNRENOVATED" /><el-option label="装修中" value="RENOVATING" /></el-select></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="使用用途"><el-select v-model="editForm.usageType"><el-option label="居住" value="RESIDENCE" /><el-option label="商铺" value="SHOP" /><el-option label="办公" value="OFFICE" /><el-option label="仓储" value="STORAGE" /><el-option label="其他" value="OTHER" /></el-select></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="业主姓名"><el-input v-model="editForm.ownerName" /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="业主电话"><el-input v-model="editForm.ownerPhone" /></el-form-item></el-col>
-            <el-col :span="24"><el-form-item label="业主备注"><el-input v-model="editForm.ownerRemark" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="业主/租户姓名"><el-input v-model="editForm.ownerName" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="业主/租户电话"><el-input v-model="editForm.ownerPhone" /></el-form-item></el-col>
+            <el-col :span="24"><el-form-item label="业主/租户备注"><el-input v-model="editForm.ownerRemark" /></el-form-item></el-col>
           </el-row>
           <el-form-item label="房源备注"><el-input v-model="editForm.remark" type="textarea" :rows="3" /></el-form-item>
         </el-form>

@@ -1,6 +1,12 @@
-import { ConflictException, Injectable } from '@nestjs/common';
-import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  GoneException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   billAmount,
@@ -17,16 +23,52 @@ import { SubmitContractChangeDto } from './dto/submit-contract-change.dto';
 import type { AuthUser } from '../auth/auth-user.type';
 import {
   assertContractRoomStatus,
+  assertContractDates,
   assertConcessions,
   assertPricingTiers,
   assertPrimaryTenant,
 } from './contract-validation';
+import {
+  buildBillNumber,
+  buildContractNumber,
+  buildTemporaryContractNumber,
+} from './contract-number';
+
+type FixedContractInput = {
+  externalContractNo?: string;
+  roomId: number;
+  startDate: Date;
+  endDate: Date;
+  plannedMoveInDate?: Date;
+  monthlyRent: Prisma.Decimal.Value;
+  paymentCycleMonths: number;
+  depositRequired: Prisma.Decimal.Value;
+  primaryTenantId: number;
+  secondaryTenantIds?: number[];
+  concessions?: ConcessionDto[];
+  fileAssetIds?: number[];
+  remark?: string;
+  commission?: { recipientName: string; amount: Prisma.Decimal.Value };
+};
+
+type FixedContractPreview = {
+  billCount: number;
+  totalBaseRent: string;
+  totalDiscount: string;
+  totalPayable: string;
+  bills: Array<{
+    sequence: number;
+    startDate: string;
+    endDate: string;
+    payableAmount: string;
+  }>;
+};
 
 @Injectable()
 export class ContractsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  async list(user: AuthUser) {
     return this.prisma.db.contract.findMany({
       include: {
         room: true,
@@ -34,6 +76,9 @@ export class ContractsService {
           where: { memberRole: 'PRIMARY', isCurrent: true },
           include: { tenant: true },
         },
+        ...(user.role === UserRole.SUPER_ADMIN
+          ? { commissions: { where: { deletedAt: null } } }
+          : {}),
       },
       orderBy: { id: 'desc' },
     });
@@ -45,12 +90,15 @@ export class ContractsService {
     });
   }
 
-  async detail(contractId: number) {
+  async detail(contractId: number, user: AuthUser) {
     return this.prisma.db.contract.findUniqueOrThrow({
       where: { id: contractId },
       include: {
         members: { where: { isCurrent: true }, include: { tenant: true } },
         concessions: { where: { status: 'ACTIVE' } },
+        ...(user.role === UserRole.SUPER_ADMIN
+          ? { commissions: { where: { deletedAt: null } } }
+          : {}),
       },
     });
   }
@@ -406,7 +454,7 @@ export class ContractsService {
         await tx.rentBill.create({
           data: {
             ...data,
-            billNo: `${contract.contractNo}-B${String(period.sequence).padStart(3, '0')}`,
+            billNo: buildBillNumber(contract.contractNo, period.sequence),
             contractId: contract.id,
             periodSeq: period.sequence,
             periodStart: period.start,
@@ -480,20 +528,70 @@ export class ContractsService {
     });
   }
 
-  async createFixedContract(input: {
-    contractNo: string;
-    roomId: number;
+  previewFixedContract(input: {
     startDate: Date;
     endDate: Date;
     monthlyRent: Prisma.Decimal.Value;
-    paymentCycleMonths: number;
-    depositRequired: Prisma.Decimal.Value;
-    primaryTenantId: number;
-    secondaryTenantIds?: number[];
     concessions?: ConcessionDto[];
-  }) {
-    assertConcessions(input.concessions ?? []);
+  }): FixedContractPreview {
+    this.validateFixedPreview(input);
+    const bills = this.calculateFixedBills(input);
+    const totalBaseRent = bills.reduce(
+      (sum, bill) => sum.plus(bill.baseRentAmount),
+      new Prisma.Decimal(0),
+    );
+    const totalDiscount = bills.reduce(
+      (sum, bill) => sum.plus(bill.rentFreeAmount).plus(bill.discountAmount),
+      new Prisma.Decimal(0),
+    );
+    const totalPayable = bills.reduce(
+      (sum, bill) => sum.plus(bill.payableAmount),
+      new Prisma.Decimal(0),
+    );
+    return {
+      billCount: bills.length,
+      totalBaseRent: totalBaseRent.toFixed(2),
+      totalDiscount: totalDiscount.toFixed(2),
+      totalPayable: totalPayable.toFixed(2),
+      bills: bills.map((bill) => ({
+        sequence: bill.period.sequence,
+        startDate: this.dateText(bill.period.start),
+        endDate: this.dateText(bill.period.end),
+        payableAmount: bill.payableAmount.toFixed(2),
+      })),
+    };
+  }
+
+  async createFixedContract(input: FixedContractInput, user: AuthUser) {
+    return this.confirmFixedContract(input, user);
+  }
+
+  async confirmFixedContractDraft(draftId: number, user: AuthUser) {
+    return this.confirmFixedContract(undefined, user, draftId);
+  }
+
+  private async confirmFixedContract(
+    directInput: FixedContractInput | undefined,
+    user: AuthUser,
+    draftId?: number,
+  ) {
     return this.prisma.db.$transaction(async (tx) => {
+      let input = directInput;
+      if (draftId !== undefined) {
+        const draft = await tx.contractDraft.findFirst({
+          where:
+            user.role === UserRole.SUPER_ADMIN
+              ? { id: draftId }
+              : { id: draftId, createdBy: user.id },
+        });
+        if (!draft) throw new NotFoundException('草稿不存在');
+        if (draft.status === 'CONFIRMED')
+          throw new BadRequestException('草稿已确认');
+        input = this.fixedInputFromDraft(draft.payload);
+      }
+      if (!input) throw new BadRequestException('合同确认信息不完整');
+
+      this.validateFixedConfirmation(input, user);
       const room = await tx.room.findFirstOrThrow({
         where: { id: input.roomId, deletedAt: null },
       });
@@ -508,18 +606,42 @@ export class ContractsService {
       });
       if (conflict)
         throw new ConflictException('该房源在合同租期内已有有效合同');
+
+      const primaryTenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: input.primaryTenantId },
+        select: { name: true },
+      });
+      const fileAssetIds = [...new Set(input.fileAssetIds ?? [])];
+      if (fileAssetIds.length) {
+        const files = await tx.fileAsset.findMany({
+          where: {
+            id: { in: fileAssetIds },
+            category: 'CONTRACT',
+            ...(user.role === UserRole.SUPER_ADMIN
+              ? {}
+              : { uploadedBy: user.id }),
+          },
+          select: { id: true },
+        });
+        if (files.length !== fileAssetIds.length)
+          throw new BadRequestException('合同附件不存在或无权使用');
+      }
+
       const contract = await tx.contract.create({
         data: {
-          contractNo: input.contractNo,
+          contractNo: buildTemporaryContractNumber(),
+          externalContractNo: input.externalContractNo ?? null,
           roomId: input.roomId,
           startDate: input.startDate,
           endDate: input.endDate,
+          plannedMoveInDate: input.plannedMoveInDate ?? null,
           monthlyRent: input.monthlyRent,
           pricingMode: 'FIXED',
           paymentCycleMonths: input.paymentCycleMonths,
           depositRequired: input.depositRequired,
           status: 'PENDING_START',
           billingGeneratedAt: new Date(),
+          remark: input.remark ?? null,
           members: {
             create: [
               { tenantId: input.primaryTenantId, memberRole: 'PRIMARY' },
@@ -543,74 +665,47 @@ export class ContractsService {
                 })),
               }
             : undefined,
+          files: fileAssetIds.length
+            ? {
+                create: fileAssetIds.map((fileAssetId) => ({ fileAssetId })),
+              }
+            : undefined,
+          commissions: input.commission
+            ? {
+                create: {
+                  recipientName: input.commission.recipientName,
+                  amount: input.commission.amount,
+                  createdBy: user.id,
+                  updatedBy: user.id,
+                },
+              }
+            : undefined,
         },
       });
-      const bills = buildBillingPeriods(input.startDate, input.endDate).map(
-        (period) => {
-          const amount = billAmount(input.monthlyRent, period);
-          const rentFree = (input.concessions ?? [])
-            .filter(
-              (item) =>
-                item.concessionType === 'RENT_FREE' &&
-                item.applyMode === 'DATE_RANGE' &&
-                item.startDate &&
-                item.endDate,
-            )
-            .reduce(
-              (sum, item) =>
-                sum.plus(
-                  rentFreeAmount(
-                    input.monthlyRent,
-                    period,
-                    new Date(item.startDate!),
-                    new Date(item.endDate!),
-                  ),
-                ),
-              new Prisma.Decimal(0),
-            );
-          const discount = (input.concessions ?? []).reduce((sum, item) => {
-            if (
-              item.concessionType === 'PERCENTAGE' &&
-              item.applyMode === 'BILLING_PERIODS' &&
-              item.discountRate &&
-              item.billingPeriodCount &&
-              period.sequence <= item.billingPeriodCount
-            )
-              return sum.plus(
-                percentageDiscountAmount(amount, item.discountRate),
-              );
-            if (
-              item.concessionType === 'FIXED_AMOUNT' &&
-              item.fixedAmount &&
-              item.applyMode === 'BILLING_PERIODS' &&
-              item.billingPeriodCount
-            )
-              return sum.plus(
-                fixedDiscountForPeriod(
-                  item.fixedAmount,
-                  period.sequence,
-                  item.billingPeriodCount,
-                ),
-              );
-            return sum;
-          }, new Prisma.Decimal(0));
-          const payable = payableAmount(amount, rentFree, discount);
-          return {
-            billNo: `${input.contractNo}-B${String(period.sequence).padStart(3, '0')}`,
-            contractId: contract.id,
-            periodSeq: period.sequence,
-            periodStart: period.start,
-            periodEnd: period.end,
-            dueDate: period.start,
-            unitMonthlyRent: input.monthlyRent,
-            baseRentAmount: amount,
-            rentFreeAmount: rentFree,
-            discountAmount: discount,
-            payableAmount: payable,
-            outstandingAmount: payable,
-          };
-        },
+      const contractNo = buildContractNumber(
+        contract.id,
+        input.startDate,
+        room.fullHouseNo,
+        primaryTenant.name,
       );
+      const finalizedContract = await tx.contract.update({
+        where: { id: contract.id },
+        data: { contractNo },
+      });
+      const bills = this.calculateFixedBills(input).map((bill) => ({
+        billNo: buildBillNumber(contractNo, bill.period.sequence),
+        contractId: contract.id,
+        periodSeq: bill.period.sequence,
+        periodStart: bill.period.start,
+        periodEnd: bill.period.end,
+        dueDate: bill.period.start,
+        unitMonthlyRent: input.monthlyRent,
+        baseRentAmount: bill.baseRentAmount,
+        rentFreeAmount: bill.rentFreeAmount,
+        discountAmount: bill.discountAmount,
+        payableAmount: bill.payableAmount,
+        outstandingAmount: bill.payableAmount,
+      }));
       await tx.rentBill.createMany({ data: bills });
       await tx.room.update({
         where: { id: room.id },
@@ -621,17 +716,185 @@ export class ContractsService {
           roomId: room.id,
           fromStatus: room.roomStatus,
           toStatus: 'PENDING_MOVE_IN',
-          changeReason: `合同确认：${input.contractNo}`,
+          changeReason: `合同确认：${contractNo}`,
           businessType: 'CONTRACT',
           businessId: contract.id,
         },
       });
-      return contract;
+      if (draftId !== undefined) {
+        const confirmed = await tx.contractDraft.updateMany({
+          where: { id: draftId, status: 'DRAFT' },
+          data: { status: 'CONFIRMED', confirmedAt: new Date() },
+        });
+        if (!confirmed.count) throw new BadRequestException('草稿已确认');
+      }
+      return finalizedContract;
     });
   }
 
+  private validateFixedPreview(input: {
+    startDate: Date;
+    endDate: Date;
+    monthlyRent: Prisma.Decimal.Value;
+    concessions?: ConcessionDto[];
+  }) {
+    if (
+      Number.isNaN(input.startDate.getTime()) ||
+      Number.isNaN(input.endDate.getTime()) ||
+      input.endDate < input.startDate
+    )
+      throw new BadRequestException('合同日期无效');
+    if (
+      !Number.isFinite(Number(input.monthlyRent)) ||
+      Number(input.monthlyRent) < 0
+    )
+      throw new BadRequestException('月租金不得为负数');
+    assertConcessions(input.concessions ?? []);
+  }
+
+  private validateFixedConfirmation(input: FixedContractInput, user: AuthUser) {
+    this.validateFixedPreview(input);
+    assertContractDates(
+      input.startDate,
+      input.endDate,
+      input.paymentCycleMonths,
+    );
+    assertPrimaryTenant(
+      [input.primaryTenantId, ...(input.secondaryTenantIds ?? [])],
+      input.primaryTenantId,
+    );
+    if (!Number.isInteger(input.roomId) || input.roomId < 1)
+      throw new BadRequestException('房源信息不完整');
+    if (!Number.isInteger(input.primaryTenantId) || input.primaryTenantId < 1)
+      throw new BadRequestException('主承租人信息不完整');
+    if (
+      !Number.isFinite(Number(input.depositRequired)) ||
+      Number(input.depositRequired) < 0
+    )
+      throw new BadRequestException('押金不得为负数');
+    if (
+      input.plannedMoveInDate &&
+      (Number.isNaN(input.plannedMoveInDate.getTime()) ||
+        input.plannedMoveInDate < input.startDate ||
+        input.plannedMoveInDate > input.endDate)
+    )
+      throw new BadRequestException('计划入住日期必须在合同租期内');
+    if (input.commission && user.role !== UserRole.SUPER_ADMIN)
+      throw new ForbiddenException('只有超级管理员可以填写佣金');
+    if (
+      input.commission &&
+      (!Number.isFinite(Number(input.commission.amount)) ||
+        Number(input.commission.amount) < 0)
+    )
+      throw new BadRequestException('佣金不得为负数');
+  }
+
+  private fixedInputFromDraft(payload: unknown): FixedContractInput {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      Array.isArray(payload)
+    )
+      throw new BadRequestException('合同草稿内容不完整');
+    const value = payload as Record<string, unknown>;
+    return {
+      externalContractNo: value.externalContractNo as string | undefined,
+      roomId: Number(value.roomId),
+      startDate: new Date(this.draftText(value.startDate)),
+      endDate: new Date(this.draftText(value.endDate)),
+      plannedMoveInDate:
+        typeof value.plannedMoveInDate === 'string'
+          ? new Date(value.plannedMoveInDate)
+          : undefined,
+      monthlyRent: this.draftText(value.monthlyRent),
+      paymentCycleMonths: Number(value.paymentCycleMonths),
+      depositRequired: this.draftText(value.depositRequired),
+      primaryTenantId: Number(value.primaryTenantId),
+      secondaryTenantIds: value.secondaryTenantIds as number[] | undefined,
+      concessions: value.concessions as ConcessionDto[] | undefined,
+      fileAssetIds: value.fileAssetIds as number[] | undefined,
+      remark: value.remark as string | undefined,
+      commission: value.commission as FixedContractInput['commission'],
+    };
+  }
+
+  private calculateFixedBills(input: {
+    startDate: Date;
+    endDate: Date;
+    monthlyRent: Prisma.Decimal.Value;
+    concessions?: ConcessionDto[];
+  }) {
+    return buildBillingPeriods(input.startDate, input.endDate).map((period) => {
+      const baseRentAmount = billAmount(input.monthlyRent, period);
+      const rentFreeAmountValue = (input.concessions ?? [])
+        .filter(
+          (item) =>
+            item.concessionType === 'RENT_FREE' &&
+            item.applyMode === 'DATE_RANGE' &&
+            item.startDate &&
+            item.endDate,
+        )
+        .reduce(
+          (sum, item) =>
+            sum.plus(
+              rentFreeAmount(
+                input.monthlyRent,
+                period,
+                new Date(item.startDate!),
+                new Date(item.endDate!),
+              ),
+            ),
+          new Prisma.Decimal(0),
+        );
+      const discountAmount = (input.concessions ?? []).reduce((sum, item) => {
+        if (
+          item.concessionType === 'PERCENTAGE' &&
+          item.applyMode === 'BILLING_PERIODS' &&
+          item.discountRate &&
+          item.billingPeriodCount &&
+          period.sequence <= item.billingPeriodCount
+        )
+          return sum.plus(
+            percentageDiscountAmount(baseRentAmount, item.discountRate),
+          );
+        if (
+          item.concessionType === 'FIXED_AMOUNT' &&
+          item.fixedAmount &&
+          item.applyMode === 'BILLING_PERIODS' &&
+          item.billingPeriodCount
+        )
+          return sum.plus(
+            fixedDiscountForPeriod(
+              item.fixedAmount,
+              period.sequence,
+              item.billingPeriodCount,
+            ),
+          );
+        return sum;
+      }, new Prisma.Decimal(0));
+      return {
+        period,
+        baseRentAmount,
+        rentFreeAmount: rentFreeAmountValue,
+        discountAmount,
+        payableAmount: payableAmount(
+          baseRentAmount,
+          rentFreeAmountValue,
+          discountAmount,
+        ),
+      };
+    });
+  }
+
+  private dateText(value: Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  private draftText(value: unknown) {
+    return typeof value === 'string' ? value : '';
+  }
+
   async createTieredContract(input: {
-    contractNo: string;
     roomId: number;
     startDate: Date;
     endDate: Date;
@@ -643,6 +906,9 @@ export class ContractsService {
     tiers: PricingTierDto[];
     concessions?: ConcessionDto[];
   }) {
+    void input;
+    throw new GoneException('阶梯合同功能已停用');
+
     assertPricingTiers(input.tiers);
     assertConcessions(input.concessions ?? []);
     assertPrimaryTenant(
@@ -664,9 +930,13 @@ export class ContractsService {
       });
       if (conflict)
         throw new ConflictException('该房源在合同租期内已有有效合同');
+      const primaryTenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: input.primaryTenantId },
+        select: { name: true },
+      });
       const contract = await tx.contract.create({
         data: {
-          contractNo: input.contractNo,
+          contractNo: buildTemporaryContractNumber(),
           roomId: input.roomId,
           startDate: input.startDate,
           endDate: input.endDate,
@@ -700,6 +970,16 @@ export class ContractsService {
               }
             : undefined,
         },
+      });
+      const contractNo = buildContractNumber(
+        contract.id,
+        input.startDate,
+        room.fullHouseNo,
+        primaryTenant.name,
+      );
+      const finalizedContract = await tx.contract.update({
+        where: { id: contract.id },
+        data: { contractNo },
       });
       const snapshots = await Promise.all(
         [...input.tiers]
@@ -770,7 +1050,7 @@ export class ContractsService {
           }, new Prisma.Decimal(0));
           const payable = payableAmount(amount, rentFree, discount);
           return {
-            billNo: `${input.contractNo}-B${String(period.sequence).padStart(3, '0')}`,
+            billNo: buildBillNumber(contractNo, period.sequence),
             contractId: contract.id,
             periodSeq: period.sequence,
             periodStart: period.start,
@@ -796,12 +1076,12 @@ export class ContractsService {
           roomId: room.id,
           fromStatus: room.roomStatus,
           toStatus: 'PENDING_MOVE_IN',
-          changeReason: `合同确认：${input.contractNo}`,
+          changeReason: `合同确认：${contractNo}`,
           businessType: 'CONTRACT',
           businessId: contract.id,
         },
       });
-      return contract;
+      return finalizedContract;
     });
   }
 }

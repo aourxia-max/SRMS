@@ -3,8 +3,8 @@
 > 项目：Smart Rental Management System（房屋租赁管理系统）  
 > 数据库：MySQL 8.0  
 > ORM：Prisma  
-> 文档状态：第一版冻结设计基线  
-> 需求基线：`SRMS-RB-1.0`（2026-07-20）
+> 文档状态：第一版冻结设计基线（变更后）
+> 需求基线：`SRMS-RB-1.0`（2026-07-20），适用变更 `SRMS-RB-1.0-CR-20260805-01`
 
 ## 1. 设计目标
 
@@ -13,7 +13,7 @@
 - 一份合同只对应一个房源，每份合同必须且只能有一名主承租人。
 - 合同采用固定租期，按合同开始日每满一个月形成账期。
 - 支持整月、不足整月按日计租、免租和优惠。
-- 支持合同级自定义弹性阶梯计价：档位月数、每档月租和实际退差金额均可按合同录入。
+- 新建合同仅支持固定月租；保留人工协商退差，但不提供基于档位或达标期的退差。
 - 支持一次缴纳多个月、部分付款和预收款。
 - 普通管理员只能作废错误收款后重录；超级管理员可以修改已确认收款，但必须留下前后值和原因。
 - 押金独立管理，退还必须上传凭证，由管理员登记、超级管理员确认。
@@ -77,14 +77,12 @@
 | 房源 | room_status_histories | 房源状态变化历史 |
 | 承租人 | tenants | 个人或单位承租人 |
 | 合同 | contracts | 合同主表 |
+| 合同 | contract_drafts | 合同草稿，未确认前不产生正式业务数据 |
 | 合同 | contract_members | 主承租人、副承租人 |
 | 合同 | contract_changes | 租金、租期等合同变更 |
 | 合同 | contract_concessions | 免租与优惠规则 |
 | 合同 | contract_commissions | 仅超级管理员可见的租房提成记录 |
-| 阶梯计价 | pricing_plans | 弹性租期阶梯价格方案 |
-| 阶梯计价 | pricing_tiers | 方案中的标准价格档位 |
-| 阶梯计价 | contract_pricing_tiers | 合同生效时复制的价格快照 |
-| 阶梯计价 | pricing_rebates | 达标后的追溯退差单 |
+| 合同 | pricing_rebates | 固定月租合同的人工协商退差单 |
 | 账单 | rent_bills | 合同租期内的租金账单 |
 | 账单 | bill_adjustments | 账单调整明细 |
 | 收款 | payments | 实际收款记录 |
@@ -101,7 +99,7 @@
 | 文件 | contract_files | 合同扫描件关联 |
 | 文件 | payment_files | 普通付款凭证关联 |
 | 文件 | deposit_refund_files | 押金退还凭证关联 |
-| 文件 | pricing_rebate_files | 阶梯退差退款凭证关联 |
+| 文件 | pricing_rebate_files | 人工退差退款凭证关联 |
 | 导入导出 | import_tasks | Excel导入任务 |
 | 导入导出 | import_task_errors | 导入错误明细 |
 | 导入导出 | export_tasks | Excel/PDF导出任务 |
@@ -117,13 +115,12 @@
 erDiagram
     BUILDINGS ||--o{ ROOMS : contains
     ROOMS ||--o{ CONTRACTS : leased_by
+    ROOMS ||--o{ CONTRACT_DRAFTS : reserved_by
     TENANTS ||--o{ CONTRACT_MEMBERS : joins
     CONTRACTS ||--|{ CONTRACT_MEMBERS : has
+    CONTRACTS ||--o{ CONTRACT_FILES : attaches
     CONTRACTS ||--o{ CONTRACT_CONCESSIONS : applies
     CONTRACTS ||--o{ CONTRACT_CHANGES : changes
-    PRICING_PLANS ||--|{ PRICING_TIERS : defines
-    PRICING_PLANS ||--o{ CONTRACTS : selected_by
-    CONTRACTS ||--|{ CONTRACT_PRICING_TIERS : snapshots
     CONTRACTS ||--o{ PRICING_REBATES : earns
     CONTRACTS ||--o{ RENT_BILLS : generates
     PAYMENTS ||--o{ PAYMENT_ALLOCATIONS : allocates
@@ -138,6 +135,8 @@ erDiagram
     FILE_ASSETS ||--o{ DEPOSIT_REFUND_FILES : stores
     FILE_ASSETS ||--o{ PRICING_REBATE_FILES : stores
 ```
+
+历史数据清理安全门槛：数据库枚举可保留 `TIERED_RETROACTIVE`，仅用于识别旧备份中的兼容数据；当前业务的应用服务、约束、导入和接口均不得创建该值。清理历史阶梯合同前，必须先完成可恢复备份、全量预检（合同、账单、收款分配、退款、预收款、押金、退租结算、附件、审计和财务统计影响）、审批留痕和删除范围确认；随后在受控事务/批次中完整删除关联业务与财务数据，并对删除数量、外键完整性、余额和报表口径进行复核，最后写入不可删除的安全审计日志。任何门槛失败均不得执行删除。
 
 ## 5. 用户与权限
 
@@ -270,8 +269,8 @@ erDiagram
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
-| contract_no | VARCHAR(40) | 是 | 系统合同编号，唯一，例如HT2026070001 |
-| external_contract_no | VARCHAR(80) | 否 | 纸质或外部合同编号 |
+| contract_no | VARCHAR(120) | 是 | 系统合同编号，唯一，例如HT2026070001 |
+| external_contract_no | VARCHAR(80) | 否 | 可重复的纸质或外部合同编号 |
 | previous_contract_id | INT UNSIGNED | 否 | 续签来源合同 |
 | room_id | INT UNSIGNED | 是 | 一份合同一个房源 |
 | start_date | DATE | 是 | 合同开始日期 |
@@ -280,12 +279,7 @@ erDiagram
 | actual_move_in_date | DATE | 否 | 实际入住日期 |
 | actual_checkout_date | DATE | 否 | 实际退房日期 |
 | monthly_rent | DECIMAL(14,2) | 是 | 月租 |
-| pricing_mode | ENUM | 是 | `FIXED`固定月租、`TIERED_RETROACTIVE`弹性阶梯计价 |
-| pricing_plan_id | INT UNSIGNED | 否 | 可选价格模板；合同可在模板基础上自由修改 |
-| current_pricing_tier_id | INT UNSIGNED | 否 | 当前已达标档位，关联合同价格快照 |
-| qualified_months | INT | 是 | 已满足的连续完整账期数，默认0 |
-| next_tier_date | DATE | 否 | 下一档预计达标日期 |
-| flexible_early_checkout | BOOLEAN | 是 | 阶梯合同是否允许提前退租，默认false |
+| pricing_mode | ENUM | 是 | 仅允许 `FIXED` 固定月租 |
 | payment_cycle_months | TINYINT UNSIGNED | 是 | 合同约定租缴周期，允许1至12，默认1 |
 | rent_due_day_rule | ENUM | 是 | `CONTRACT_START_DAY`，按开始日每满一个月 |
 | deposit_required | DECIMAL(14,2) | 是 | 应收押金，可为0 |
@@ -314,8 +308,7 @@ erDiagram
 - `end_date >= start_date`。
 - `payment_cycle_months BETWEEN 1 AND 12`；它只表示合同约定应缴频率，不限制某笔实际收款覆盖的账期数。
 - `monthly_rent >= 0`、`deposit_required >= 0`。
-- `pricing_mode = TIERED_RETROACTIVE`时必须关联有效价格方案和合同价格快照。
-- 弹性阶梯合同仍有固定的最长结束日期，不因付款自动延长；允许提前退租时按实际达标档位结算。
+- `pricing_mode`只能为`FIXED`；应用服务、数据库约束和导入校验均不得创建其他计价类型。
 - 同一房源的有效合同租期不得重叠。
 - 通过事务和 `SELECT ... FOR UPDATE` 锁定房源后校验租期冲突。
 - 合同结束日期到达时变为`PENDING_CHECKOUT`，不能自动变为`ENDED`。
@@ -343,7 +336,13 @@ erDiagram
 
 通过事务校验每份合同在任一时点只能有一名当前主承租人。更换主承租人时关闭旧成员记录并新增记录，不覆盖历史。
 
-### 8.3 contract_changes
+### 8.3 contract_drafts
+
+合同录入在确认前保存为草稿，草稿不得生成账单、收款、押金、退差或房态变更。
+
+主要字段：`draft_no VARCHAR(120)`、`room_id`、`payload JSON`、`status`（`DRAFT`、`CONFIRMED`、`CANCELLED`）、`created_by`、`confirmed_at`、`expires_at`。确认时在同一事务中校验草稿版本、创建固定月租合同及成员和优惠，再将草稿状态更新为`CONFIRMED`；草稿不直接转为可编辑的正式合同记录。
+
+### 8.4 contract_changes
 
 记录租金、租期、优惠、主承租人等生效后的变更。
 
@@ -351,7 +350,7 @@ erDiagram
 
 审批状态：`DRAFT`、`PENDING`、`APPROVED`、`REJECTED`、`CANCELLED`。管理员登记，超级管理员确认；确认后才修改合同和未付款的未来账单。
 
-### 8.4 contract_concessions
+### 8.5 contract_concessions
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -368,7 +367,7 @@ erDiagram
 
 账单实际应收最低为0。合同生效后新增或修改优惠，必须由 `contract_changes` 审批触发。
 
-### 8.5 contract_commissions
+### 8.6 contract_commissions
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -386,76 +385,22 @@ erDiagram
 
 建议唯一键：`UNIQUE(contract_id, recipient_name)`，避免同一合同对同一对象重复登记；删除后如需恢复则重新启用原记录。
 
-### 8.6 pricing_plans
+### 8.7 pricing_rebates
 
-阶梯价格方案只是可选的录入模板，例如“住宅常用租期方案”，不是系统固定价格。管理员可以不选模板，直接在合同中新增任意档位；选择模板后也可以修改档位月数和价格。
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| plan_name | VARCHAR(100) | 方案名称 |
-| room_type | ENUM NULL | 适用住宅、商铺或全部 |
-| initial_monthly_rent | DECIMAL(14,2) | 未达到首个档位前的短月租价格 |
-| calculation_mode | ENUM | `REFERENCE_ONLY`仅计算参考退差、`NO_REFERENCE`不计算参考值 |
-| status | ENUM | `ACTIVE`、`DISABLED` |
-| effective_from | DATE | 模板生效日期 |
-| effective_to | DATE NULL | 模板失效日期 |
-| remark | VARCHAR(500) NULL | 说明 |
-
-模板发生修改时生成新版本，已经生效的合同继续使用其价格快照，不受模板变化影响。
-
-### 8.7 pricing_tiers
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| pricing_plan_id | INT UNSIGNED | 所属方案 |
-| tier_name | VARCHAR(50) | 例如季租档、半年档、年租档 |
-| threshold_months | INT | 达标所需连续完整账期数 |
-| monthly_rent | DECIMAL(14,2) | 达标后的月租标准 |
-| sort_order | INT | 档位顺序 |
-| requires_fully_paid | BOOLEAN | 是否要求阶段账单全部结清，默认true |
-
-示例方案（仅用于说明，不是固定配置）：
-
-| 阶段 | threshold_months | monthly_rent |
-|---|---:|---:|
-| 短月租 | 0 | 1100.00 |
-| 季租档 | 3 | 1000.00 |
-| 半年档 | 6 | 900.00 |
-| 年租档 | 12 | 800.00 |
-
-档位月数和月租均自由输入。约束：同一方案的 `threshold_months` 唯一且递增，金额不得小于0；如果后一档月租高于前一档，系统提示但不强制阻止。
-
-### 8.8 contract_pricing_tiers
-
-合同生效时，将管理员最终确认的自定义档位复制到本表形成价格快照。即使没有选择模板，也必须保存合同自己的档位快照。
-
-主要字段：`contract_id`、`source_pricing_tier_id`、`tier_name`、`threshold_months`、`monthly_rent`、`planned_start_period_seq`、`requires_fully_paid`、`snapshot_at`。
-
-全租期账单按该合同实际录入的档位快照生成。档位可以是1/3/6/12个月，也可以是2/5/9个月等其他组合；对应价格由管理员录入。未来账单虽然预先生成，但租客提前退租时会作废尚未发生的账单。
-
-### 8.9 pricing_rebates
-
-阶梯达标退差和固定月租合同的协商退差都不能修改原账单或原收款，必须生成独立退差单。
+固定月租合同的人工协商退差不能修改原账单或原收款，必须生成独立退差单。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | rebate_no | VARCHAR(40) | 唯一退差编号 |
 | contract_id | INT UNSIGNED | 所属合同 |
-| rebate_source_type | ENUM | `TIER_MILESTONE`阶梯达标、`FIXED_CONTRACT_MANUAL`固定月租协商退差 |
-| reached_tier_id | INT UNSIGNED NULL | 本次达到的合同价格档位；固定月租退差为空 |
-| rebate_type | ENUM | `MILESTONE`首次达标、`MANUAL`手工协商、`SUPPLEMENT`补充退差 |
+| rebate_source_type | ENUM | 仅允许 `FIXED_CONTRACT_MANUAL` 固定月租协商退差 |
+| rebate_type | ENUM | `MANUAL`手工协商、`SUPPLEMENT`补充退差 |
 | parent_rebate_id | INT UNSIGNED NULL | 补充退差关联的原退差单 |
-| threshold_months | INT NULL | 本次达标月数快照；固定月租退差为空 |
-| qualification_date | DATE NULL | 达标日期；固定月租退差为空 |
 | period_start | DATE | 退差涉及账期开始日期 |
 | period_end | DATE | 退差涉及账期结束日期 |
 | gross_billed_amount | DECIMAL(14,2) | 涉及账单累计金额，作为核对依据 |
-| target_net_rent | DECIMAL(14,2) NULL | 按档位计算的目标累计租金 |
-| previous_rebate_amount | DECIMAL(14,2) | 此前已经生效的累计退差 |
-| calculated_reference_amount | DECIMAL(14,2) NULL | 系统计算的参考退差，不作为强制金额 |
 | actual_rebate_amount | DECIMAL(14,2) | 管理员根据实际协商录入的本次退差金额 |
-| difference_amount | DECIMAL(14,2) NULL | 实际退差减参考退差；没有参考值时为空 |
-| difference_reason | VARCHAR(500) NULL | 与参考值不一致时必填 |
+| reason | VARCHAR(500) | 人工协商退差原因，必填 |
 | settlement_method | ENUM | `ACTUAL_REFUND`实际退款、`PREPAYMENT_CREDIT`转预收款 |
 | refund_date | DATE NULL | 实际退款日期 |
 | refund_method | ENUM NULL | 微信、支付宝、银行、现金、其他 |
@@ -465,32 +410,7 @@ erDiagram
 | approved_at | DATETIME(3) NULL | 确认时间 |
 | remark | VARCHAR(1000) NULL | 备注 |
 
-系统可提供参考计算：
-
-```text
-参考退差金额
-= 达标期内原账单累计金额
-  - 本档位月租 × 达标完整月数
-  - 此前已确认的阶梯退差金额
-```
-
-参考值只帮助管理员核对，不直接决定实际退款。管理员根据与租客的真实约定填写 `actual_rebate_amount`；与参考值不一致时必须填写 `difference_reason`，并由超级管理员确认。
-
-固定月租合同没有阶梯参考价，`calculated_reference_amount`与`difference_amount`为空，管理员必须填写实际退差金额、退差原因并关联至少一张有效租金账单。若只是收款录入错误，应使用收款作废或`payment_refunds`，不得混用合同退差。
-
-### 8.10 阶梯达标规则
-
-- 从合同开始日按完整账期累计，不足整月不计入达标月数。
-- 达标期内所有租金账单必须全部结清；部分付款不算结清。
-- 合同处于`ACTIVE`状态，且没有进入待退房、作废或结束状态。
-- 系统每日检查达标条件，达标后自动生成一张`PENDING`退差单，不自动付款。
-- 管理员填写实际退差金额并选择“实际退款”或“转预收款”，超级管理员确认。
-- 实际退差可以与系统参考值不同，但必须填写差异原因；系统在确认页同时展示参考值、实际值和差额。
-- 实际退差允许为0；实际金额原则上不能超过合同累计有效实收租金，额外补贴不得混入租金退差。
-- 实际退款必须上传交易截图；现金退款上传租客签字凭证照片。
-- 转预收款时确认后写入 `prepayment_transactions`，无需退款截图。
-- 每个合同的每个档位默认只能存在一张已确认退差单；确需追加退差时创建“补充退差单”，关联原退差单并填写原因。
-- 提前退租未达到下一档时，不享受下一档追溯价格；已经确认的历史档位退差不追回。
+人工退差没有档位、达标期或参考金额。管理员必须填写实际退差金额、原因并关联至少一张有效租金账单；实际退款必须上传交易截图，现金退款上传租客签字凭证照片。选择转预收款时，确认后写入 `prepayment_transactions`；若只是收款录入错误，应使用收款作废或`payment_refunds`，不得混用人工退差。
 
 ## 9. 租金账单设计
 
@@ -498,15 +418,14 @@ erDiagram
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| bill_no | VARCHAR(40) | 唯一账单编号 |
+| bill_no | VARCHAR(140) | 唯一账单编号 |
 | contract_id | INT UNSIGNED | 合同 |
 | period_seq | INT | 合同内账期序号，从1开始 |
 | period_start | DATE | 账期开始日 |
 | period_end | DATE | 账期结束日 |
 | due_date | DATE | 应缴日期 |
-| contract_pricing_tier_id | INT UNSIGNED NULL | 阶梯合同使用的价格快照档位 |
 | unit_monthly_rent | DECIMAL(14,2) | 本账期采用的月租单价快照 |
-| pricing_snapshot | JSON NULL | 生成时的计价规则摘要 |
+| pricing_snapshot | JSON NULL | 固定月租、优惠和按日计租规则摘要 |
 | base_rent_amount | DECIMAL(14,2) | 原始租金 |
 | rent_free_amount | DECIMAL(14,2) | 免租金额 |
 | discount_amount | DECIMAL(14,2) | 优惠金额 |
@@ -773,14 +692,18 @@ outstanding_amount = payable_amount - received_amount
 | extension | VARCHAR(20) | 扩展名 |
 | size_bytes | BIGINT UNSIGNED | 文件大小 |
 | sha256 | CHAR(64) | 文件内容摘要，防止替换 |
-| category | ENUM | `TENANT_ID`、`CONTRACT`、`PAYMENT_PROOF`、`DEPOSIT_REFUND_PROOF`、`PRICING_REBATE_PROOF`、`IMPORT`、`EXPORT`、`BACKUP` |
+| category | ENUM | `TENANT_ID`、`CONTRACT`、`PAYMENT_PROOF`、`DEPOSIT_REFUND_PROOF`、`MANUAL_REBATE_PROOF`、`IMPORT`、`EXPORT`、`BACKUP` |
 | uploaded_by | INT UNSIGNED | 上传人 |
 | uploaded_at | DATETIME(3) | 上传时间 |
 | locked_at | DATETIME(3) NULL | 财务确认后锁定 |
 
-附件关联表统一使用联合唯一键，例如 `deposit_refund_files(deposit_refund_id, file_asset_id)`、`pricing_rebate_files(pricing_rebate_id, file_asset_id)`。
+附件关联表统一使用联合唯一键。`contract_files(contract_id, file_asset_id)`关联正式合同扫描件；`deposit_refund_files(deposit_refund_id, file_asset_id)`和`pricing_rebate_files(pricing_rebate_id, file_asset_id)`关联已确认的退款凭证。确认后的财务凭证不得替换或删除。
 
 押金退款凭证支持 JPG、PNG、HEIC，单张默认不超过10MB。后端验证真实文件类型，不只检查扩展名。文件下载必须经过鉴权接口。
+
+### 13.2 contract_files
+
+`contract_files`关联正式合同与合同扫描件，主要字段为`contract_id`、`file_asset_id`、`file_role`（`SIGNED_CONTRACT`、`SUPPLEMENT`、`OTHER`）、`sort_order`、`remark`。采用`UNIQUE(contract_id, file_asset_id)`；合同确认后已锁定的扫描件不得替换或删除，只能新增补充文件并写操作日志。
 
 ## 14. Excel导入与导出
 
@@ -899,7 +822,7 @@ outstanding_amount = payable_amount - received_amount
 
 楼栋房态图按 `building_id + floor_no + house_no`排序，状态数量由当前筛选楼栋的实时数据分组统计。状态支持多选；个人默认筛选来自 `user_preferences.dashboard_room_statuses`。
 
-弹性阶梯合同的驾驶舱待办包括：7天内即将转档、已达标待生成退差、阶梯退差待确认、实际退款凭证待审核。
+驾驶舱待办包含合同到期、逾期账单、待确认优惠、待确认退款、待确认押金退还和待确认人工退差。
 
 ### 18.2 财务统计
 
@@ -919,7 +842,7 @@ outstanding_amount = payable_amount - received_amount
 
 ```text
 外部资金流入 = 有效租金收款 + 押金收取 + 预收款收取 + 其他实际收款
-外部资金流出 = 已确认收款退款 + 阶梯退差实际退款 + 押金退款 + 预收款退款
+外部资金流出 = 已确认收款退款 + 人工退差实际退款 + 押金退款 + 预收款退款
 净资金流 = 外部资金流入 - 外部资金流出
 ```
 
@@ -938,9 +861,8 @@ outstanding_amount = payable_amount - received_amount
 5. 押金退还确认：锁定合同和结算单 → 校验退款金额与凭证 → 写押金负向流水 → 锁定文件 → 清零余额 → 完成结算 → 结束合同 → 更新房源目标状态 → 写安全审计。
 6. 退租结算确认：锁定合同与账单 → 校验扣款依据 → 作废实际退房日后的未来账单 → 写押金抵扣流水 → 锁定结算金额；存在应退押金时合同继续保持待退房。
 7. 超级管理员修改财务：乐观锁校验 → 写前后快照 → 修改 → 重算关联余额 → 写安全审计。
-8. 阶梯达标确认：锁定合同和相关账单 → 校验完整月数与结清状态 → 计算累计退差 → 生成退差单 → 防止重复达标。
-9. 阶梯退差确认：校验超级管理员权限和金额 → 实际退款时校验凭证，或写入预收款流水 → 更新当前档位 → 写安全审计。
-10. 优惠／减免确认：锁定调整记录和目标账单 → 校验超级管理员权限及金额 → 更新账单应收 → 重算状态、已缴至和下次应缴日期 → 写安全审计。
+8. 人工退差确认：校验超级管理员权限、原因、金额和有效账单 → 实际退款时校验凭证，或写入预收款流水 → 写安全审计。
+9. 优惠／减免确认：锁定调整记录和目标账单 → 校验超级管理员权限及金额 → 更新账单应收 → 重算状态、已缴至和下次应缴日期 → 写安全审计。
 
 ## 20. 必须实现的数据库约束与测试
 
@@ -962,12 +884,10 @@ outstanding_amount = payable_amount - received_amount
 - 优惠／减免金额必须大于0且不能使账单最终应收小于0；跨账单明细合计必须等于申请总额。
 - 收款作废时，与该收款绑定的一次性优惠必须生成逆向调整或取消待审批记录。
 - 操作日志隐藏必须同步写入不可删除的安全审计日志。
-- 阶梯价格模板修改不能影响已生效合同的价格快照。
-- 同一合同、同一阶梯档位不能重复确认退差。
-- 阶梯退差金额允许管理员按实际协商录入；系统参考值与实际值不一致时必须填写差异原因并由超级管理员确认。
-- 未结清达标期账单时不能确认转档和退差。
+- 新建合同、合同草稿、导入和接口均不得创建非`FIXED`计价模式。
+- 人工退差金额允许管理员按实际协商录入，但必须填写原因并由超级管理员确认。
 - 选择实际退款时必须上传凭证；选择转预收款时必须生成对应预收款入账流水。
-- 阶梯计价需要覆盖自定义档位月数、自定义价格、无参考公式、手工退差、补充退差以及重复任务并发执行测试。
+- 固定月租需要覆盖固定金额优惠、比例优惠、免租、尾期固定30天、账单快照、收款、退款、押金及退租金额口径。
 - 所有关键事务需要并发测试和失败回滚测试。
 - 管理员和游客调用提成列表、详情、写入或导出接口必须返回无权限，普通合同接口响应中不能出现提成字段。
 - 超级管理员修改提成金额或所属对象后，安全审计必须保留完整前后值；修改不得影响租金、押金、预收款和资金流水统计。

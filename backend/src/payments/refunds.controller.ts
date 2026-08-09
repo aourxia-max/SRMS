@@ -16,6 +16,7 @@ import { Roles } from '../authorization/roles.decorator';
 import { RolesGuard } from '../authorization/roles.guard';
 import { RejectRefundDto } from './dto/reject-refund.dto';
 import { SubmitRefundDto } from './dto/submit-refund.dto';
+import { ApproveRefundDto } from './dto/approve-refund.dto';
 import { RefundsService } from './refunds.service';
 
 @Controller('payment-refunds')
@@ -43,12 +44,13 @@ export class RefundsController {
   @Roles(UserRole.SUPER_ADMIN)
   async approve(
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ApproveRefundDto,
     @CurrentUser() user: AuthUser,
   ) {
     return {
       code: 200,
       message: 'success',
-      data: await this.refunds.approve(id, user),
+      data: await this.refunds.approve(id, dto, user),
     };
   }
   @Post(':id/reject')

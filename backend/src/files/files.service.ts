@@ -28,8 +28,18 @@ const signatures: Record<string, (content: Buffer) => boolean> = {
     content[0] === 0xff &&
     content[1] === 0xd8 &&
     content[2] === 0xff,
+  'image/webp': (content) =>
+    content.length >= 12 &&
+    content.subarray(0, 4).toString() === 'RIFF' &&
+    content.subarray(8, 12).toString() === 'WEBP',
   'image/heic': (content) =>
     content.subarray(4, 12).toString().startsWith('ftyphei'),
+};
+const contractExtensions: Record<string, string[]> = {
+  'application/pdf': ['.pdf'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/webp': ['.webp'],
 };
 
 @Injectable()
@@ -68,6 +78,144 @@ export class FilesService {
   }
   private pricingRebateFolder() {
     return resolve(process.cwd(), '..', 'uploads', 'pricing-rebate-proofs');
+  }
+  private paymentProofFolder() {
+    return resolve(process.cwd(), '..', 'uploads', 'payment-proofs');
+  }
+  private contractFileFolder() {
+    return resolve(process.cwd(), '..', 'uploads', 'contract-files');
+  }
+
+  async saveContractFile(file: UploadedFile, user: AuthUser) {
+    if (!file || !file.buffer) throw new BadRequestException('请上传合同附件');
+    const limit = await this.configLimit();
+    if (file.size > limit || file.buffer.length > limit)
+      throw new BadRequestException('附件超过允许大小');
+    const originalName = basename(file.originalname);
+    const extension = extname(originalName).toLowerCase();
+    if (
+      !contractExtensions[file.mimetype]?.includes(extension) ||
+      !signatures[file.mimetype]?.(file.buffer)
+    )
+      throw new BadRequestException('附件类型或内容不符合限制');
+
+    const storedName = `${randomUUID()}${extension}`;
+    const storageKey = `contract-files/${storedName}`;
+    await mkdir(this.contractFileFolder(), { recursive: true });
+    await writeFile(
+      resolve(this.contractFileFolder(), storedName),
+      file.buffer,
+      { flag: 'wx' },
+    );
+    const asset = await this.prisma.db.fileAsset.create({
+      data: {
+        storageKey,
+        originalName,
+        storedName,
+        mimeType: file.mimetype,
+        extension,
+        sizeBytes: BigInt(file.buffer.length),
+        sha256: createHash('sha256').update(file.buffer).digest('hex'),
+        category: 'CONTRACT',
+        uploadedBy: user.id,
+      },
+    });
+    return {
+      id: asset.id,
+      originalName: asset.originalName,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes.toString(),
+      uploadedAt: asset.uploadedAt,
+    };
+  }
+
+  async listContractFiles(contractId: number) {
+    return (
+      await this.prisma.db.contractFile.findMany({
+        where: { contractId, fileAsset: { category: 'CONTRACT' } },
+        include: { fileAsset: true },
+        orderBy: { createdAt: 'desc' },
+      })
+    ).map(({ fileAsset }) => ({
+      id: fileAsset.id,
+      originalName: fileAsset.originalName,
+      mimeType: fileAsset.mimeType,
+      sizeBytes: fileAsset.sizeBytes.toString(),
+      uploadedAt: fileAsset.uploadedAt,
+    }));
+  }
+
+  async downloadContractFile(contractId: number, fileId: number) {
+    const item = await this.prisma.db.contractFile.findFirst({
+      where: {
+        contractId,
+        fileAssetId: fileId,
+        fileAsset: { category: 'CONTRACT' },
+      },
+      include: { fileAsset: true },
+    });
+    if (!item) throw new NotFoundException('合同附件不存在');
+    const content = await readFile(
+      resolve(this.contractFileFolder(), basename(item.fileAsset.storedName)),
+    );
+    return { asset: item.fileAsset, content };
+  }
+
+  async savePaymentProof(file: UploadedFile, user: AuthUser) {
+    if (!file || !file.buffer) throw new BadRequestException('请上传收款凭证');
+    if (file.size > (await this.configLimit()))
+      throw new BadRequestException('附件超过允许大小');
+    const allowedPaymentTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (
+      !allowedPaymentTypes.includes(file.mimetype) ||
+      !signatures[file.mimetype]?.(file.buffer)
+    )
+      throw new BadRequestException('附件类型或内容不符合限制');
+
+    const storedName = `${randomUUID()}${extname(
+      basename(file.originalname),
+    ).toLowerCase()}`;
+    const storageKey = `payment-proofs/${storedName}`;
+    await mkdir(this.paymentProofFolder(), { recursive: true });
+    await writeFile(
+      resolve(this.paymentProofFolder(), storedName),
+      file.buffer,
+      { flag: 'wx' },
+    );
+    const asset = await this.prisma.db.fileAsset.create({
+      data: {
+        storageKey,
+        originalName: basename(file.originalname),
+        storedName,
+        mimeType: file.mimetype,
+        extension: extname(file.originalname).toLowerCase(),
+        sizeBytes: BigInt(file.size),
+        sha256: createHash('sha256').update(file.buffer).digest('hex'),
+        category: 'PAYMENT_PROOF',
+        uploadedBy: user.id,
+      },
+    });
+    return {
+      id: asset.id,
+      originalName: asset.originalName,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes.toString(),
+      uploadedAt: asset.uploadedAt,
+    };
+  }
+
+  async downloadPaymentProof(paymentId: number, fileId: number) {
+    const item = await this.prisma.db.paymentFile.findUnique({
+      where: {
+        paymentId_fileAssetId: { paymentId, fileAssetId: fileId },
+      },
+      include: { fileAsset: true },
+    });
+    if (!item) throw new NotFoundException('收款凭证不存在');
+    const content = await readFile(
+      resolve(this.paymentProofFolder(), item.fileAsset.storedName),
+    );
+    return { asset: item.fileAsset, content };
   }
   async savePricingRebateProof(file: UploadedFile, user: AuthUser) {
     if (!file || !file.buffer) throw new BadRequestException('请上传退款凭证');

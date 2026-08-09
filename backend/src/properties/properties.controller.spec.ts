@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { RoomStatus, UserRole } from '@prisma/client';
 import { PropertiesController } from './properties.controller';
 
 describe('PropertiesController', () => {
@@ -219,6 +219,50 @@ describe('PropertiesController', () => {
         changeReason: '详情页编辑房态',
         changedBy: 7,
       }),
+    });
+  });
+
+  it('combines keyword, building, status, and limit when listing rooms', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = { db: { room: { findMany } } };
+    const controller = new PropertiesController(prisma as never);
+
+    await controller.rooms({
+      keyword: '601',
+      buildingId: 2,
+      status: RoomStatus.RENTED,
+      limit: 8,
+    });
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        deletedAt: null,
+        buildingId: 2,
+        roomStatus: RoomStatus.RENTED,
+        OR: [
+          { fullHouseNo: { contains: '601' } },
+          { houseNo: { contains: '601' } },
+          { ownerName: { contains: '601' } },
+          { ownerPhone: { contains: '601' } },
+        ],
+      },
+      include: { building: true },
+      orderBy: [{ buildingId: 'asc' }, { floorNo: 'asc' }, { houseNo: 'asc' }],
+      take: 8,
+    });
+  });
+
+  it('lists all active rooms when search query is empty', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = { db: { room: { findMany } } };
+    const controller = new PropertiesController(prisma as never);
+
+    await controller.rooms({});
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { deletedAt: null },
+      include: { building: true },
+      orderBy: [{ buildingId: 'asc' }, { floorNo: 'asc' }, { houseNo: 'asc' }],
     });
   });
 });

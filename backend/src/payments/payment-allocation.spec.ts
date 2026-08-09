@@ -13,11 +13,12 @@ describe('payment allocation', () => {
       result.allocations.map((item) => [
         item.rentBillId,
         item.amount.toFixed(2),
+        item.allocationOrder,
       ]),
     ).toEqual([
-      [1, '100.00'],
-      [2, '200.00'],
-      [3, '150.00'],
+      [1, '100.00', 1],
+      [2, '200.00', 2],
+      [3, '150.00', 3],
     ]);
     expect(result.prepaymentAmount.toFixed(2)).toBe('0.00');
   });

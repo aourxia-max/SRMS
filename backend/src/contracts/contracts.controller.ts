@@ -1,13 +1,20 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
+  Patch,
   ParseIntPipe,
   Post,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user.type';
@@ -20,22 +27,133 @@ import {
 import { ContractsService } from './contracts.service';
 import { SubmitContractChangeDto } from './dto/submit-contract-change.dto';
 import { RejectContractChangeDto } from './dto/reject-contract-change.dto';
+import { SaveContractDraftDto } from './dto/save-contract-draft.dto';
+import { ContractDraftsService } from './contract-drafts.service';
+import { PreviewFixedContractDto } from './dto/preview-fixed-contract.dto';
+import { FilesService } from '../files/files.service';
+import type { UploadedFile as ContractUploadedFile } from '../files/files.service';
+
+// Multer needs a synchronous cap before ConfigService/database settings are
+// available. The product allows a dynamic 1–100 MiB system limit, so this
+// bounds pre-service buffering at the absolute maximum; FilesService still
+// applies the current dynamic limit after buffering.
+const contractUploadBufferLimit = 100 * 1024 * 1024;
 
 @Controller('contracts')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ContractsController {
-  constructor(private readonly contracts: ContractsService) {}
-  @Post('fixed')
+  constructor(
+    private readonly contracts: ContractsService,
+    private readonly drafts: ContractDraftsService,
+    private readonly contractFiles: FilesService,
+  ) {}
+
+  @Post('files')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  async createFixed(@Body() dto: CreateFixedContractDto) {
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: contractUploadBufferLimit },
+    }),
+  )
+  async uploadFile(
+    @UploadedFile() file: ContractUploadedFile,
+    @CurrentUser() user: AuthUser,
+  ) {
     return {
       code: 200,
       message: 'success',
-      data: await this.contracts.createFixedContract({
+      data: await this.contractFiles.saveContractFile(file, user),
+    };
+  }
+  @Post('drafts')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async createDraft(
+    @Body() dto: SaveContractDraftDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.drafts.create(dto, user),
+    };
+  }
+
+  @Get('drafts/:id')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async draft(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.drafts.find(id, user),
+    };
+  }
+
+  @Patch('drafts/:id')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async updateDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SaveContractDraftDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.drafts.update(id, dto, user),
+    };
+  }
+
+  @Post('fixed')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async createFixed(
+    @Body() dto: CreateFixedContractDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (dto.commission && user.role !== UserRole.SUPER_ADMIN)
+      throw new ForbiddenException('只有超级管理员可以填写佣金');
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contracts.createFixedContract(
+        {
+          ...dto,
+          startDate: new Date(dto.startDate),
+          endDate: new Date(dto.endDate),
+          plannedMoveInDate: dto.plannedMoveInDate
+            ? new Date(dto.plannedMoveInDate)
+            : undefined,
+        },
+        user,
+      ),
+    };
+  }
+
+  @Post('fixed/preview')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  previewFixed(@Body() dto: PreviewFixedContractDto) {
+    return {
+      code: 200,
+      message: 'success',
+      data: this.contracts.previewFixedContract({
         ...dto,
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
       }),
+    };
+  }
+
+  @Post('drafts/:id/confirm')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async confirmDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contracts.confirmFixedContractDraft(id, user),
     };
   }
 
@@ -104,8 +222,12 @@ export class ContractsController {
   }
 
   @Get()
-  async list() {
-    return { code: 200, message: 'success', data: await this.contracts.list() };
+  async list(@CurrentUser() user: AuthUser) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contracts.list(user),
+    };
   }
 
   @Get(':id/bills')
@@ -117,12 +239,44 @@ export class ContractsController {
     };
   }
 
-  @Get(':id')
-  async detail(@Param('id', ParseIntPipe) id: number) {
+  @Get(':id/files')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.VISITOR)
+  async files(@Param('id', ParseIntPipe) id: number) {
     return {
       code: 200,
       message: 'success',
-      data: await this.contracts.detail(id),
+      data: await this.contractFiles.listContractFiles(id),
+    };
+  }
+
+  @Get(':id/files/:fileId/download')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.VISITOR)
+  async downloadFile(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('fileId', ParseIntPipe) fileId: number,
+    @Res() response: Response,
+  ) {
+    const { asset, content } = await this.contractFiles.downloadContractFile(
+      id,
+      fileId,
+    );
+    response.setHeader('Content-Type', asset.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(asset.originalName)}`,
+    );
+    response.send(content);
+  }
+
+  @Get(':id')
+  async detail(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contracts.detail(id, user),
     };
   }
 }

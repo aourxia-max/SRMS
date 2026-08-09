@@ -10,7 +10,11 @@ export function allocatePayment(
   bills: AllocatableBill[],
 ) {
   let remaining = new Prisma.Decimal(amount);
-  const allocations: Array<{ rentBillId: number; amount: Prisma.Decimal }> = [];
+  const allocations: Array<{
+    rentBillId: number;
+    amount: Prisma.Decimal;
+    allocationOrder: number;
+  }> = [];
   for (const bill of bills) {
     if (remaining.lte(0)) break;
     const outstanding = new Prisma.Decimal(bill.outstandingAmount);
@@ -19,7 +23,11 @@ export function allocatePayment(
       remaining,
       outstanding,
     ).toDecimalPlaces(2);
-    allocations.push({ rentBillId: bill.id, amount: allocated });
+    allocations.push({
+      rentBillId: bill.id,
+      amount: allocated,
+      allocationOrder: allocations.length + 1,
+    });
     remaining = remaining.minus(allocated);
   }
   return { allocations, prepaymentAmount: remaining.toDecimalPlaces(2) };
