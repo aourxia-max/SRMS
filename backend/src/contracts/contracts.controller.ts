@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   ParseIntPipe,
   Post,
   UseGuards,
@@ -20,11 +21,56 @@ import {
 import { ContractsService } from './contracts.service';
 import { SubmitContractChangeDto } from './dto/submit-contract-change.dto';
 import { RejectContractChangeDto } from './dto/reject-contract-change.dto';
+import { SaveContractDraftDto } from './dto/save-contract-draft.dto';
+import { ContractDraftsService } from './contract-drafts.service';
 
 @Controller('contracts')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ContractsController {
-  constructor(private readonly contracts: ContractsService) {}
+  constructor(
+    private readonly contracts: ContractsService,
+    private readonly drafts: ContractDraftsService,
+  ) {}
+  @Post('drafts')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async createDraft(
+    @Body() dto: SaveContractDraftDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.drafts.create(dto, user),
+    };
+  }
+
+  @Get('drafts/:id')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async draft(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.drafts.find(id, user),
+    };
+  }
+
+  @Patch('drafts/:id')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async updateDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SaveContractDraftDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.drafts.update(id, dto, user),
+    };
+  }
+
   @Post('fixed')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async createFixed(@Body() dto: CreateFixedContractDto) {
