@@ -196,6 +196,23 @@ describe('合同工作区复审边界', () => {
     expect(toContractPayload(form, 'ADMIN').concessions).toEqual(form.concessions)
   })
 
+  it('仅在履行中的固定月租合同详情显示退差入口并携带合同编号', async () => {
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+    const button = wrapper.find('[data-test="open-fixed-rent-rebate"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('rebate')).toEqual([[12]])
+
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_START' } })
+    expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
+
+    await wrapper.setProps({ contract: { ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' } })
+    expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
+  })
+
   it('仅为履行中的固定月租合同展示并生成退差载荷', () => {
     const inactive = { ...activeContract(), status: 'PENDING_START' }
     const tiered = { ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' }
