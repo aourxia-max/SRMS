@@ -534,9 +534,220 @@ describe('ContractsService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(tx.fileAsset.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [31, 32] }, uploadedBy: admin.id },
+      where: {
+        id: { in: [31, 32] },
+        category: 'CONTRACT',
+        uploadedBy: admin.id,
+      },
       select: { id: true },
     });
     expect(tx.contract.create).not.toHaveBeenCalled();
+  });
+
+  it('associates only file assets staged as contract attachments', async () => {
+    const tx = confirmationTx();
+    tx.fileAsset.findMany.mockImplementation(({ where }) =>
+      Promise.resolve(where.category === 'CONTRACT' ? [{ id: 31 }] : []),
+    );
+
+    await expect(
+      serviceFor(tx).createFixedContract(
+        { ...input, fileAssetIds: [31] },
+        superAdmin,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: 10 }));
+  });
+
+  it.each([
+    ['list', admin],
+    ['detail', admin],
+  ] as const)(
+    'never returns commissions to an admin from %s',
+    async (method, user) => {
+      const commission = { recipientName: 'Broker', amount: '500' };
+      const contract = { id: 10, contractNo: 'HT-10' };
+      const contractModel = {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ include }) =>
+            Promise.resolve([
+              include.commissions
+                ? { ...contract, commissions: [commission] }
+                : contract,
+            ]),
+          ),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockImplementation(({ include }) =>
+            Promise.resolve(
+              include.commissions
+                ? { ...contract, commissions: [commission] }
+                : contract,
+            ),
+          ),
+      };
+      const service = new ContractsService({
+        db: { contract: contractModel },
+      } as never);
+      const result =
+        method === 'list'
+          ? await (
+              service.list as unknown as (
+                currentUser: AuthUser,
+              ) => Promise<Array<Record<string, unknown>>>
+            )(user)
+          : await (
+              service.detail as unknown as (
+                id: number,
+                currentUser: AuthUser,
+              ) => Promise<Record<string, unknown>>
+            )(10, user);
+      const item = Array.isArray(result) ? result[0] : result;
+
+      expect(item).not.toHaveProperty('commissions');
+    },
+  );
+
+  it.each(['list', 'detail'] as const)(
+    'returns commissions to a super administrator from %s',
+    async (method) => {
+      const commission = { recipientName: 'Broker', amount: '500' };
+      const contract = { id: 10, contractNo: 'HT-10' };
+      const contractModel = {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ include }) =>
+            Promise.resolve([
+              include.commissions
+                ? { ...contract, commissions: [commission] }
+                : contract,
+            ]),
+          ),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockImplementation(({ include }) =>
+            Promise.resolve(
+              include.commissions
+                ? { ...contract, commissions: [commission] }
+                : contract,
+            ),
+          ),
+      };
+      const service = new ContractsService({
+        db: { contract: contractModel },
+      } as never);
+      const result =
+        method === 'list'
+          ? await (
+              service.list as unknown as (
+                currentUser: AuthUser,
+              ) => Promise<Array<Record<string, unknown>>>
+            )(superAdmin)
+          : await (
+              service.detail as unknown as (
+                id: number,
+                currentUser: AuthUser,
+              ) => Promise<Record<string, unknown>>
+            )(10, superAdmin);
+      const item = Array.isArray(result) ? result[0] : result;
+
+      expect(item).toHaveProperty('commissions', [commission]);
+    },
+  );
+
+  it('rolls back all staged confirmation writes when a late transaction step fails', async () => {
+    const state = {
+      contractIds: [] as number[],
+      billContractIds: [] as number[],
+      roomStatus: 'EMPTY',
+      draftStatus: 'DRAFT',
+    };
+    const tx = {
+      room: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          roomStatus: 'EMPTY',
+          fullHouseNo: '1栋101',
+        }),
+        update: jest.fn().mockImplementation(() => {
+          state.roomStatus = 'PENDING_MOVE_IN';
+          return Promise.resolve({});
+        }),
+      },
+      contract: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(() => {
+          state.contractIds.push(10);
+          return Promise.resolve({ id: 10 });
+        }),
+        update: jest.fn().mockResolvedValue({ id: 10, contractNo: 'HT-10' }),
+      },
+      tenant: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ name: '李四' }),
+      },
+      fileAsset: { findMany: jest.fn().mockResolvedValue([]) },
+      rentBill: {
+        createMany: jest.fn().mockImplementation(({ data }) => {
+          state.billContractIds.push(
+            ...(data as Array<{ contractId: number }>).map(
+              (bill) => bill.contractId,
+            ),
+          );
+          return Promise.resolve({ count: data.length });
+        }),
+      },
+      roomStatusHistory: {
+        create: jest.fn().mockRejectedValue(new Error('history write failed')),
+      },
+      contractDraft: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 24,
+          roomId: 1,
+          status: 'DRAFT',
+          createdBy: admin.id,
+          payload: {
+            ...input,
+            startDate: '2026-01-01',
+            endDate: '2026-02-05',
+          },
+        }),
+        updateMany: jest.fn().mockImplementation(() => {
+          state.draftStatus = 'CONFIRMED';
+          return Promise.resolve({ count: 1 });
+        }),
+      },
+    };
+    const prisma = {
+      db: {
+        $transaction: jest.fn(
+          async (callback: (client: typeof tx) => Promise<unknown>) => {
+            const before = structuredClone(state);
+            try {
+              return await callback(tx);
+            } catch (error) {
+              state.contractIds = before.contractIds;
+              state.billContractIds = before.billContractIds;
+              state.roomStatus = before.roomStatus;
+              state.draftStatus = before.draftStatus;
+              throw error;
+            }
+          },
+        ),
+      },
+    };
+
+    await expect(
+      new ContractsService(prisma as never).confirmFixedContractDraft(
+        24,
+        admin,
+      ),
+    ).rejects.toThrow('history write failed');
+    expect(state).toEqual({
+      contractIds: [],
+      billContractIds: [],
+      roomStatus: 'EMPTY',
+      draftStatus: 'DRAFT',
+    });
+    expect(tx.contractDraft.updateMany).not.toHaveBeenCalled();
   });
 });

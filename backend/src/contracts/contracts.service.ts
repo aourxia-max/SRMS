@@ -67,7 +67,7 @@ type FixedContractPreview = {
 export class ContractsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  async list(user: AuthUser) {
     return this.prisma.db.contract.findMany({
       include: {
         room: true,
@@ -75,6 +75,9 @@ export class ContractsService {
           where: { memberRole: 'PRIMARY', isCurrent: true },
           include: { tenant: true },
         },
+        ...(user.role === UserRole.SUPER_ADMIN
+          ? { commissions: { where: { deletedAt: null } } }
+          : {}),
       },
       orderBy: { id: 'desc' },
     });
@@ -86,12 +89,15 @@ export class ContractsService {
     });
   }
 
-  async detail(contractId: number) {
+  async detail(contractId: number, user: AuthUser) {
     return this.prisma.db.contract.findUniqueOrThrow({
       where: { id: contractId },
       include: {
         members: { where: { isCurrent: true }, include: { tenant: true } },
         concessions: { where: { status: 'ACTIVE' } },
+        ...(user.role === UserRole.SUPER_ADMIN
+          ? { commissions: { where: { deletedAt: null } } }
+          : {}),
       },
     });
   }
@@ -609,6 +615,7 @@ export class ContractsService {
         const files = await tx.fileAsset.findMany({
           where: {
             id: { in: fileAssetIds },
+            category: 'CONTRACT',
             ...(user.role === UserRole.SUPER_ADMIN
               ? {}
               : { uploadedBy: user.id }),
