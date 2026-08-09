@@ -1,10 +1,22 @@
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
+import { readFile, unlink } from 'node:fs/promises';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CLEANUP_CONFIRMATION,
   CLEANUP_FINAL_AUTHORIZATION,
   TieredContractCleanupService,
 } from './tiered-contract-cleanup.service';
+
+jest.mock('node:fs/promises', () => ({
+  readFile: jest.fn(),
+  unlink: jest.fn(),
+}));
+
+const BACKUP_CONTENT = Buffer.from('database backup');
+const BACKUP_CHECKSUM = createHash('sha256')
+  .update(BACKUP_CONTENT)
+  .digest('hex');
 
 type MockDb = ReturnType<typeof createDb>;
 
@@ -82,6 +94,7 @@ function validAuthorization() {
     backupNo: 'BK-TEST-1',
     confirmation: CLEANUP_CONFIRMATION,
     finalAuthorization: CLEANUP_FINAL_AUTHORIZATION,
+    preflightFingerprint: '0'.repeat(64),
   };
 }
 
@@ -89,7 +102,7 @@ function successfulBackup() {
   return {
     backupNo: 'BK-TEST-1',
     status: 'SUCCESS',
-    checksum: 'a'.repeat(64),
+    checksum: BACKUP_CHECKSUM,
     databasePath: '/backups/BK-TEST-1.sql',
     retentionUntil: new Date('2026-09-01T00:00:00.000Z'),
   };
@@ -98,6 +111,8 @@ function successfulBackup() {
 describe('TieredContractCleanupService', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-09T00:00:00.000Z'));
+    jest.mocked(readFile).mockResolvedValue(BACKUP_CONTENT);
+    jest.mocked(unlink).mockResolvedValue();
   });
 
   afterEach(() => {
@@ -242,12 +257,18 @@ describe('TieredContractCleanupService', () => {
     db.contract.deleteMany.mockResolvedValueOnce({ count: 1 });
     db.contract.findMany
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
+      .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }]);
     db.room.findUnique.mockResolvedValueOnce({ id: 31, roomStatus: 'RENTED' });
     db.room.update.mockRejectedValueOnce(new Error('room update failed'));
 
+    const service = createService(db);
+    const reviewed = await service.preflight();
     await expect(
-      createService(db).execute(validAuthorization()),
+      service.execute({
+        ...validAuthorization(),
+        preflightFingerprint: reviewed.fingerprint,
+      }),
     ).rejects.toThrow('room update failed');
     expect(db.$transaction).toHaveBeenCalledTimes(1);
     expect(db.contract.deleteMany).toHaveBeenCalledWith({
@@ -265,6 +286,7 @@ describe('TieredContractCleanupService', () => {
     db.contract.findMany
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
+      .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
       .mockResolvedValueOnce([{ status: 'ACTIVE' }]);
     db.room.findUnique.mockResolvedValueOnce({
       id: 31,
@@ -272,7 +294,12 @@ describe('TieredContractCleanupService', () => {
     });
     db.room.update.mockResolvedValueOnce({ id: 31, roomStatus: 'RENTED' });
 
-    const result = await createService(db).execute(validAuthorization());
+    const service = createService(db);
+    const reviewed = await service.preflight();
+    const result = await service.execute({
+      ...validAuthorization(),
+      preflightFingerprint: reviewed.fingerprint,
+    });
 
     expect(db.contract.deleteMany).toHaveBeenCalledWith({
       where: {
@@ -301,8 +328,10 @@ describe('TieredContractCleanupService', () => {
     db.contract.deleteMany.mockResolvedValueOnce({ count: 1 });
     db.contract.findMany
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
+      .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }]);
     db.contractFile.findMany
+      .mockResolvedValueOnce([{ fileAssetId: 501 }, { fileAssetId: 502 }])
       .mockResolvedValueOnce([{ fileAssetId: 501 }, { fileAssetId: 502 }])
       .mockResolvedValueOnce([{ fileAssetId: 501 }, { fileAssetId: 502 }]);
     db.fileAsset.findMany.mockResolvedValueOnce([
@@ -310,7 +339,12 @@ describe('TieredContractCleanupService', () => {
     ]);
     db.room.findUnique.mockResolvedValueOnce({ id: 31, roomStatus: 'EMPTY' });
 
-    const result = await createService(db).execute(validAuthorization());
+    const service = createService(db);
+    const reviewed = await service.preflight();
+    const result = await service.execute({
+      ...validAuthorization(),
+      preflightFingerprint: reviewed.fingerprint,
+    });
 
     expect(db.fileAsset.findMany).toHaveBeenCalledWith({
       where: expect.objectContaining({

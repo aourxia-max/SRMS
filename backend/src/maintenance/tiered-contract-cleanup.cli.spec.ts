@@ -27,7 +27,7 @@ describe('tiered contract cleanup CLI', () => {
     );
   });
 
-  it('execute 只有在四项授权参数完整时才传给服务', async () => {
+  it('execute 只有在授权参数和预检指纹完整时才传给服务', async () => {
     const preflight = jest.fn();
     const execute = jest.fn().mockResolvedValue({ contractIds: [7] });
 
@@ -38,6 +38,7 @@ describe('tiered contract cleanup CLI', () => {
         '--backup-no=BK-PROD-9',
         `--confirmation=${CLEANUP_CONFIRMATION}`,
         `--final-authorization=${CLEANUP_FINAL_AUTHORIZATION}`,
+        `--preflight-fingerprint=${'a'.repeat(64)}`,
       ],
       { preflight, execute } as unknown as TieredContractCleanupService,
       jest.fn(),
@@ -49,6 +50,7 @@ describe('tiered contract cleanup CLI', () => {
       backupNo: 'BK-PROD-9',
       confirmation: CLEANUP_CONFIRMATION,
       finalAuthorization: CLEANUP_FINAL_AUTHORIZATION,
+      preflightFingerprint: 'a'.repeat(64),
     });
   });
 

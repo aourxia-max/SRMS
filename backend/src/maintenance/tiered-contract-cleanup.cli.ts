@@ -18,6 +18,7 @@ const allowedArguments = new Set([
   'backup-no',
   'confirmation',
   'final-authorization',
+  'preflight-fingerprint',
 ]);
 
 export function parseCleanupArguments(argv: string[]): CleanupArguments {
@@ -39,6 +40,10 @@ export function parseCleanupArguments(argv: string[]): CleanupArguments {
   if (environment !== 'test' && environment !== 'production') {
     throw new Error('execute 必须指定 environment=test 或 production');
   }
+  const preflightFingerprint = values.get('preflight-fingerprint') ?? '';
+  if (!/^[a-f0-9]{64}$/.test(preflightFingerprint)) {
+    throw new Error('execute 必须提供 preflight-fingerprint');
+  }
   return {
     mode,
     authorization: {
@@ -46,6 +51,7 @@ export function parseCleanupArguments(argv: string[]): CleanupArguments {
       backupNo: values.get('backup-no') ?? '',
       confirmation: values.get('confirmation') ?? '',
       finalAuthorization: values.get('final-authorization') ?? '',
+      preflightFingerprint,
     },
   };
 }

@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, PrismaClient, RoomStatus } from '@prisma/client';
-import { unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -15,6 +16,7 @@ export type CleanupAuthorization = {
   backupNo: string;
   confirmation: string;
   finalAuthorization: string;
+  preflightFingerprint: string;
 };
 
 export type ForeignKeyDependency = {
@@ -33,6 +35,7 @@ export type CleanupReport = {
   attachmentCount: number;
   foreignKeys: ForeignKeyDependency[];
   unknownDependencies: ForeignKeyDependency[];
+  fingerprint: string;
 };
 
 export type CleanupResult = {
@@ -181,6 +184,7 @@ export class TieredContractCleanupService {
       affectedRoomIds: scope.roomIds,
       attachmentCount: scope.fileAssetIds.length,
       foreignKeys,
+      fingerprint: this.cleanupFingerprint(scope, tableCounts),
       unknownDependencies: foreignKeys.filter(
         (item) => !KNOWN_FOREIGN_KEYS.has(foreignKeyKey(item)),
       ),
@@ -193,9 +197,20 @@ export class TieredContractCleanupService {
     if (report.unknownDependencies.length > 0) {
       throw new Error('发现未知外键依赖，禁止执行清理');
     }
+    if (report.fingerprint !== input.preflightFingerprint) {
+      throw new Error('预检指纹不匹配，禁止执行清理');
+    }
 
     const transactionResult = await this.prisma.db.$transaction(async (tx) => {
       const scope = await this.collectScope(tx);
+      const transactionTableCounts = await this.tableCounts(tx, scope);
+      const transactionFingerprint = this.cleanupFingerprint(
+        scope,
+        transactionTableCounts,
+      );
+      if (transactionFingerprint !== input.preflightFingerprint) {
+        throw new Error('预检范围已变化，清理事务已回滚');
+      }
       const deletedTableCounts: Record<string, number> = {};
       if (scope.contractIds.length === 0) {
         return {
@@ -242,6 +257,9 @@ export class TieredContractCleanupService {
     if (input.finalAuthorization !== CLEANUP_FINAL_AUTHORIZATION) {
       throw new Error('缺少最终执行授权');
     }
+    if (!/^[a-f0-9]{64}$/.test(input.preflightFingerprint)) {
+      throw new Error('缺少有效预检指纹');
+    }
     const backup = await this.prisma.db.backupRecord.findUnique({
       where: { backupNo: input.backupNo },
       select: {
@@ -260,6 +278,19 @@ export class TieredContractCleanupService {
       backup.retentionUntil <= new Date()
     ) {
       throw new Error('缺少有效备份');
+    }
+
+    let backupContent: Buffer;
+    try {
+      backupContent = await readFile(backup.databasePath);
+    } catch {
+      throw new Error('备份文件不可读取');
+    }
+    const actualChecksum = createHash('sha256')
+      .update(backupContent)
+      .digest('hex');
+    if (actualChecksum !== backup.checksum.trim().toLowerCase()) {
+      throw new Error('备份校验失败');
     }
   }
 
@@ -779,6 +810,35 @@ export class TieredContractCleanupService {
     } satisfies Prisma.FileAssetWhereInput;
   }
 
+  private cleanupFingerprint(
+    scope: CleanupScope,
+    tableCounts: Record<string, number>,
+  ): string {
+    const numericAscending = (left: number, right: number) => left - right;
+    const canonicalScope = {
+      contractIds: [...scope.contractIds].sort(numericAscending),
+      roomIds: [...scope.roomIds].sort(numericAscending),
+      pricingTierIds: [...scope.pricingTierIds].sort(numericAscending),
+      rebateIds: [...scope.rebateIds].sort(numericAscending),
+      billIds: [...scope.billIds].sort(numericAscending),
+      paymentIds: [...scope.paymentIds].sort(numericAscending),
+      refundIds: [...scope.refundIds].sort(numericAscending),
+      allocationIds: [...scope.allocationIds].sort(numericAscending),
+      adjustmentIds: [...scope.adjustmentIds].sort(numericAscending),
+      settlementIds: [...scope.settlementIds].sort(numericAscending),
+      settlementItemIds: [...scope.settlementItemIds].sort(numericAscending),
+      depositRefundIds: [...scope.depositRefundIds].sort(numericAscending),
+      fileAssetIds: [...scope.fileAssetIds].sort(numericAscending),
+      tableCounts: Object.fromEntries(
+        Object.entries(tableCounts).sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0,
+        ),
+      ),
+    };
+    return createHash('sha256')
+      .update(JSON.stringify(canonicalScope))
+      .digest('hex');
+  }
   private roomHistoryWhere(
     scope: CleanupScope,
   ): Prisma.RoomStatusHistoryWhereInput {
