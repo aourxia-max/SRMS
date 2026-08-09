@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { PATH_METADATA } from '@nestjs/common/constants';
+import { INTERCEPTORS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { ROLES_KEY } from '../authorization/roles.decorator';
@@ -78,6 +78,15 @@ describe('ContractsController', () => {
       UserRole.ADMIN,
       UserRole.VISITOR,
     ]);
+    const [UploadInterceptor] = Reflect.getMetadata(
+      INTERCEPTORS_METADATA,
+      upload,
+    ) as Array<new () => { multer: { limits?: { fileSize?: number } } }>;
+    const uploadInterceptor = new UploadInterceptor();
+    expect(uploadInterceptor.multer.limits?.fileSize).toBeGreaterThan(0);
+    expect(uploadInterceptor.multer.limits?.fileSize).toBeLessThanOrEqual(
+      10 * 1024 * 1024,
+    );
   });
 
   it('uploads a contract file through the file service without returning contract data', async () => {

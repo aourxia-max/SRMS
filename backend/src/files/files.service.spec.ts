@@ -280,19 +280,25 @@ describe('FilesService contract files', () => {
   });
 
   it('lists only file assets linked to the requested contract without sensitive fields', async () => {
-    const findMany = jest.fn().mockResolvedValue([
-      {
-        fileAsset: {
-          id: 41,
-          originalName: 'contract.pdf',
-          mimeType: 'application/pdf',
-          sizeBytes: 9n,
-          uploadedAt: new Date('2026-08-05T00:00:00Z'),
-          storageKey: 'contract-files/secret.pdf',
-          sha256: 'secret',
-        },
-      },
-    ]);
+    const findMany = jest.fn().mockImplementation(({ where }) =>
+      Promise.resolve(
+        where.fileAsset?.category === 'CONTRACT'
+          ? [
+              {
+                fileAsset: {
+                  id: 41,
+                  originalName: 'contract.pdf',
+                  mimeType: 'application/pdf',
+                  sizeBytes: 9n,
+                  uploadedAt: new Date('2026-08-05T00:00:00Z'),
+                  storageKey: 'contract-files/secret.pdf',
+                  sha256: 'secret',
+                },
+              },
+            ]
+          : [],
+      ),
+    );
 
     await expect(
       serviceWith({ contractFile: { findMany } }).listContractFiles(12),
@@ -305,26 +311,38 @@ describe('FilesService contract files', () => {
         uploadedAt: new Date('2026-08-05T00:00:00Z'),
       },
     ]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { contractId: 12, fileAsset: { category: 'CONTRACT' } },
+      include: { fileAsset: true },
+      orderBy: { createdAt: 'desc' },
+    });
   });
 
   it('downloads only an asset linked to the requested contract', async () => {
     jest.mocked(readFile).mockResolvedValue(Buffer.from('contract'));
-    const findUnique = jest.fn().mockResolvedValue({
+    const linkedFile = {
       contractId: 12,
       fileAssetId: 41,
       fileAsset: {
         id: 41,
+        category: 'CONTRACT',
         storedName: 'stored.pdf',
         originalName: 'signed-contract.pdf',
         mimeType: 'application/pdf',
       },
-    });
-    const service = serviceWith({ contractFile: { findUnique } });
+    };
+    const findUnique = jest.fn().mockResolvedValue(linkedFile);
+    const findFirst = jest.fn().mockResolvedValue(linkedFile);
+    const service = serviceWith({ contractFile: { findUnique, findFirst } });
 
     const result = await service.downloadContractFile(12, 41);
 
-    expect(findUnique).toHaveBeenCalledWith({
-      where: { contractId_fileAssetId: { contractId: 12, fileAssetId: 41 } },
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        contractId: 12,
+        fileAssetId: 41,
+        fileAsset: { category: 'CONTRACT' },
+      },
       include: { fileAsset: true },
     });
     expect(result.content.toString()).toBe('contract');
@@ -334,8 +352,39 @@ describe('FilesService contract files', () => {
   it('rejects downloading an asset that is not linked to the requested contract', async () => {
     await expect(
       serviceWith({
-        contractFile: { findUnique: jest.fn().mockResolvedValue(null) },
+        contractFile: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
       }).downloadContractFile(12, 99),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects a malformed association to a non-contract file asset', async () => {
+    const malformed = {
+      contractId: 12,
+      fileAssetId: 51,
+      fileAsset: {
+        id: 51,
+        category: 'TENANT_ID',
+        storedName: 'tenant-id.pdf',
+        originalName: 'tenant-id.pdf',
+        mimeType: 'application/pdf',
+      },
+    };
+    await expect(
+      serviceWith({
+        contractFile: {
+          findUnique: jest.fn().mockResolvedValue(malformed),
+          findFirst: jest
+            .fn()
+            .mockImplementation(({ where }) =>
+              Promise.resolve(
+                where.fileAsset?.category === 'CONTRACT' ? null : malformed,
+              ),
+            ),
+        },
+      }).downloadContractFile(12, 51),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

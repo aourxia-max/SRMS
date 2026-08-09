@@ -132,7 +132,7 @@ export class FilesService {
   async listContractFiles(contractId: number) {
     return (
       await this.prisma.db.contractFile.findMany({
-        where: { contractId },
+        where: { contractId, fileAsset: { category: 'CONTRACT' } },
         include: { fileAsset: true },
         orderBy: { createdAt: 'desc' },
       })
@@ -146,9 +146,11 @@ export class FilesService {
   }
 
   async downloadContractFile(contractId: number, fileId: number) {
-    const item = await this.prisma.db.contractFile.findUnique({
+    const item = await this.prisma.db.contractFile.findFirst({
       where: {
-        contractId_fileAssetId: { contractId, fileAssetId: fileId },
+        contractId,
+        fileAssetId: fileId,
+        fileAsset: { category: 'CONTRACT' },
       },
       include: { fileAsset: true },
     });
