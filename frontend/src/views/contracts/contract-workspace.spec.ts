@@ -161,6 +161,7 @@ describe('合同工作区复审边界', () => {
     expect(fixedRentRebateContractLabel(eligible)).toContain('HT202608050012')
     expect(fixedRentRebateContractLabel(eligible)).toContain('1栋301')
     expect(fixedRentRebateContractLabel(eligible)).toContain('张三')
+    expect(fixedRentRebateContractLabel(eligible)).toBe(eligible.contractNo)
   })
 
   it('仅允许最新预览请求更新状态', () => {

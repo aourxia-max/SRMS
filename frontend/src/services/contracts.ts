@@ -176,7 +176,8 @@ export function isFixedRentRebateEligible(
 export function fixedRentRebateContractLabel(contract: ContractListItem) {
   const room = contract.room?.fullHouseNo || `房源${contract.roomId}`
   const tenant = contract.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant.name || '未记录租户'
-  return `${contract.contractNo}｜${room}｜${tenant}`
+  const missingDetails = [room, tenant].filter((detail) => !contract.contractNo.includes(detail))
+  return [contract.contractNo, ...missingDetails].join('｜')
 }
 
 export function filterFixedRentRebateContracts(contracts: ContractListItem[], keyword: string) {
