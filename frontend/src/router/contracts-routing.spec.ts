@@ -34,6 +34,9 @@ vi.mock('../services/contracts', () => ({
     let generation = 0
     return { next: () => ++generation, isCurrent: (value: number) => value === generation }
   },
+  filterFixedRentRebateContracts: (contracts: typeof contract[], keyword: string) => contracts.filter((item) => item.status === 'ACTIVE' && item.pricingMode === 'FIXED' && `${item.contractNo}|${item.room?.fullHouseNo}|${item.members?.[0]?.tenant.name}`.toLowerCase().includes(keyword.trim().toLowerCase())),
+  fixedRentRebateContractLabel: (item: typeof contract) => `${item.contractNo}｜${item.room?.fullHouseNo}｜${item.members?.[0]?.tenant.name}`,
+  isFixedRentRebateEligible: (item?: typeof contract | null) => item?.status === 'ACTIVE' && item.pricingMode === 'FIXED',
   downloadContractFile: vi.fn(),
   getContract: mocks.getContract,
   getContractBills: vi.fn().mockResolvedValue([]),
@@ -108,6 +111,25 @@ describe('固定合同工作区路由', () => {
     expect(mocks.getContract).toHaveBeenCalledWith(12)
     expect(wrapper.get('.contract-top-nav button.active').text()).toBe('固定月租退差')
     expect(wrapper.text()).toContain('HT202608050012')
+  })
+
+  it('从合同详情发起退差时保留当前合同并写入可恢复地址', async () => {
+    const { router, wrapper } = await mountWorkspace('/contracts?tab=detail&contractId=12')
+    await wrapper.get('[data-test="open-fixed-rent-rebate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.contract-top-nav button.active').text()).toBe('固定月租退差')
+    expect(router.currentRoute.value.query).toEqual({ tab: 'fixed-rebate', contractId: '12' })
+    expect(wrapper.text()).toContain('HT202608050012')
+  })
+
+  it('退差地址中的合同无资格时不载入可提交合同', async () => {
+    mocks.listContracts.mockResolvedValue([{ ...contract, status: 'PENDING_START' }])
+    const { wrapper } = await mountWorkspace('/contracts?tab=fixed-rebate&contractId=12')
+
+    expect(mocks.getContract).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请选择履行中的固定月租合同')
+    expect(wrapper.text()).not.toContain('金额与原因')
   })
 
   it('切换顶部页签时同步更新可分享地址', async () => {

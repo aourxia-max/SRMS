@@ -49,7 +49,7 @@ const concessionPayload = (item: ContractConcession): ContractConcession => item
   : { concessionType: item.concessionType, applyMode: 'BILLING_PERIODS', billingPeriodCount: item.billingPeriodCount, ...(item.concessionType === 'FIXED_AMOUNT' ? { fixedAmount: item.fixedAmount } : { discountRate: item.discountRate }), reason: item.reason }
 
 export function buildFixedRentRebatePayload(contract: ContractDetail, input: Record<string, unknown>) {
-  if (contract.status !== 'ACTIVE' || contract.pricingMode !== 'FIXED') throw new Error('退差仅适用于履行中的固定月租合同')
+  if (!isFixedRentRebateEligible(contract)) throw new Error('退差仅适用于履行中的固定月租合同')
   return { ...input, contractId: contract.id, sourceType: 'FIXED_RENT_MANUAL', rebateType: 'MANUAL', pricingTierId: undefined }
 }
 
@@ -165,4 +165,26 @@ export async function approveFixedRentRebate(id: number) {
 
 export async function rejectFixedRentRebate(id: number, reason: string) {
   return (await http.post<ApiResponse<PricingRebate>>(`/pricing-rebates/${id}/reject`, { reason })).data.data
+}
+
+export function isFixedRentRebateEligible(
+  contract?: Pick<ContractListItem, 'status' | 'pricingMode'> | null,
+) {
+  return contract?.status === 'ACTIVE' && contract.pricingMode === 'FIXED'
+}
+
+export function fixedRentRebateContractLabel(contract: ContractListItem) {
+  const room = contract.room?.fullHouseNo || `房源${contract.roomId}`
+  const tenant = contract.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant.name || '未记录租户'
+  const missingDetails = [room, tenant].filter((detail) => !contract.contractNo.includes(detail))
+  return [contract.contractNo, ...missingDetails].join('｜')
+}
+
+export function filterFixedRentRebateContracts(contracts: ContractListItem[], keyword: string) {
+  const normalized = keyword.trim().toLocaleLowerCase('zh-CN')
+  return contracts.filter((contract) => {
+    if (!isFixedRentRebateEligible(contract)) return false
+    if (!normalized) return true
+    return fixedRentRebateContractLabel(contract).toLocaleLowerCase('zh-CN').includes(normalized)
+  })
 }

@@ -16,6 +16,7 @@ import {
   createContractDraft,
   createLatestRequestGuard,
   downloadContractFile,
+  isFixedRentRebateEligible,
   getContract,
   getContractBills,
   getContractChanges,
@@ -203,11 +204,29 @@ function startCreate() {
 async function applyRouteState() {
   if (!baseDataLoaded) return
   const routeContractId = contractIdFromRoute()
+  const routeTab = tabFromRoute()
+  if (routeTab === 'fixed-rebate') {
+    const summary = routeContractId
+      ? contracts.value.find((item) => item.id === routeContractId && isFixedRentRebateEligible(item))
+      : undefined
+    if (summary && routeContractId !== selectedContractId.value) await selectContract(summary, false)
+    else if (!summary) {
+      selectedContractId.value = null
+      selectedContract.value = null
+      bills.value = []
+      files.value = []
+      changes.value = []
+      rebates.value = []
+      payments.value = []
+    }
+    tab.value = 'fixed-rebate'
+    return
+  }
+
   if (routeContractId && routeContractId !== selectedContractId.value) {
     const summary = contracts.value.find((item) => item.id === routeContractId)
     if (summary) await selectContract(summary, false)
   }
-  const routeTab = tabFromRoute()
   if (routeTab) tab.value = routeTab
   else if (routeContractId && selectedContractId.value === routeContractId) tab.value = 'detail'
 }
@@ -310,13 +329,17 @@ watch(
 )
 
 async function selectRebateContract(id: number) {
-  const summary = contracts.value.find((item) => item.id === id && item.status === 'ACTIVE' && item.pricingMode === 'FIXED')
+  const summary = contracts.value.find((item) => item.id === id && isFixedRentRebateEligible(item))
   if (!summary) {
     ElMessage.warning('请选择履行中的固定月租合同')
     return
   }
   await selectContract(summary, false)
   setTab('fixed-rebate')
+}
+
+async function openFixedRentRebate(contractId: number) {
+  await selectRebateContract(contractId)
 }
 
 async function submitRebate(payload: Record<string, unknown>) {
@@ -366,7 +389,7 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
         <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="setTab('list')" @upload-file="uploadFile" />
         <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="previewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="setTab('fixed-rebate')" @download="downloadFile" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @download="downloadFile" />
       <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
     </main>
   </el-config-provider>
