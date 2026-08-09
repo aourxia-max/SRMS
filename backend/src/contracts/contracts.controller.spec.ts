@@ -83,10 +83,7 @@ describe('ContractsController', () => {
       upload,
     ) as Array<new () => { multer: { limits?: { fileSize?: number } } }>;
     const uploadInterceptor = new UploadInterceptor();
-    expect(uploadInterceptor.multer.limits?.fileSize).toBeGreaterThan(0);
-    expect(uploadInterceptor.multer.limits?.fileSize).toBeLessThanOrEqual(
-      10 * 1024 * 1024,
-    );
+    expect(uploadInterceptor.multer.limits?.fileSize).toBe(100 * 1024 * 1024);
   });
 
   it('uploads a contract file through the file service without returning contract data', async () => {

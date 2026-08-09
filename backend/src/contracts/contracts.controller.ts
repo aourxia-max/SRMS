@@ -33,22 +33,11 @@ import { PreviewFixedContractDto } from './dto/preview-fixed-contract.dto';
 import { FilesService } from '../files/files.service';
 import type { UploadedFile as ContractUploadedFile } from '../files/files.service';
 
-const DEFAULT_CONTRACT_UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
-const configuredContractUploadLimit = Number(
-  process.env.TENANT_FILE_MAX_SIZE_BYTES,
-);
 // Multer needs a synchronous cap before ConfigService/database settings are
-// available. Respect a stricter environment limit while keeping buffering at
-// the deployed 10 MiB safety ceiling; FilesService still applies the dynamic
-// system limit after buffering.
-const contractUploadBufferLimit =
-  Number.isSafeInteger(configuredContractUploadLimit) &&
-  configuredContractUploadLimit > 0
-    ? Math.min(
-        configuredContractUploadLimit,
-        DEFAULT_CONTRACT_UPLOAD_LIMIT_BYTES,
-      )
-    : DEFAULT_CONTRACT_UPLOAD_LIMIT_BYTES;
+// available. The product allows a dynamic 1–100 MiB system limit, so this
+// bounds pre-service buffering at the absolute maximum; FilesService still
+// applies the current dynamic limit after buffering.
+const contractUploadBufferLimit = 100 * 1024 * 1024;
 
 @Controller('contracts')
 @UseGuards(JwtAuthGuard, RolesGuard)
