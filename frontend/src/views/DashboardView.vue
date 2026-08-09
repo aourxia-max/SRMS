@@ -230,7 +230,7 @@ onMounted(init)
       <div>
         <el-tag type="primary" effect="light">经营驾驶舱</el-tag>
         <h1>经营概览</h1>
-        <p>按房源状态、租金待办和合同履行情况快速判断今日重点。</p>
+        <p>华尔天经营概览</p>
       </div>
       <div class="head-actions">
         <el-autocomplete
