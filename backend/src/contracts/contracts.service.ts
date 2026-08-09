@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -905,6 +906,9 @@ export class ContractsService {
     tiers: PricingTierDto[];
     concessions?: ConcessionDto[];
   }) {
+    void input;
+    throw new GoneException('阶梯合同功能已停用');
+
     assertPricingTiers(input.tiers);
     assertConcessions(input.concessions ?? []);
     assertPrimaryTenant(

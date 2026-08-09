@@ -16,7 +16,7 @@ const pageNames: Record<string, string> = {
   'rent-bills': '租金账单',
   session: '经营驾驶舱', properties: '房源管理', tenants: '承租人管理', contracts: '合同管理',
   'contract-changes': '合同变更', 'payment-collect': '收款登记', 'payment-detail': '收款详情',
-  'payment-reviews': '退款/作废确认', 'pricing-rebates': '阶梯退差',
+  'payment-reviews': '退款/作废确认',
   checkout: '退租结算', finance: '财务中心', users: '用户管理', 'system-management': '系统管理',
 }
 const currentPage = computed(() => pageNames[String(route.name)] ?? 'SRMS')
@@ -44,7 +44,6 @@ onMounted(() => void app.loadProjectName())
         <p v-show="!collapsed">租赁财务</p>
         <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
         <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b></router-link>
-        <router-link v-if="isAdmin" to="/pricing-rebates" class="srms-nav-item"><span>≈</span><b v-show="!collapsed">阶梯退差</b></router-link>
         <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b></router-link>
         <router-link v-if="isSuperAdmin" to="/finance" class="srms-nav-item"><span>¥</span><b v-show="!collapsed">财务中心</b></router-link>
         <p v-if="isSuperAdmin" v-show="!collapsed">系统</p>

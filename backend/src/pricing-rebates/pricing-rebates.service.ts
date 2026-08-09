@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, GoneException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -44,7 +44,11 @@ export class PricingRebatesService {
       new Set(dto.proofFileIds).size !== dto.proofFileIds.length
     )
       throw new BadRequestException('退款凭证不能重复');
+    if (dto.sourceType !== 'FIXED_RENT_MANUAL')
+      throw new GoneException('阶梯退差功能已停用');
     const contract = await this.loadContract(dto.contractId);
+    if (contract.pricingMode !== 'FIXED')
+      throw new BadRequestException('固定月租人工退差仅适用于固定月租合同');
     if (contract.status !== 'ACTIVE')
       throw new BadRequestException('仅生效中的合同可以提交退差');
     if (
@@ -62,42 +66,23 @@ export class PricingRebatesService {
         '转预收款不应填写退款日期、退款方式或退款凭证',
       );
 
-    let referenceAmount: Prisma.Decimal | null = null;
-    let grossBilledAmount = new Prisma.Decimal(0);
-    let targetNetRentAmount: Prisma.Decimal | null = null;
-    let previousRebateAmount = new Prisma.Decimal(0);
-    let qualificationDate: Date | null = null;
-    let thresholdMonths: number | null = null;
+    const referenceAmount: Prisma.Decimal | null = null;
+    const grossBilledAmount = new Prisma.Decimal(0);
+    const targetNetRentAmount: Prisma.Decimal | null = null;
+    const previousRebateAmount = new Prisma.Decimal(0);
+    const qualificationDate: Date | null = null;
+    const thresholdMonths: number | null = null;
     let pricingTierId: number | null = dto.pricingTierId ?? null;
     const rentBillId: number | null = dto.rentBillId ?? null;
 
-    if (dto.sourceType === 'TIER_MILESTONE') {
-      if (contract.pricingMode !== 'TIERED_RETROACTIVE' || !pricingTierId)
-        throw new BadRequestException('阶梯退差必须关联阶梯定价合同及其达档');
-      const qualification = this.qualification(contract);
-      const reached = qualification.tiers.find(
-        (item) => item.id === pricingTierId && item.qualified,
-      );
-      if (!reached)
-        throw new BadRequestException('所选档位尚未达标或未满足已付清条件');
-      thresholdMonths = reached.thresholdMonths;
-      qualificationDate = reached.qualificationDate;
-      grossBilledAmount = reached.grossBilledAmount;
-      targetNetRentAmount = reached.targetNetRentAmount;
-      previousRebateAmount = reached.previousRebateAmount;
-      referenceAmount = reached.referenceAmount;
-      if (dto.rebateType === 'SUPPLEMENT' && !dto.parentRebateId)
-        throw new BadRequestException('补充退差必须关联原退差单');
-    } else {
-      if (contract.pricingMode !== 'FIXED' || !rentBillId)
-        throw new BadRequestException('固定租金手工退差必须关联有效租金账单');
-      const bill = contract.bills.find((item) => item.id === rentBillId);
-      if (!bill || ['VOIDED', 'REFUNDED'].includes(bill.status))
-        throw new BadRequestException('关联的租金账单无效');
-      pricingTierId = null;
-      if (dto.rebateType === 'MILESTONE')
-        throw new BadRequestException('固定租金合同不能提交达档退差');
-    }
+    if (!rentBillId)
+      throw new BadRequestException('固定租金手工退差必须关联有效租金账单');
+    const bill = contract.bills.find((item) => item.id === rentBillId);
+    if (!bill || ['VOIDED', 'REFUNDED'].includes(bill.status))
+      throw new BadRequestException('关联的租金账单无效');
+    pricingTierId = null;
+    if (dto.rebateType === 'MILESTONE')
+      throw new BadRequestException('固定租金合同不能提交达档退差');
     if (
       referenceAmount &&
       !actualAmount.equals(referenceAmount) &&

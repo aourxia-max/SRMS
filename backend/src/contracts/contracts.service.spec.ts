@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  GoneException,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { ContractsService } from './contracts.service';
@@ -123,78 +127,33 @@ describe('ContractsService', () => {
     expect(result[2].amount.toFixed(2)).toBe('333.33');
   });
 
-  it('writes tier snapshots and associates generated bills with snapshots', async () => {
-    const createMany = jest.fn().mockResolvedValue({ count: 3 });
-    const tierCreate = jest
-      .fn()
-      .mockResolvedValueOnce({
-        id: 21,
-        thresholdMonths: 0,
-        monthlyRent: '3000',
-      })
-      .mockResolvedValueOnce({
-        id: 22,
-        thresholdMonths: 2,
-        monthlyRent: '2000',
-      });
-    const tx = {
-      room: {
-        findFirstOrThrow: jest
-          .fn()
-          .mockResolvedValue({ id: 1, roomStatus: 'EMPTY' }),
-        update: jest.fn().mockResolvedValue({}),
-      },
-      contract: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 10 }),
-        update: jest.fn().mockResolvedValue({
-          id: 10,
-          contractNo: 'HT202601010001 | 1栋101 | 李四',
-        }),
-      },
-      tenant: {
-        findUniqueOrThrow: jest.fn().mockResolvedValue({ name: '李四' }),
-      },
-      contractPricingTier: { create: tierCreate },
-      rentBill: { createMany },
-      roomStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    };
-    const prisma = {
-      db: {
-        $transaction: jest.fn(
-          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
-        ),
-      },
-    };
-    await new ContractsService(prisma as never).createTieredContract({
-      ...input,
-      endDate: new Date('2026-03-05'),
-      tiers: [
-        {
-          tierName: '基础',
-          thresholdMonths: 0,
-          monthlyRent: '3000',
-          requiresFullyPaid: true,
-        },
-        {
-          tierName: '二月档',
-          thresholdMonths: 2,
-          monthlyRent: '2000',
-          requiresFullyPaid: true,
-        },
-      ],
-    });
-    expect(tierCreate).toHaveBeenCalledTimes(2);
-    expect(createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({ contractPricingTierId: 21 }),
-          expect.objectContaining({ contractPricingTierId: 22 }),
-        ]),
-      }),
-    );
-  });
+  it('retires new tiered contract creation with HTTP 410 before opening a transaction', async () => {
+    const transaction = jest.fn();
+    const service = new ContractsService({
+      db: { $transaction: transaction },
+    } as never);
 
+    await expect(
+      service.createTieredContract({
+        ...input,
+        endDate: new Date('2026-03-05'),
+        tiers: [
+          {
+            tierName: '基础',
+            thresholdMonths: 0,
+            monthlyRent: '3000',
+            requiresFullyPaid: true,
+          },
+        ],
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '阶梯合同功能已停用',
+        status: 410,
+      } as Partial<GoneException>),
+    );
+    expect(transaction).not.toHaveBeenCalled();
+  });
   it('rejects an invalid rent change before it creates an approval record', async () => {
     const create = jest.fn();
     const service = new ContractsService({

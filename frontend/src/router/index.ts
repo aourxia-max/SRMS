@@ -11,7 +11,6 @@ import ContractChangesView from '../views/ContractChangesView.vue'
 import PaymentCollectView from '../views/payments/PaymentCollectView.vue'
 import PaymentDetailView from '../views/payments/PaymentDetailView.vue'
 import PaymentReviewsView from '../views/payments/PaymentReviewsView.vue'
-import PricingRebatesView from '../views/PricingRebatesView.vue'
 import CheckoutView from '../views/CheckoutView.vue'
 import FinanceView from '../views/FinanceView.vue'
 import DashboardView from '../views/DashboardView.vue'
@@ -38,7 +37,6 @@ export const routes: RouteRecordRaw[] = [
     { path: '/payments/detail/:id?', name: 'payment-detail', component: PaymentDetailView, meta: { requiresAuth: true } },
     { path: '/payments/reviews', name: 'payment-reviews', component: PaymentReviewsView, meta: { requiresAuth: true } },
     { path: '/rent-bills', name: 'rent-bills', component: RentBillsView, meta: { requiresAuth: true } },
-    { path: '/pricing-rebates', name: 'pricing-rebates', component: PricingRebatesView, meta: { requiresAuth: true } },
     { path: '/checkout', name: 'checkout', component: CheckoutView, meta: { requiresAuth: true } },
     { path: '/finance', name: 'finance', component: FinanceView, meta: { requiresAuth: true } },
     { path: '/contracts/concessions-preview', name: 'concessions-preview', component: ConcessionsPreviewView, meta: { requiresAuth: true } },

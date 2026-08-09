@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, GoneException } from '@nestjs/common';
 import { INTERCEPTORS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
@@ -50,6 +50,29 @@ describe('ContractsController', () => {
     expect(createFixedContract).not.toHaveBeenCalled();
   });
 
+  it('keeps the legacy tiered route but reports that it has been retired', async () => {
+    const createTieredContract = jest
+      .fn()
+      .mockRejectedValue(new GoneException('阶梯合同功能已停用'));
+    const controller = controllerWith({ createTieredContract });
+
+    await expect(
+      controller.createTiered({
+        roomId: 1,
+        startDate: '2026-08-01',
+        endDate: '2026-09-01',
+        monthlyRent: '3000',
+        primaryTenantId: 1,
+        tiers: [],
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '阶梯合同功能已停用',
+        status: 410,
+      }),
+    );
+    expect(createTieredContract).toHaveBeenCalledTimes(1);
+  });
   it('registers the exact contract attachment routes and role policies', () => {
     const prototype = ContractsController.prototype as unknown as Record<
       string,

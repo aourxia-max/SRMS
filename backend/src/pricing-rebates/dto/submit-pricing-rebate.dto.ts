@@ -10,6 +10,7 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsIn,
   IsNumberString,
   IsOptional,
   IsString,
@@ -19,7 +20,7 @@ import {
 
 export class SubmitPricingRebateDto {
   @Type(() => Number) @IsInt() @Min(1) contractId!: number;
-  @IsEnum(PricingRebateSourceType) sourceType!: PricingRebateSourceType;
+  @IsIn(['FIXED_RENT_MANUAL']) sourceType!: PricingRebateSourceType;
   @IsEnum(PricingRebateType) rebateType!: PricingRebateType;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) pricingTierId?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) rentBillId?: number;
