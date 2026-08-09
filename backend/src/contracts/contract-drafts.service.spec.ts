@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { ContractDraftsService } from './contract-drafts.service';
 
@@ -37,37 +37,50 @@ describe('ContractDraftsService', () => {
     });
   });
 
-  it('prevents an admin from reading another admin’s draft', async () => {
-    const findFirstOrThrow = jest.fn().mockResolvedValue(null);
-    const service = serviceWith({ contractDraft: { findFirstOrThrow } });
+  it('returns not found when an admin reads another admin’s draft', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const service = serviceWith({ contractDraft: { findFirst } });
 
-    await expect(service.find(18, admin)).rejects.toThrow();
+    await expect(service.find(18, admin)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
 
-    expect(findFirstOrThrow).toHaveBeenCalledWith({
+    expect(findFirst).toHaveBeenCalledWith({
       where: { id: 18, createdBy: admin.id },
     });
   });
 
+  it('returns not found when a super admin reads a missing draft', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const service = serviceWith({ contractDraft: { findFirst } });
+
+    await expect(service.find(404, superAdmin)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+
+    expect(findFirst).toHaveBeenCalledWith({ where: { id: 404 } });
+  });
+
   it('allows a super admin to read any draft', async () => {
     const draft = { id: 18, createdBy: admin.id, status: 'DRAFT' };
-    const findFirstOrThrow = jest.fn().mockResolvedValue(draft);
-    const service = serviceWith({ contractDraft: { findFirstOrThrow } });
+    const findFirst = jest.fn().mockResolvedValue(draft);
+    const service = serviceWith({ contractDraft: { findFirst } });
 
     await expect(service.find(18, superAdmin)).resolves.toEqual(draft);
 
-    expect(findFirstOrThrow).toHaveBeenCalledWith({ where: { id: 18 } });
+    expect(findFirst).toHaveBeenCalledWith({ where: { id: 18 } });
   });
 
   it('rejects updates after a draft has been confirmed', async () => {
-    const update = jest.fn();
+    const updateMany = jest.fn();
     const service = serviceWith({
       contractDraft: {
-        findFirstOrThrow: jest.fn().mockResolvedValue({
+        findFirst: jest.fn().mockResolvedValue({
           id: 18,
           createdBy: admin.id,
           status: 'CONFIRMED',
         }),
-        update,
+        updateMany,
       },
     });
 
@@ -75,7 +88,7 @@ describe('ContractDraftsService', () => {
       service.update(18, { remark: 'too late' }, admin),
     ).rejects.toThrow('草稿已确认');
 
-    expect(update).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
   });
 
   it('rejects commission data submitted by an admin', async () => {
@@ -93,27 +106,51 @@ describe('ContractDraftsService', () => {
   });
 
   it('persists draft status and an authorized commission payload', async () => {
-    const update = jest.fn().mockResolvedValue({ id: 18, status: 'DRAFT' });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const payload = {
       monthlyRent: '3200',
       commission: { recipientName: 'Broker', amount: '500' },
     };
     const service = serviceWith({
       contractDraft: {
-        findFirstOrThrow: jest.fn().mockResolvedValue({
+        findFirst: jest.fn().mockResolvedValue({
           id: 18,
           createdBy: admin.id,
           status: 'DRAFT',
         }),
-        update,
+        updateMany,
       },
     });
 
     await service.update(18, payload, superAdmin);
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 18 },
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 18, status: 'DRAFT' },
       data: { roomId: null, payload },
     });
+  });
+
+  it('rejects an update that loses the confirmed-status race', async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    const service = serviceWith({
+      contractDraft: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 18,
+          roomId: null,
+          payload: {},
+          createdBy: admin.id,
+          status: 'DRAFT',
+        }),
+        updateMany,
+      },
+    });
+
+    await expect(
+      service.update(18, { remark: 'raced' }, admin),
+    ).rejects.toThrow('草稿已确认');
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 18, status: 'DRAFT' } }),
+    );
   });
 });

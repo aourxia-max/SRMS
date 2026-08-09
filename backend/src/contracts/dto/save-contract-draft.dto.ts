@@ -4,11 +4,11 @@ import {
   IsDateString,
   IsInt,
   IsNumberString,
-  IsOptional,
   IsString,
   Length,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { ConcessionDto } from './concession.dto';
@@ -36,39 +36,63 @@ export type ContractDraftPayload = {
 };
 
 export class SaveContractDraftDto implements ContractDraftPayload {
-  @IsOptional() @IsString() @Length(1, 80) externalContractNo?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) roomId?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) primaryTenantId?: number;
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Length(1, 80)
+  externalContractNo?: string;
+  @ValidateIf((_, value) => value !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  roomId?: number;
+  @ValidateIf((_, value) => value !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  primaryTenantId?: number;
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @Type(() => Number)
   @IsInt({ each: true })
   @Min(1, { each: true })
   secondaryTenantIds?: number[];
-  @IsOptional() @IsDateString() startDate?: string;
-  @IsOptional() @IsDateString() endDate?: string;
-  @IsOptional() @IsDateString() plannedMoveInDate?: string;
-  @IsOptional() @IsNumberString() monthlyRent?: string;
-  @IsOptional() @IsNumberString() depositRequired?: string;
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsDateString()
+  startDate?: string;
+  @ValidateIf((_, value) => value !== undefined)
+  @IsDateString()
+  endDate?: string;
+  @ValidateIf((_, value) => value !== undefined)
+  @IsDateString()
+  plannedMoveInDate?: string;
+  @ValidateIf((_, value) => value !== undefined)
+  @IsNumberString()
+  monthlyRent?: string;
+  @ValidateIf((_, value) => value !== undefined)
+  @IsNumberString()
+  depositRequired?: string;
+  @ValidateIf((_, value) => value !== undefined)
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(12)
   paymentCycleMonths?: number;
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @Type(() => ConcessionDto)
   @ValidateNested({ each: true })
   concessions?: ConcessionDto[];
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @Type(() => Number)
   @IsInt({ each: true })
   @Min(1, { each: true })
   fileAssetIds?: number[];
-  @IsOptional() @IsString() @Length(1, 1000) remark?: string;
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Length(1, 1000)
+  remark?: string;
+  @ValidateIf((_, value) => value !== undefined)
   @Type(() => ContractCommissionDto)
   @ValidateNested()
   commission?: ContractCommissionDto;

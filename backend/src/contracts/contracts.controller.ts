@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -73,7 +74,12 @@ export class ContractsController {
 
   @Post('fixed')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  async createFixed(@Body() dto: CreateFixedContractDto) {
+  async createFixed(
+    @Body() dto: CreateFixedContractDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (dto.commission && user.role !== UserRole.SUPER_ADMIN)
+      throw new ForbiddenException('只有超级管理员可以填写佣金');
     return {
       code: 200,
       message: 'success',

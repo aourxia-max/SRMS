@@ -46,17 +46,19 @@ export class ContractDraftsService {
       throw new BadRequestException('草稿已确认');
     const currentPayload = this.record(draft.payload);
     const nextPayload = { ...currentPayload, ...payload };
-    return this.prisma.db.contractDraft.update({
-      where: { id },
+    const updated = await this.prisma.db.contractDraft.updateMany({
+      where: { id, status: 'DRAFT' },
       data: {
         roomId: payload.roomId ?? draft.roomId ?? null,
         payload: this.json(nextPayload),
       },
     });
+    if (!updated.count) throw new BadRequestException('草稿已确认');
+    return this.load(id, user);
   }
 
   private async load(id: number, user: AuthUser): Promise<DraftRecord> {
-    const draft = await this.prisma.db.contractDraft.findFirstOrThrow({
+    const draft = await this.prisma.db.contractDraft.findFirst({
       where:
         user.role === UserRole.SUPER_ADMIN
           ? { id }
