@@ -383,4 +383,3 @@ git commit -m "feat: search eligible fixed rebate contracts"
 - [ ] 不符合退差条件的合同不会出现在搜索结果或可提交状态。
 - [ ] 刷新 `contracts?tab=fixed-rebate&contractId=<id>` 能恢复当前合同。
 - [ ] 前端完整测试、构建和根目录 Lint 全部通过。
-
