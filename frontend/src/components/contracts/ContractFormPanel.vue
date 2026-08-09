@@ -271,4 +271,12 @@ function handleUpload(file: UploadFile) {
 .commission-card { border-color: #e5ddff; }
 .commission-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 1100px) { .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .concession-row { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 760px) {
+  .page-head { align-items: flex-start; flex-direction: column; }
+  .head-actions { width: 100%; }
+  .head-actions .el-button { min-height: 40px; flex: 1 1 132px; margin-left: 0; }
+  .form-grid, .commission-grid, .pricing-row, .concession-row, .other-grid { grid-template-columns: minmax(0, 1fr); }
+  .card-head { align-items: flex-start; flex-wrap: wrap; }
+  .checkout-note { align-items: flex-start; flex-direction: column; }
+}
 </style>

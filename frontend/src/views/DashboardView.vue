@@ -118,7 +118,7 @@ const todoItems = computed(() => [
   },
   {
     title: '审批待处理',
-    desc: '账单、退款、阶梯退差待审批',
+    desc: '账单、退款、固定月租退差待审批',
     count: totalApprovals.value,
     tone: 'purple',
     path: '/contracts/changes',

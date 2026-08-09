@@ -74,4 +74,17 @@ const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.
   color: #748196;
   text-align: center;
 }
+@media (max-width: 760px) {
+  .contract-top-nav {
+    width: 100%;
+    justify-content: flex-start;
+    margin-bottom: 14px;
+    overscroll-behavior-inline: contain;
+  }
+
+  .contract-top-nav button {
+    min-height: 40px;
+    padding-inline: 16px;
+  }
+}
 </style>

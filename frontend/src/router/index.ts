@@ -31,6 +31,10 @@ export const routes: RouteRecordRaw[] = [
     { path: '/properties/:id', name: 'room-detail', component: RoomDetailView, meta: { requiresAuth: true } },
     { path: '/tenants', name: 'tenants', component: TenantsView, meta: { requiresAuth: true } },
     { path: '/contracts', name: 'contracts', component: ContractsView, meta: { requiresAuth: true } },
+    {
+      path: '/pricing-rebates',
+      redirect: (to) => ({ name: 'contracts', query: { ...to.query, tab: 'fixed-rebate' } }),
+    },
     { path: '/contracts/changes', name: 'contract-changes', component: ContractChangesView, meta: { requiresAuth: true } },
     { path: '/payments', redirect: (to) => ({ path: '/payments/collect', query: to.query }) },
     { path: '/payments/collect', name: 'payment-collect', component: PaymentCollectView, meta: { requiresAuth: true } },

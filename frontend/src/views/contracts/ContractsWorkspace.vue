@@ -2,7 +2,7 @@
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
 import ContractListPanel from '../../components/contracts/ContractListPanel.vue'
@@ -53,6 +53,7 @@ type ApiResponse<T> = { data: T }
 const draftStorageKey = 'srms.currentFixedContractDraftId'
 
 const route = useRoute()
+const router = useRouter()
 const session = useSessionStore()
 const role = session.user?.role || 'VISITOR'
 const tab = ref<ContractWorkspaceTab>('list')
@@ -74,6 +75,34 @@ const saving = ref(false)
 const currentDraftId = ref<number | null>(null)
 let previewTimer: ReturnType<typeof setTimeout> | null = null
 const previewRequests = createLatestRequestGuard()
+let baseDataLoaded = false
+
+const workspaceTabs: ContractWorkspaceTab[] = ['list', 'create', 'detail', 'fixed-rebate']
+
+function tabFromRoute(): ContractWorkspaceTab | null {
+  const value = route.query.tab
+  return typeof value === 'string' && workspaceTabs.includes(value as ContractWorkspaceTab)
+    ? value as ContractWorkspaceTab
+    : null
+}
+
+function contractIdFromRoute(): number | null {
+  const value = Number(route.query.contractId)
+  return Number.isInteger(value) && value > 0 ? value : null
+}
+
+async function writeWorkspaceRoute(nextTab: ContractWorkspaceTab, contractId = selectedContractId.value) {
+  if (route.name !== 'contracts') return
+  const query = { ...route.query, tab: nextTab } as Record<string, string | string[] | undefined>
+  if (contractId) query.contractId = String(contractId)
+  else delete query.contractId
+  await router.replace({ name: 'contracts', query })
+}
+
+function setTab(nextTab: ContractWorkspaceTab) {
+  tab.value = nextTab
+  void writeWorkspaceRoute(nextTab)
+}
 
 const errorMessage = (error: unknown, fallback: string) => {
   const response = (error as { response?: { data?: { message?: string | string[] } } })?.response
@@ -127,6 +156,8 @@ async function loadBaseData() {
       if (existing) await selectContract(existing)
       else tab.value = 'create'
     }
+    baseDataLoaded = true
+    await applyRouteState()
   } catch (error) {
     ElMessage.error(errorMessage(error, '合同工作区加载失败'))
   } finally {
@@ -134,7 +165,7 @@ async function loadBaseData() {
   }
 }
 
-async function selectContract(summary: ContractListItem) {
+async function selectContract(summary: ContractListItem, syncRoute = true) {
   selectedContractId.value = summary.id
   loading.value = true
   try {
@@ -153,6 +184,7 @@ async function selectContract(summary: ContractListItem) {
     rebates.value = contractRebates
     payments.value = contractPayments
     tab.value = 'detail'
+    if (syncRoute) await writeWorkspaceRoute('detail', summary.id)
   } catch (error) {
     ElMessage.error(errorMessage(error, '合同详情加载失败'))
   } finally {
@@ -165,7 +197,19 @@ function startCreate() {
   localStorage.removeItem(draftStorageKey)
   form.value = emptyContractForm()
   preview.value = null
-  tab.value = 'create'
+  setTab('create')
+}
+
+async function applyRouteState() {
+  if (!baseDataLoaded) return
+  const routeContractId = contractIdFromRoute()
+  if (routeContractId && routeContractId !== selectedContractId.value) {
+    const summary = contracts.value.find((item) => item.id === routeContractId)
+    if (summary) await selectContract(summary, false)
+  }
+  const routeTab = tabFromRoute()
+  if (routeTab) tab.value = routeTab
+  else if (routeContractId && selectedContractId.value === routeContractId) tab.value = 'detail'
 }
 
 async function saveDraft(payload: ContractPayload) {
@@ -271,8 +315,8 @@ async function selectRebateContract(id: number) {
     ElMessage.warning('请选择履行中的固定月租合同')
     return
   }
-  await selectContract(summary)
-  tab.value = 'fixed-rebate'
+  await selectContract(summary, false)
+  setTab('fixed-rebate')
 }
 
 async function submitRebate(payload: Record<string, unknown>) {
@@ -310,19 +354,20 @@ async function rejectRebate(id: number) {
 
 onMounted(loadBaseData)
 onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
+watch(() => [route.query.tab, route.query.contractId], () => void applyRouteState())
 </script>
 
 <template>
   <el-config-provider :locale="zhCn">
     <main class="contracts-workspace">
-      <ContractTopNav v-model="tab" :selected-contract-id="selectedContractId" />
-      <ContractListPanel v-if="tab === 'list'" :contracts="contracts" :selected-contract-id="selectedContractId" :draft-id="currentDraftId" :loading="loading" @select="selectContract" @create="startCreate" @continue-draft="tab = 'create'" />
+      <ContractTopNav :model-value="tab" :selected-contract-id="selectedContractId" @update:model-value="setTab" />
+      <ContractListPanel v-if="tab === 'list'" :contracts="contracts" :selected-contract-id="selectedContractId" :draft-id="currentDraftId" :loading="loading" @select="selectContract" @create="startCreate" @continue-draft="setTab('create')" />
       <div v-else-if="tab === 'create'" class="create-grid">
-        <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="tab = 'list'" @upload-file="uploadFile" />
+        <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="setTab('list')" @upload-file="uploadFile" />
         <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="previewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="tab = 'list'" @rebate="tab = 'fixed-rebate'" @download="downloadFile" />
-      <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="tab = 'list'" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="setTab('fixed-rebate')" @download="downloadFile" />
+      <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
     </main>
   </el-config-provider>
 </template>
@@ -330,4 +375,6 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
 <style scoped>
 .contracts-workspace { min-height: 100%; padding: 20px 26px 40px; color: #233044; font: 14px/1.5 "Microsoft YaHei", "PingFang SC", sans-serif; background: #f3f6fb; }
 .create-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 15px; align-items: start; }
+@media (max-width: 1100px) { .create-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .contracts-workspace { padding: 12px 10px 28px; } }
 </style>
