@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { reactive, ref, watch } from 'vue'
-import { toContractPayload } from '../../services/contracts'
+import { contractConcessionError, normalizeConcessionType, toContractPayload } from '../../services/contracts'
 import type {
   ContractFormModel,
   ContractPayload,
@@ -36,6 +36,7 @@ const copyForm = (source: ContractFormModel): ContractFormModel => ({
 
 const form = reactive(copyForm(props.modelValue))
 const formRef = ref<FormInstance>()
+const concessionError = ref('')
 
 watch(() => props.modelValue, (next) => Object.assign(form, copyForm(next)), { deep: true })
 watch(form, () => emit('update:modelValue', copyForm(form)), { deep: true })
@@ -78,6 +79,15 @@ function addConcession() {
   })
 }
 
+function changeConcession(item: ContractFormModel['concessions'][number]) {
+  const normalized = normalizeConcessionType(item, item.concessionType)
+  Object.assign(item, {
+    startDate: undefined, endDate: undefined, billingPeriodCount: undefined,
+    fixedAmount: undefined, discountRate: undefined,
+  }, normalized)
+  concessionError.value = ''
+}
+
 function removeConcession(index: number) {
   form.concessions.splice(index, 1)
 }
@@ -88,6 +98,8 @@ function saveDraft() {
 
 async function confirm() {
   if (!formRef.value) return
+  concessionError.value = contractConcessionError(form.concessions) || ''
+  if (concessionError.value) return
   try {
     await formRef.value.validate()
     emit('confirm', toContractPayload(copyForm(form), props.role))
@@ -182,18 +194,24 @@ function handleUpload(file: UploadFile) {
         <div class="card-body">
           <div v-if="form.concessions.length" class="concessions">
             <div v-for="(item, index) in form.concessions" :key="index" class="concession-row">
-              <el-select v-model="item.concessionType">
+              <el-select v-model="item.concessionType" @change="changeConcession(item)">
                 <el-option label="日期区间免租" value="RENT_FREE" />
                 <el-option label="固定金额优惠" value="FIXED_AMOUNT" />
                 <el-option label="比例优惠" value="PERCENTAGE" />
               </el-select>
-              <el-date-picker v-model="item.startDate" type="date" format="YYYY年MM月DD日" value-format="YYYY-MM-DD" placeholder="开始日期" />
-              <el-date-picker v-model="item.endDate" type="date" format="YYYY年MM月DD日" value-format="YYYY-MM-DD" placeholder="结束日期" />
+              <template v-if="item.applyMode === 'DATE_RANGE'">
+                <el-date-picker v-model="item.startDate" type="date" format="YYYY年MM月DD日" value-format="YYYY-MM-DD" placeholder="开始日期" />
+                <el-date-picker v-model="item.endDate" type="date" format="YYYY年MM月DD日" value-format="YYYY-MM-DD" placeholder="结束日期" />
+              </template>
+              <el-input-number v-else v-model="item.billingPeriodCount" :min="1" placeholder="适用账期数" />
+              <el-input v-if="item.concessionType === 'FIXED_AMOUNT'" v-model="item.fixedAmount" inputmode="decimal" placeholder="优惠金额（元）" />
+              <el-input v-else-if="item.concessionType === 'PERCENTAGE'" v-model="item.discountRate" inputmode="decimal" placeholder="0.1 表示九折" />
               <el-input v-model="item.reason" placeholder="优惠原因" />
               <el-button type="danger" link @click="removeConcession(index)">删除</el-button>
             </div>
           </div>
           <el-empty v-else :image-size="44" description="暂无免租或优惠约定" />
+          <el-alert v-if="concessionError" type="error" :closable="false" :title="concessionError" show-icon />
           <div class="other-grid">
             <el-form-item label="合同附件">
               <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp" :on-change="handleUpload">

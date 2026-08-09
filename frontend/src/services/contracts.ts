@@ -1,5 +1,6 @@
 import { http } from './http'
 import type {
+  ContractConcession,
   ContractDetail,
   ContractDraft,
   ContractFile,
@@ -16,6 +17,42 @@ type ApiResponse<T> = { code: number; message: string; data: T }
 
 const defined = <T>(value: T | '' | null | undefined): value is T => value !== '' && value !== null && value !== undefined
 
+export function createLatestRequestGuard() {
+  let generation = 0
+  return {
+    next: () => ++generation,
+    isCurrent: (candidate: number) => candidate === generation,
+  }
+}
+
+export function normalizeConcessionType(item: ContractConcession, concessionType: ContractConcession['concessionType']): ContractConcession {
+  if (concessionType === 'RENT_FREE') return { concessionType, applyMode: 'DATE_RANGE', startDate: '', endDate: '', reason: item.reason }
+  return { concessionType, applyMode: 'BILLING_PERIODS', billingPeriodCount: 1, ...(concessionType === 'FIXED_AMOUNT' ? { fixedAmount: '' } : { discountRate: '' }), reason: item.reason }
+}
+
+export function contractConcessionError(items: ContractConcession[]) {
+  for (const item of items) {
+    if (!item.reason.trim()) return '请填写优惠原因'
+    if (item.concessionType === 'RENT_FREE') {
+      if (item.applyMode !== 'DATE_RANGE' || !item.startDate || !item.endDate || item.endDate < item.startDate) return '请填写有效的免租日期区间'
+      continue
+    }
+    if (item.applyMode !== 'BILLING_PERIODS' || !Number.isInteger(item.billingPeriodCount) || Number(item.billingPeriodCount) < 1) return '请填写有效的优惠账期数'
+    if (item.concessionType === 'FIXED_AMOUNT' && (!item.fixedAmount || !Number.isFinite(Number(item.fixedAmount)) || Number(item.fixedAmount) < 0)) return '请填写非负的固定优惠金额'
+    if (item.concessionType === 'PERCENTAGE' && (!item.discountRate || !Number.isFinite(Number(item.discountRate)) || Number(item.discountRate) < 0 || Number(item.discountRate) > 1)) return '请填写0至1之间的优惠比例'
+  }
+  return null
+}
+
+const concessionPayload = (item: ContractConcession): ContractConcession => item.concessionType === 'RENT_FREE'
+  ? { concessionType: item.concessionType, applyMode: 'DATE_RANGE', startDate: item.startDate, endDate: item.endDate, reason: item.reason }
+  : { concessionType: item.concessionType, applyMode: 'BILLING_PERIODS', billingPeriodCount: item.billingPeriodCount, ...(item.concessionType === 'FIXED_AMOUNT' ? { fixedAmount: item.fixedAmount } : { discountRate: item.discountRate }), reason: item.reason }
+
+export function buildFixedRentRebatePayload(contract: ContractDetail, input: Record<string, unknown>) {
+  if (contract.status !== 'ACTIVE' || contract.pricingMode !== 'FIXED') throw new Error('退差仅适用于履行中的固定月租合同')
+  return { ...input, contractId: contract.id, sourceType: 'FIXED_RENT_MANUAL', rebateType: 'MANUAL', pricingTierId: undefined }
+}
+
 export function toContractPayload(form: ContractFormModel, role: ContractRole): ContractPayload {
   const payload: ContractPayload = {
     ...(defined(form.externalContractNo) ? { externalContractNo: form.externalContractNo.trim() } : {}),
@@ -28,7 +65,7 @@ export function toContractPayload(form: ContractFormModel, role: ContractRole): 
     ...(defined(form.monthlyRent) ? { monthlyRent: form.monthlyRent } : {}),
     ...(defined(form.depositRequired) ? { depositRequired: form.depositRequired } : {}),
     paymentCycleMonths: form.paymentCycleMonths,
-    concessions: form.concessions,
+    concessions: form.concessions.map(concessionPayload),
     fileAssetIds: [...form.fileAssetIds],
     ...(defined(form.remark) ? { remark: form.remark.trim() } : {}),
   }
@@ -117,7 +154,8 @@ export async function listFixedRentRebates(contractId?: number) {
   })).data.data
 }
 
-export async function submitFixedRentRebate(payload: Record<string, unknown>) {
+export async function submitFixedRentRebate(contract: ContractDetail, input: Record<string, unknown>) {
+  const payload = buildFixedRentRebatePayload(contract, input)
   return (await http.post<ApiResponse<PricingRebate>>('/pricing-rebates', payload)).data.data
 }
 

@@ -3,10 +3,19 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
+import FixedRentRebatePanel from '../../components/contracts/FixedRentRebatePanel.vue'
 import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
-import { toContractPayload } from '../../services/contracts'
-import type { ContractFormModel } from '../../types/contracts'
+import {
+  buildFixedRentRebatePayload,
+  contractConcessionError,
+  createLatestRequestGuard,
+  normalizeConcessionType,
+  toContractPayload,
+} from '../../services/contracts'
+import type { ContractDetail, ContractFormModel } from '../../types/contracts'
+import type { PaymentListItem } from '../../types/payments'
 
 const completeForm = (): ContractFormModel => ({
   externalContractNo: 'ZZ-2026-001',
@@ -104,5 +113,104 @@ describe('固定合同工作区', () => {
     })
 
     expect(wrapper.text()).toContain('请先从合同列表选择合同')
+  })
+})
+
+const activeContract = (): ContractDetail => ({
+  id: 12,
+  contractNo: 'HT202608050012 | 1栋301 | 张三',
+  externalContractNo: null,
+  roomId: 8,
+  room: { id: 8, fullHouseNo: '1栋301' },
+  members: [{ memberRole: 'PRIMARY', tenant: { id: 19, name: '张三' } }],
+  startDate: '2026-08-01',
+  endDate: '2027-07-31',
+  plannedMoveInDate: '2026-08-01',
+  monthlyRent: '2200.00',
+  depositRequired: '4400.00',
+  paymentCycleMonths: 1,
+  status: 'ACTIVE',
+  pricingMode: 'FIXED',
+  commissions: [],
+})
+
+describe('合同工作区复审边界', () => {
+  it('仅允许最新预览请求更新状态', () => {
+    const guard = createLatestRequestGuard()
+    const first = guard.next()
+    const second = guard.next()
+
+    expect(guard.isCurrent(first)).toBe(false)
+    expect(guard.isCurrent(second)).toBe(true)
+    const invalidated = guard.next()
+    expect(guard.isCurrent(second)).toBe(false)
+    expect(guard.isCurrent(invalidated)).toBe(true)
+  })
+
+  it('按优惠类型重置字段、校验并生成无越界字段的载荷', () => {
+    const percentage = normalizeConcessionType({
+      concessionType: 'FIXED_AMOUNT', applyMode: 'DATE_RANGE', startDate: '2026-08-01', endDate: '2026-08-10',
+      fixedAmount: '300.00', reason: '测试',
+    }, 'PERCENTAGE')
+    expect(percentage).toEqual({
+      concessionType: 'PERCENTAGE', applyMode: 'BILLING_PERIODS', billingPeriodCount: 1,
+      discountRate: '', reason: '测试',
+    })
+    expect(contractConcessionError([percentage])).toContain('优惠比例')
+
+    const form = completeForm()
+    form.concessions = [
+      { concessionType: 'RENT_FREE', applyMode: 'DATE_RANGE', startDate: '2026-08-01', endDate: '2026-08-03', reason: '维修免租' },
+      { concessionType: 'FIXED_AMOUNT', applyMode: 'BILLING_PERIODS', billingPeriodCount: 1, fixedAmount: '300.00', reason: '首期优惠' },
+      { concessionType: 'PERCENTAGE', applyMode: 'BILLING_PERIODS', billingPeriodCount: 2, discountRate: '0.10', reason: '两期九折' },
+    ]
+    expect(contractConcessionError(form.concessions)).toBeNull()
+    expect(toContractPayload(form, 'ADMIN').concessions).toEqual(form.concessions)
+  })
+
+  it('仅为履行中的固定月租合同展示并生成退差载荷', () => {
+    const inactive = { ...activeContract(), status: 'PENDING_START' }
+    const tiered = { ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' }
+    const wrapper = mount(FixedRentRebatePanel, {
+      props: { contract: inactive, bills: [], rebates: [], role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+
+    expect(wrapper.text()).toContain('请选择履行中的固定月租合同')
+    expect(wrapper.text()).not.toContain('金额与原因')
+    expect(() => buildFixedRentRebatePayload(inactive, {})).toThrow('履行中的固定月租合同')
+    expect(() => buildFixedRentRebatePayload(tiered, {})).toThrow('履行中的固定月租合同')
+    expect(buildFixedRentRebatePayload(activeContract(), {
+      rentBillId: 99, periodStart: '2026-08-01', periodEnd: '2026-08-31', actualAmount: '100.00',
+      differenceReason: '维修协商', settlementMethod: 'PREPAYMENT_CREDIT',
+    })).toMatchObject({ contractId: 12, sourceType: 'FIXED_RENT_MANUAL', rebateType: 'MANUAL', rentBillId: 99 })
+  })
+
+  it('合同详情展示仅属于当前合同的收款记录', async () => {
+    const payments: PaymentListItem[] = [{
+      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentDate: '2026-08-02', amount: '2200.00',
+      method: 'WECHAT', status: 'CONFIRMED', contract: { id: 12, contractNo: activeContract().contractNo }, tenant: { id: 19, name: '张三' },
+    }]
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), bills: [], files: [], changes: [], payments, role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+    const tab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('收款记录'))
+    await tab!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('SK2026080071')
+    expect(wrapper.text()).toContain('¥2,200.00')
+  })
+
+  it('合同附件提供安全下载动作', async () => {
+    const file = { id: 44, originalName: '合同.pdf', mimeType: 'application/pdf', sizeBytes: '1024' }
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), bills: [], files: [file], changes: [], payments: [], role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+    const tab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('附件'))
+    await tab!.trigger('click')
+    await wrapper.get('[data-test="download-contract-file-44"]').trigger('click')
+    expect(wrapper.emitted('download')?.[0]).toEqual([file])
   })
 })

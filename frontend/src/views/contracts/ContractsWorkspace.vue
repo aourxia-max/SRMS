@@ -14,6 +14,8 @@ import {
   confirmContractDraft,
   confirmFixedContract,
   createContractDraft,
+  createLatestRequestGuard,
+  downloadContractFile,
   getContract,
   getContractBills,
   getContractChanges,
@@ -29,6 +31,7 @@ import {
   uploadContractFile,
 } from '../../services/contracts'
 import { http } from '../../services/http'
+import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import {
   emptyContractForm,
@@ -44,6 +47,7 @@ import {
   type PricingRebate,
   type RentBill,
 } from '../../types/contracts'
+import type { PaymentListItem } from '../../types/payments'
 
 type ApiResponse<T> = { data: T }
 const draftStorageKey = 'srms.currentFixedContractDraftId'
@@ -61,6 +65,7 @@ const bills = ref<RentBill[]>([])
 const files = ref<ContractFile[]>([])
 const changes = ref<unknown[]>([])
 const rebates = ref<PricingRebate[]>([])
+const payments = ref<PaymentListItem[]>([])
 const form = ref<ContractFormModel>(emptyContractForm())
 const preview = ref<ContractPreview | null>(null)
 const previewLoading = ref(false)
@@ -68,6 +73,7 @@ const loading = ref(false)
 const saving = ref(false)
 const currentDraftId = ref<number | null>(null)
 let previewTimer: ReturnType<typeof setTimeout> | null = null
+const previewRequests = createLatestRequestGuard()
 
 const errorMessage = (error: unknown, fallback: string) => {
   const response = (error as { response?: { data?: { message?: string | string[] } } })?.response
@@ -132,18 +138,20 @@ async function selectContract(summary: ContractListItem) {
   selectedContractId.value = summary.id
   loading.value = true
   try {
-    const [detail, contractBills, contractFiles, contractChanges, contractRebates] = await Promise.all([
+    const [detail, contractBills, contractFiles, contractChanges, contractRebates, contractPayments] = await Promise.all([
       getContract(summary.id),
       getContractBills(summary.id),
       getContractFiles(summary.id),
       getContractChanges(summary.id),
       listFixedRentRebates(summary.id),
+      paymentApi.list({ contractId: summary.id }),
     ])
     selectedContract.value = { ...detail, room: summary.room }
     bills.value = contractBills
     files.value = contractFiles
     changes.value = contractChanges
     rebates.value = contractRebates
+    payments.value = contractPayments
     tab.value = 'detail'
   } catch (error) {
     ElMessage.error(errorMessage(error, '合同详情加载失败'))
@@ -209,34 +217,69 @@ async function uploadFile(file: File) {
   }
 }
 
-async function loadPreview() {
+async function downloadFile(file: ContractFile) {
+  if (!selectedContractId.value) return
+  try {
+    const blob = await downloadContractFile(selectedContractId.value, file.id)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.originalName.replace(/[\\/:*?"<>|]/g, '_')
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '合同附件下载失败，请稍后重试'))
+  }
+}
+
+async function loadPreview(generation: number) {
   const payload = toContractPayload(form.value, role)
   if (!payload.startDate || !payload.endDate || payload.endDate < payload.startDate || payload.monthlyRent === undefined || Number(payload.monthlyRent) < 0) {
-    preview.value = null
+    if (previewRequests.isCurrent(generation)) {
+      preview.value = null
+      previewLoading.value = false
+    }
     return
   }
-  previewLoading.value = true
+  if (previewRequests.isCurrent(generation)) previewLoading.value = true
   try {
-    preview.value = await previewFixedContract(payload)
+    const result = await previewFixedContract(payload)
+    if (previewRequests.isCurrent(generation)) preview.value = result
   } catch {
-    preview.value = null
+    if (previewRequests.isCurrent(generation)) preview.value = null
   } finally {
-    previewLoading.value = false
+    if (previewRequests.isCurrent(generation)) previewLoading.value = false
   }
 }
 
 watch(
   () => [form.value.startDate, form.value.endDate, form.value.monthlyRent, JSON.stringify(form.value.concessions)],
   () => {
+    const generation = previewRequests.next()
+    preview.value = null
+    previewLoading.value = false
     if (previewTimer) clearTimeout(previewTimer)
-    previewTimer = setTimeout(loadPreview, 300)
+    previewTimer = setTimeout(() => loadPreview(generation), 300)
   },
 )
+
+async function selectRebateContract(id: number) {
+  const summary = contracts.value.find((item) => item.id === id && item.status === 'ACTIVE' && item.pricingMode === 'FIXED')
+  if (!summary) {
+    ElMessage.warning('请选择履行中的固定月租合同')
+    return
+  }
+  await selectContract(summary)
+  tab.value = 'fixed-rebate'
+}
 
 async function submitRebate(payload: Record<string, unknown>) {
   saving.value = true
   try {
-    await submitFixedRentRebate(payload)
+    if (!selectedContract.value) throw new Error('请先选择合同')
+    await submitFixedRentRebate(selectedContract.value, payload)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
     ElMessage.success('固定月租退差申请已提交')
   } catch (error) {
@@ -278,8 +321,8 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
         <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="tab = 'list'" @upload-file="uploadFile" />
         <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="previewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :role="role" :loading="loading" @back="tab = 'list'" @rebate="tab = 'fixed-rebate'" />
-      <FixedRentRebatePanel v-else :contract="selectedContract" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="tab = 'list'" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="tab = 'list'" @rebate="tab = 'fixed-rebate'" @download="downloadFile" />
+      <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="tab = 'list'" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
     </main>
   </el-config-provider>
 </template>

@@ -1,22 +1,24 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
-import { uploadPricingRebateProof } from '../../services/contracts'
-import type { ContractDetail, ContractRole, PricingRebate, RentBill } from '../../types/contracts'
+import { buildFixedRentRebatePayload, uploadPricingRebateProof } from '../../services/contracts'
+import type { ContractDetail, ContractListItem, ContractRole, PricingRebate, RentBill } from '../../types/contracts'
 
 const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
   bills?: RentBill[]
   rebates?: PricingRebate[]
+  contracts?: ContractListItem[]
   role: ContractRole
   saving?: boolean
-}>(), { contract: null, bills: () => [], rebates: () => [], saving: false })
+}>(), { contract: null, bills: () => [], rebates: () => [], contracts: () => [], saving: false })
 
 const emit = defineEmits<{
   back: []
   submit: [payload: Record<string, unknown>]
   approve: [id: number]
   reject: [id: number]
+  'select-contract': [id: number]
 }>()
 
 const proofUploading = ref(false)
@@ -27,10 +29,12 @@ const form = reactive({
   refundDate: '', refundMethod: 'WECHAT', remark: '', proofFileIds: [] as number[],
 })
 
+const eligibleContracts = computed(() => props.contracts.filter((item) => item.status === 'ACTIVE' && item.pricingMode === 'FIXED'))
+const eligibleContract = computed(() => props.contract?.status === 'ACTIVE' && props.contract.pricingMode === 'FIXED' ? props.contract : null)
 const selectedBill = computed(() => props.bills.find((item) => item.id === form.rentBillId))
 const eligibleBills = computed(() => props.bills.filter((item) => !['VOIDED', 'REFUNDED'].includes(item.status || '')))
 const canSubmit = computed(() => Boolean(
-  props.contract?.status === 'ACTIVE' && form.rentBillId && form.periodStart && form.periodEnd &&
+  eligibleContract.value && form.rentBillId && form.periodStart && form.periodEnd &&
   form.periodEnd >= form.periodStart && form.actualAmount && Number(form.actualAmount) >= 0 && form.differenceReason.trim() &&
   (form.settlementMethod === 'PREPAYMENT_CREDIT' || (form.refundDate && form.refundMethod && form.proofFileIds.length)),
 ))
@@ -57,15 +61,12 @@ async function uploadProof(file: UploadFile) {
 }
 
 function submit() {
-  const contract = props.contract
+  const contract = eligibleContract.value
   if (!contract || !canSubmit.value) {
     ElMessage.warning('请完整填写退差金额、原因、处理信息和退款凭证')
     return
   }
-  emit('submit', {
-    contractId: contract.id,
-    sourceType: 'FIXED_RENT_MANUAL',
-    rebateType: 'MANUAL',
+  emit('submit', buildFixedRentRebatePayload(contract, {
     rentBillId: form.rentBillId,
     periodStart: form.periodStart,
     periodEnd: form.periodEnd,
@@ -78,21 +79,24 @@ function submit() {
       proofFileIds: form.proofFileIds,
     } : {}),
     ...(form.remark ? { remark: form.remark } : {}),
-  })
+  }))
 }
 </script>
 
 <template>
   <section>
-    <el-empty v-if="!contract" description="请先从合同列表选择合同">
+    <el-empty v-if="!eligibleContract" description="请选择履行中的固定月租合同">
+      <el-select v-if="eligibleContracts.length" placeholder="选择可退差合同" @change="(id: number) => emit('select-contract', id)">
+        <el-option v-for="item in eligibleContracts" :key="item.id" :value="item.id" :label="`${item.contractNo}｜${item.room?.fullHouseNo || `房源${item.roomId}`}`" />
+      </el-select>
       <el-button type="primary" @click="emit('back')">返回合同列表</el-button>
     </el-empty>
     <template v-else>
-      <header class="page-head"><div><h1>固定月租合同退差</h1><p>{{ contract.contractNo }}｜{{ contract.room?.fullHouseNo || `房源${contract.roomId}` }}</p></div><el-tag type="warning" effect="light">管理员提交 · 超级管理员确认</el-tag></header>
+      <header class="page-head"><div><h1>固定月租合同退差</h1><p>{{ eligibleContract.contractNo }}｜{{ eligibleContract.room?.fullHouseNo || `房源${eligibleContract.roomId}` }}</p></div><el-tag type="warning" effect="light">管理员提交 · 超级管理员确认</el-tag></header>
       <div class="rebate-grid">
         <div>
           <section class="contract-card">
-            <header class="card-head"><h2>退差核验</h2><el-tag :type="contract.status === 'ACTIVE' ? 'success' : 'danger'">{{ contract.status === 'ACTIVE' ? '合同履行中' : '当前合同不可提交' }}</el-tag></header>
+            <header class="card-head"><h2>退差核验</h2><el-tag type="success">合同履行中</el-tag></header>
             <div class="checks"><span>✓ 仅适用于固定月租合同</span><span>✓ 必须关联有效租金账单</span><span>✓ 实际金额由管理员按真实协商填写</span></div>
           </section>
           <section class="contract-card">
