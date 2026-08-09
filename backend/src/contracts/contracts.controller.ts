@@ -24,6 +24,7 @@ import { SubmitContractChangeDto } from './dto/submit-contract-change.dto';
 import { RejectContractChangeDto } from './dto/reject-contract-change.dto';
 import { SaveContractDraftDto } from './dto/save-contract-draft.dto';
 import { ContractDraftsService } from './contract-drafts.service';
+import { PreviewFixedContractDto } from './dto/preview-fixed-contract.dto';
 
 @Controller('contracts')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -83,11 +84,44 @@ export class ContractsController {
     return {
       code: 200,
       message: 'success',
-      data: await this.contracts.createFixedContract({
+      data: await this.contracts.createFixedContract(
+        {
+          ...dto,
+          startDate: new Date(dto.startDate),
+          endDate: new Date(dto.endDate),
+          plannedMoveInDate: dto.plannedMoveInDate
+            ? new Date(dto.plannedMoveInDate)
+            : undefined,
+        },
+        user,
+      ),
+    };
+  }
+
+  @Post('fixed/preview')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  previewFixed(@Body() dto: PreviewFixedContractDto) {
+    return {
+      code: 200,
+      message: 'success',
+      data: this.contracts.previewFixedContract({
         ...dto,
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
       }),
+    };
+  }
+
+  @Post('drafts/:id/confirm')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async confirmDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contracts.confirmFixedContractDraft(id, user),
     };
   }
 

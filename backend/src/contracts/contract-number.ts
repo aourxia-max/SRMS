@@ -21,7 +21,14 @@ export function buildContractNumber(
   const room = cleanPart(fullHouseNo, '未登记房源');
   const tenant = cleanPart(tenantName, '未登记住户');
   const prefix = `HT${date}${sequenceText} | ${room} | `;
-  return `${prefix}${tenant}`.slice(0, MAX_CONTRACT_NUMBER_LENGTH);
+  return `${prefix}${tenant}`;
+}
+
+export function buildBillNumber(
+  contractNumber: string,
+  periodSequence: number,
+): string {
+  return `${contractNumber}-B${String(periodSequence).padStart(3, '0')}`;
 }
 
 export function buildTemporaryContractNumber(): string {

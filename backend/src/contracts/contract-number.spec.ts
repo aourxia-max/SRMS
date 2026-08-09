@@ -1,4 +1,5 @@
 import {
+  buildBillNumber,
   buildContractNumber,
   buildTemporaryContractNumber,
 } from './contract-number';
@@ -22,15 +23,18 @@ describe('contract number generation', () => {
     ).toBe('HT202608050002 | 2栋301 | 未登记住户');
   });
 
-  it('keeps the stored contract number within the database limit', () => {
+  it('preserves every legal component in long final contract and bill numbers', () => {
     const number = buildContractNumber(
       3,
       new Date('2026-08-05'),
       '1栋101',
-      '这是一个非常长的住户姓名用于验证合同编号长度限制',
+      '这是一个非常长的住户姓名用于验证合同编号不再按照旧字段长度截断',
     );
-    expect(number.length).toBeLessThanOrEqual(40);
-    expect(number.startsWith('HT202608050003 | 1栋101 | ')).toBe(true);
+    expect(number).toBe(
+      'HT202608050003 | 1栋101 | 这是一个非常长的住户姓名用于验证合同编号不再按照旧字段长度截断',
+    );
+    expect(number.length).toBeGreaterThan(40);
+    expect(buildBillNumber(number, 12)).toBe(`${number}-B012`);
   });
 
   it('creates unique temporary numbers for the transaction insert', () => {
