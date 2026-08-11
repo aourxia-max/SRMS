@@ -6,6 +6,7 @@ import CheckoutWorkspace from "./CheckoutWorkspace.vue";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
 import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
+import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
 vi.mock("../../services/checkout", () => ({
   checkoutApi: {
     contracts: vi
@@ -34,6 +35,49 @@ vi.mock("../../services/checkout", () => ({
         finalReceivable: "0.00",
       },
     ]),
+    completedContracts: vi.fn().mockResolvedValue({
+      items: [
+        {
+          settlementId: 9,
+          settlementNo: "TZ202608010009",
+          contractNo: "HT202608010001",
+          roomFullHouseNo: "2栋301",
+          tenantName: "李四",
+          actualCheckoutDate: "2026-08-01T00:00:00.000Z",
+          refundAmount: "1300.00",
+          completedAt: "2026-08-02T09:30:00.000Z",
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    }),
+    detail: vi.fn().mockResolvedValue({
+      id: 9,
+      settlementNo: "TZ202608010009",
+      status: "APPROVED",
+      contractId: 1,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      finalReceivable: "0.00",
+      contract: {
+        id: 1,
+        contractNo: "HT202608010001",
+        status: "ENDED",
+        room: { id: 3, fullHouseNo: "2栋301" },
+      },
+      targetRoomStatus: "EMPTY",
+      items: [],
+      depositRefunds: [
+        {
+          id: 6,
+          approvalStatus: "APPROVED",
+          refundNo: "TK202608020001",
+          refundAmount: "0.00",
+          files: [{ fileAssetId: 77 }],
+        },
+      ],
+    }),
     approve: vi.fn(),
   },
 }));
@@ -102,6 +146,60 @@ describe("CheckoutTopNav", () => {
     await wrapper.get("button:nth-child(2)").trigger("click");
 
     expect(wrapper.text()).toContain("TZ202608010001");
+  });
+  it("renders the fourth completed-contracts tab and loads only read-only history", async () => {
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("已退租合同");
+    expect(wrapper.text()).toContain("HT202608010001");
+    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(false);
+  });
+  it("opens the completed settlement detail without any editing action", async () => {
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="completed-contract-detail-9"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("只读详情");
+    expect(wrapper.text()).toContain("房态结果");
+    expect(wrapper.text()).toContain("凭证编号：77");
+    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(false);
+  });  it("sends the keyword search and opens an existing checkout detail in read-only mode", async () => {
+    const completedResult = {
+      items: [
+        {
+          settlementId: 9,
+          settlementNo: "TZ202608010009",
+          contractNo: "HT202608010001",
+          roomFullHouseNo: "2栋301",
+          tenantName: "李四",
+          actualCheckoutDate: "2026-08-01T00:00:00.000Z",
+          refundAmount: "1300.00",
+          completedAt: "2026-08-02T09:30:00.000Z",
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    };
+    const wrapper = mount(CompletedCheckoutContractsPanel, {
+      props: { result: completedResult },
+    });
+
+    await wrapper.get('[data-test="completed-contract-search"]').setValue("李四");
+    await wrapper.get('[data-test="completed-contract-search-submit"]').trigger("click");
+    expect(wrapper.emitted("search")).toEqual([["李四"]]);
+    await wrapper.get('[data-test="completed-contract-detail-9"]').trigger("click");
+    expect(wrapper.emitted("select")).toEqual([[9]]);
   });
   it("shows zero-refund final confirmation without proof upload for a super admin", () => {
     const wrapper = mount(CheckoutRefundPanel, {

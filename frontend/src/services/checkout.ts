@@ -2,6 +2,7 @@ import { http } from "./http";
 import type {
   CheckoutContract,
   CheckoutSettlement,
+  CompletedCheckoutContractsResult,
 } from "../views/checkout/checkout-types";
 
 type Envelope<T> = { code: number; message: string; data: T };
@@ -20,6 +21,17 @@ export const checkoutApi = {
   settlements: async () =>
     data(
       await http.get<Envelope<CheckoutSettlement[]>>("/checkout-settlements"),
+    ),
+  completedContracts: async (params: {
+    keyword?: string;
+    page?: number;
+    pageSize?: number;
+  }) =>
+    data(
+      await http.get<Envelope<CompletedCheckoutContractsResult>>(
+        "/checkout-settlements/completed-contracts",
+        { params },
+      ),
     ),
   detail: async (id: number) =>
     data(

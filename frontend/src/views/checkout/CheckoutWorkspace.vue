@@ -4,12 +4,15 @@ import { checkoutApi } from "../../services/checkout";
 import { useSessionStore } from "../../stores/session";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
+import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
 import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
 import type {
   CheckoutContract,
   CheckoutSettlement,
   CheckoutTab,
+  CompletedCheckoutContractsResult,
+  DepositRefund,
 } from "./checkout-types";
 
 const session = useSessionStore();
@@ -24,6 +27,15 @@ const financeSnapshot = ref<{
   futureBillCount: number;
 }>();
 const loadingContracts = ref(false);
+const completedContracts = ref<CompletedCheckoutContractsResult>({
+  items: [],
+  page: 1,
+  pageSize: 20,
+  total: 0,
+});
+const completedKeyword = ref("");
+const completedDetail = ref<CheckoutSettlement>();
+const loadingCompletedContracts = ref(false);
 const actionError = ref("");
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const isSuper = computed(() => session.user?.role === "SUPER_ADMIN");
@@ -60,6 +72,47 @@ async function loadData() {
   } finally {
     loadingContracts.value = false;
   }
+}
+async function loadCompletedContracts(
+  page = 1,
+  keyword = completedKeyword.value,
+) {
+  loadingCompletedContracts.value = true;
+  actionError.value = "";
+  try {
+    completedKeyword.value = keyword;
+    completedContracts.value = await checkoutApi.completedContracts({
+      keyword: keyword || undefined,
+      page,
+      pageSize: completedContracts.value.pageSize,
+    });
+  } catch (error) {
+    actionError.value = message(error, "已退租合同加载失败，请稍后重试");
+  } finally {
+    loadingCompletedContracts.value = false;
+  }
+}
+async function openCompletedDetail(settlementId: number) {
+  actionError.value = "";
+  try {
+    completedDetail.value = await checkoutApi.detail(settlementId);
+  } catch (error) {
+    actionError.value = message(error, "退租结算详情加载失败，请稍后重试");
+  }
+}
+function changeTab(tab: CheckoutTab) {
+  activeTab.value = tab;
+  completedDetail.value = undefined;
+  if (tab === "completed") void loadCompletedContracts();
+}
+function refundProofIds(refund: DepositRefund) {
+  return refund.files?.map((file) => file.fileAssetId).join("、") || "无";
+}
+function formatMoney(value: string) {
+  return Number(value || 0).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 async function loadFinanceSnapshot(contractId: number) {
   try {
@@ -153,7 +206,7 @@ onMounted(loadData);
         <h1>退租结算</h1>
         <p>按发起退租、退租结算、押金退还确认三个步骤完成交接。</p>
       </div>
-      <CheckoutTopNav :active-tab="activeTab" @change="activeTab = $event" />
+      <CheckoutTopNav :active-tab="activeTab" @change="changeTab" />
     </header>
     <p v-if="actionError" class="checkout-workspace__error" role="alert">
       {{ actionError }}
@@ -175,7 +228,7 @@ onMounted(loadData);
       @return-to-draft="returnToDraft"
     />
     <CheckoutRefundPanel
-      v-else
+      v-else-if="activeTab === 'refund'"
       ref="refundPanel"
       :settlement="approvedSettlement"
       :role="isSuper ? 'SUPER_ADMIN' : 'ADMIN'"
@@ -184,6 +237,46 @@ onMounted(loadData);
       @approve="approveRefund"
       @complete-zero="completeZeroRefund"
     />
+    <template v-else>
+      <CompletedCheckoutContractsPanel
+        :result="completedContracts"
+        :loading="loadingCompletedContracts"
+        @search="loadCompletedContracts(1, $event)"
+        @page-change="loadCompletedContracts($event)"
+        @select="openCompletedDetail"
+      />
+      <section v-if="completedDetail" class="checkout-workspace__readonly-detail">
+        <header>
+          <div>
+            <span>只读详情</span>
+            <h2>{{ completedDetail.settlementNo }}</h2>
+          </div>
+          <button type="button" @click="completedDetail = undefined">关闭</button>
+        </header>
+        <div class="checkout-workspace__readonly-grid">
+          <article>
+            <h3>合同与房源</h3>
+            <p>合同编号：{{ completedDetail.contract?.contractNo || "—" }}</p>
+            <p>房源：{{ completedDetail.contract?.room?.fullHouseNo || "—" }}</p>
+            <p>房态结果：{{ completedDetail.targetRoomStatus || "—" }}</p>
+          </article>
+          <article>
+            <h3>结算项目</h3>
+            <p v-if="!completedDetail.items?.length">本次无结算项目</p>
+            <p v-for="item in completedDetail.items" :key="item.id || item.description">
+              {{ item.description || item.itemType }}：¥{{ formatMoney(item.amount) }}
+            </p>
+          </article>
+          <article>
+            <h3>退款凭证</h3>
+            <p v-if="!completedDetail.depositRefunds?.length">本次无退款</p>
+            <p v-for="refund in completedDetail.depositRefunds" :key="refund.id">
+              {{ refund.refundNo || `退款单 #${refund.id}` }}：¥{{ formatMoney(refund.refundAmount) }}，凭证编号：{{ refundProofIds(refund) }}
+            </p>
+          </article>
+        </div>
+      </section>
+    </template>
   </main>
 </template>
 
@@ -227,6 +320,26 @@ onMounted(loadData);
   color: #d9363e;
   background: #fff2f0;
 }
+.checkout-workspace__readonly-detail {
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid #e4eaf3;
+  border-radius: 12px;
+  background: #fff;
+}
+.checkout-workspace__readonly-detail header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.checkout-workspace__readonly-detail h2 { margin: 6px 0 0; font-size: 18px; }
+.checkout-workspace__readonly-detail header span { color: #66758b; font-size: 13px; }
+.checkout-workspace__readonly-detail header button { min-height: 34px; padding: 0 12px; border: 1px solid #d9e1ec; border-radius: 6px; color: #39465a; background: #fff; font: inherit; cursor: pointer; }
+.checkout-workspace__readonly-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+.checkout-workspace__readonly-grid article { padding: 16px; border-radius: 8px; background: #f7f9fc; }
+.checkout-workspace__readonly-grid h3 { margin: 0 0 10px; font-size: 15px; }
+.checkout-workspace__readonly-grid p { margin: 6px 0; color: #526178; font-size: 14px; line-height: 1.55; }
 @media (max-width: 760px) {
   .checkout-workspace {
     padding: 16px;
@@ -235,5 +348,6 @@ onMounted(loadData);
     align-items: stretch;
     flex-direction: column;
   }
+  .checkout-workspace__readonly-grid { grid-template-columns: 1fr; }
 }
 </style>

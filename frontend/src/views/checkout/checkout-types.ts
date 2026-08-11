@@ -1,4 +1,4 @@
-export type CheckoutTab = "initiate" | "settlement" | "refund";
+export type CheckoutTab = "initiate" | "settlement" | "refund" | "completed";
 
 export type CheckoutContract = {
   id: number;
@@ -49,4 +49,21 @@ export type CheckoutSettlement = {
   contract?: CheckoutContract;
   items?: CheckoutSettlementItem[];
   depositRefunds?: DepositRefund[];
+};
+export type CompletedCheckoutContract = {
+  settlementId: number;
+  settlementNo: string;
+  contractNo: string;
+  roomFullHouseNo: string;
+  tenantName: string;
+  actualCheckoutDate: string | null;
+  refundAmount: string;
+  completedAt: string | null;
+};
+
+export type CompletedCheckoutContractsResult = {
+  items: CompletedCheckoutContract[];
+  page: number;
+  pageSize: number;
+  total: number;
 };

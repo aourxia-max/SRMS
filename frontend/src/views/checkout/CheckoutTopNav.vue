@@ -1,5 +1,5 @@
 <script setup lang="ts">
-type CheckoutTab = 'initiate' | 'settlement' | 'refund'
+import type { CheckoutTab } from "./checkout-types";
 
 defineProps<{ activeTab: CheckoutTab }>()
 const emit = defineEmits<{ change: [tab: CheckoutTab] }>()
@@ -8,6 +8,7 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
   { key: 'initiate', label: '1 发起退租' },
   { key: 'settlement', label: '2 退租结算' },
   { key: 'refund', label: '3 押金退还确认' },
+  { key: 'completed', label: '4 已退租合同' },
 ]
 </script>
 
@@ -19,6 +20,7 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
       type="button"
       class="checkout-top-nav__item"
       :class="{ 'is-active': activeTab === tab.key }"
+      :data-test="`checkout-tab-${tab.key}`"
       :aria-current="activeTab === tab.key ? 'page' : undefined"
       @click="emit('change', tab.key)"
     >
