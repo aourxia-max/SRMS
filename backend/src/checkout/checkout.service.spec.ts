@@ -44,4 +44,41 @@ describe('CheckoutService', () => {
       BadRequestException,
     );
   });
+  it('keeps contract and room pending checkout after settlement approval', async () => {
+    const contractUpdate = jest.fn();
+    const roomUpdate = jest.fn();
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'PENDING',
+          actualCheckoutDate: new Date('2026-08-01'),
+          items: [],
+          contract: { room: { id: 7 }, bills: [] },
+        }),
+        update: jest.fn().mockResolvedValue({ id: 1, status: 'APPROVED' }),
+      },
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        update: contractUpdate,
+      },
+      room: { update: roomUpdate },
+      roomStatusHistory: { create: jest.fn() },
+      rentBill: { update: jest.fn(), updateMany: jest.fn() },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const service = new CheckoutService({
+      db: { $transaction: jest.fn((callback) => callback(tx)) },
+    } as never);
+
+    await service.approve(1, { ...user, role: 'SUPER_ADMIN' });
+
+    expect(contractUpdate).not.toHaveBeenCalled();
+    expect(roomUpdate).not.toHaveBeenCalled();
+  });
 });

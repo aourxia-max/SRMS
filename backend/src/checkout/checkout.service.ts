@@ -272,12 +272,6 @@ export class CheckoutService {
           approvedAt: new Date(),
         },
       });
-      if (
-        depositBalance.isZero() &&
-        finalReceivable.isZero() &&
-        new Prisma.Decimal(prepayment?.balanceAfter ?? 0).isZero()
-      )
-        await this.completeWithoutDepositRefund(tx, updated, user);
       return updated;
     });
   }
