@@ -77,7 +77,7 @@ describe('固定合同工作区', () => {
     await nextTick()
 
     expect(updateCount()).toBe(1)
-    expect(wrapper.props('modelValue').roomId).toBe(8)
+    expect((wrapper.vm.$props as { modelValue: ContractFormModel }).modelValue.roomId).toBe(8)
     expect(roomSelect.props('modelValue')).toBe(8)
   })
 
