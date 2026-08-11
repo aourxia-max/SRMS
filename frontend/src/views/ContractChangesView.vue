@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useSessionStore } from '../stores/session'
 import { http } from '../services/http'
 import { contractChangeSubmitErrorMessage } from './contract-change-submit'
+import { contractChangeStatusLabel, contractChangeTypeLabel } from './contract-change-presentation'
 
 type Concession = {
   concessionType: 'RENT_FREE' | 'FIXED_AMOUNT' | 'PERCENTAGE'
@@ -68,7 +69,20 @@ async function submit() {
     ElMessage.error(contractChangeSubmitErrorMessage(error))
   }
 }
-async function approve(id: number) { await http.post(`/contracts/changes/${id}/approve`); await loadChanges() }
+async function approve(id: number) {
+  try {
+    await http.post(`/contracts/changes/${id}/approve`)
+    await loadChanges()
+    ElMessage.success('合同变更已确认')
+  } catch (error) {
+    ElMessage.error(
+      contractChangeSubmitErrorMessage(
+        error,
+        '合同变更确认失败，请检查生效日期与收款状态',
+      ),
+    )
+  }
+}
 async function reject(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/contracts/changes/${id}/reject`, { reason }); await loadChanges() } }
 onMounted(loadContracts)
 </script>
@@ -80,6 +94,6 @@ onMounted(loadContracts)
       <template v-if="form.changeType === 'CONCESSION'"><el-divider>完整优惠规则列表</el-divider><p>这里展示当前有效规则。可修改、删除或新增；提交后会替换该合同的有效优惠规则。</p><el-button size="small" @click="addConcession">新增优惠规则</el-button><el-table :data="currentConcessions"><el-table-column label="类型"><template #default="{ row }"><el-select v-model="row.concessionType" @change="changeConcessionType(row)"><el-option label="日期区间免租" value="RENT_FREE" /><el-option label="固定金额" value="FIXED_AMOUNT" /><el-option label="比例优惠" value="PERCENTAGE" /></el-select></template></el-table-column><el-table-column label="适用范围"><template #default="{ row }"><template v-if="row.applyMode === 'DATE_RANGE'"><el-date-picker v-model="row.startDate" value-format="YYYY-MM-DD" type="date" /><el-date-picker v-model="row.endDate" value-format="YYYY-MM-DD" type="date" /></template><el-input-number v-else v-model="row.billingPeriodCount" :min="1" /></template></el-table-column><el-table-column label="金额/比例"><template #default="{ row }"><el-input v-if="row.concessionType === 'FIXED_AMOUNT'" v-model="row.fixedAmount" /><el-input v-else-if="row.concessionType === 'PERCENTAGE'" v-model="row.discountRate" placeholder="0.1 表示九折" /><span v-else>按重叠天数计算</span></template></el-table-column><el-table-column label="原因"><template #default="{ row }"><el-input v-model="row.reason" /></template></el-table-column><el-table-column label="操作"><template #default="{ $index }"><el-button size="small" @click="removeConcession($index)">删除</el-button></template></el-table-column></el-table></template>
       <el-button style="margin-top: 16px" type="primary" @click="submit">提交变更</el-button>
     </el-card>
-    <el-card header="变更记录" style="margin-top: 16px"><el-empty v-if="!selectedContractId" description="请先选择合同" /><el-table v-else :data="changes"><el-table-column prop="changeNo" label="变更编号" /><el-table-column prop="changeType" label="类型" /><el-table-column prop="effectiveDate" label="生效日期" /><el-table-column prop="reason" label="原因" /><el-table-column prop="approvalStatus" label="状态" /><el-table-column v-if="isSuperAdmin" label="审批"><template #default="{ row }"><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="primary" @click="approve(row.id)">确认</el-button><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="danger" @click="reject(row.id)">驳回</el-button></template></el-table-column></el-table></el-card>
+    <el-card header="变更记录" style="margin-top: 16px"><el-empty v-if="!selectedContractId" description="请先选择合同" /><el-table v-else :data="changes"><el-table-column prop="changeNo" label="变更编号" /><el-table-column label="类型"><template #default="{ row }">{{ contractChangeTypeLabel(row.changeType) }}</template></el-table-column><el-table-column prop="effectiveDate" label="生效日期" /><el-table-column prop="reason" label="原因" /><el-table-column label="状态"><template #default="{ row }">{{ contractChangeStatusLabel(row.approvalStatus) }}</template></el-table-column><el-table-column v-if="isSuperAdmin" label="审批"><template #default="{ row }"><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="primary" @click="approve(row.id)">确认</el-button><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="danger" @click="reject(row.id)">驳回</el-button></template></el-table-column></el-table></el-card>
   </main>
 </template>
