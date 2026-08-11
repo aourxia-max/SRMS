@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import ElementPlus, { ElOption, ElSelect } from 'element-plus'
+import { nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
@@ -17,7 +18,7 @@ import {
   normalizeConcessionType,
   toContractPayload,
 } from '../../services/contracts'
-import type { ContractDetail, ContractFormModel } from '../../types/contracts'
+import { emptyContractForm, type ContractDetail, type ContractFormModel } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
 const completeForm = (): ContractFormModel => ({
@@ -37,7 +38,64 @@ const completeForm = (): ContractFormModel => ({
   commission: { recipientName: '员工A', amount: '800.00' },
 })
 
+const contractFormRooms = [
+  { id: 8, fullHouseNo: '1栋301', roomStatus: 'VACANT' },
+  { id: 22, fullHouseNo: '2栋602', roomStatus: 'PENDING_MOVE_IN' },
+]
+
+function mountContractFormWithParentFeedback(initial: ContractFormModel) {
+  let updateCount = 0
+  let wrapper: ReturnType<typeof mount>
+  const onUpdate = async (value: ContractFormModel) => {
+    updateCount += 1
+    if (updateCount <= 5) {
+      await wrapper.setProps({ modelValue: value })
+    }
+  }
+
+  wrapper = mount(ContractFormPanel, {
+    props: {
+      role: 'SUPER_ADMIN',
+      modelValue: initial,
+      rooms: contractFormRooms,
+      tenants: [],
+      'onUpdate:modelValue': onUpdate,
+    },
+    global: { plugins: [ElementPlus] },
+  })
+
+  return { wrapper, updateCount: () => updateCount }
+}
+
 describe('固定合同工作区', () => {
+  it('选择房源只向父页面发送一次有效更新且不会形成反馈循环', async () => {
+    const { wrapper, updateCount } = mountContractFormWithParentFeedback(emptyContractForm())
+    const roomSelect = wrapper.findAllComponents(ElSelect)[0]
+
+    await roomSelect.vm.$emit('update:modelValue', 8)
+    await flushPromises()
+    await nextTick()
+
+    expect(updateCount()).toBe(1)
+    expect(wrapper.props('modelValue').roomId).toBe(8)
+    expect(roomSelect.props('modelValue')).toBe(8)
+  })
+
+  it('父页面重置或恢复草稿时只同步到子表单而不反向重复发送', async () => {
+    const { wrapper, updateCount } = mountContractFormWithParentFeedback(completeForm())
+    const roomSelect = wrapper.findAllComponents(ElSelect)[0]
+
+    await wrapper.setProps({ modelValue: emptyContractForm() })
+    await flushPromises()
+    expect(roomSelect.props('modelValue')).toBeNull()
+    expect(updateCount()).toBe(0)
+
+    await wrapper.setProps({ modelValue: { ...completeForm(), roomId: 22 } })
+    await flushPromises()
+    expect(roomSelect.props('modelValue')).toBe(22)
+    expect(updateCount()).toBe(0)
+  })
+
   it('仅展示四项固定合同导航，不出现阶梯功能', () => {
     const wrapper = mount(ContractTopNav, {
       props: { modelValue: 'list' },
