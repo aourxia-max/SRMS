@@ -25,6 +25,22 @@ export class CheckoutController {
   @Get() async list() {
     return { code: 200, message: 'success', data: await this.checkout.list() };
   }
+  @Get('contract/:contractId/finance-snapshot')
+  async financeSnapshot(@Param('contractId', ParseIntPipe) contractId: number) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.getFinanceSnapshot(contractId),
+    };
+  }
+  @Get(':id')
+  async detail(@Param('id', ParseIntPipe) id: number) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.getDetail(id),
+    };
+  }
   @Post('contract/:contractId/initiate')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async initiate(
@@ -61,6 +77,18 @@ export class CheckoutController {
       code: 200,
       message: 'success',
       data: await this.checkout.approve(id, user),
+    };
+  }
+  @Post(':id/complete-zero-refund')
+  @Roles(UserRole.SUPER_ADMIN)
+  async completeZeroRefund(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.completeZeroRefund(id, user),
     };
   }
   @Post(':id/reject')

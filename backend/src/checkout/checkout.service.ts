@@ -18,6 +18,84 @@ export class CheckoutService {
       orderBy: { id: 'desc' },
     });
   }
+  async getFinanceSnapshot(contractId: number, at = new Date()) {
+    const contract = await this.prisma.db.contract.findUniqueOrThrow({
+      where: { id: contractId },
+      include: { bills: true },
+    });
+    const [deposit, prepayment] = await Promise.all([
+      this.prisma.db.depositTransaction.findFirst({
+        where: { contractId },
+        orderBy: { id: 'desc' },
+      }),
+      this.prisma.db.prepaymentTransaction.findFirst({
+        where: { contractId },
+        orderBy: { id: 'desc' },
+      }),
+    ]);
+    const validBills = contract.bills.filter(
+      (bill) => !['VOIDED', 'REFUNDED'].includes(bill.status),
+    );
+    const currentBills = validBills.filter((bill) => bill.periodStart <= at);
+    return {
+      depositBalance: this.money(deposit?.balanceAfter ?? 0),
+      rentOutstanding: this.money(
+        currentBills.reduce(
+          (sum, bill) => sum.plus(bill.outstandingAmount),
+          new Prisma.Decimal(0),
+        ),
+      ),
+      prepaymentBalance: this.money(prepayment?.balanceAfter ?? 0),
+      futureBillCount: validBills.filter((bill) => bill.periodStart > at)
+        .length,
+    };
+  }
+  async getDetail(id: number) {
+    const settlement =
+      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        include: {
+          contract: { include: { room: true } },
+          items: { orderBy: { sortOrder: 'asc' } },
+          depositRefunds: {
+            select: {
+              id: true,
+              refundNo: true,
+              refundAmount: true,
+              refundDate: true,
+              refundMethod: true,
+              approvalStatus: true,
+              submittedAt: true,
+              approvedAt: true,
+              files: { select: { fileAssetId: true } },
+            },
+          },
+        },
+      });
+    return {
+      ...settlement,
+      rentReceivable: this.money(settlement.rentReceivable),
+      rentReceived: this.money(settlement.rentReceived),
+      rentOutstanding: this.money(settlement.rentOutstanding),
+      prepaymentBalance: this.money(settlement.prepaymentBalance),
+      depositBalance: this.money(settlement.depositBalance),
+      depositOffsetAmount: this.money(settlement.depositOffsetAmount),
+      otherDeductionAmount: this.money(settlement.otherDeductionAmount),
+      depositRefundableAmount: this.money(settlement.depositRefundableAmount),
+      prepaymentRefundableAmount: this.money(
+        settlement.prepaymentRefundableAmount,
+      ),
+      finalReceivable: this.money(settlement.finalReceivable),
+      items: settlement.items.map((item) => ({
+        ...item,
+        amount: this.money(item.amount),
+      })),
+      depositRefunds: settlement.depositRefunds.map((refund) => ({
+        ...refund,
+        refundAmount: this.money(refund.refundAmount),
+      })),
+    };
+  }
   async initiate(contractId: number, dto: InitiateCheckoutDto, user: AuthUser) {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
@@ -272,13 +350,36 @@ export class CheckoutService {
           approvedAt: new Date(),
         },
       });
-      if (
-        depositBalance.isZero() &&
-        finalReceivable.isZero() &&
-        new Prisma.Decimal(prepayment?.balanceAfter ?? 0).isZero()
-      )
-        await this.completeWithoutDepositRefund(tx, updated, user);
       return updated;
+    });
+  }
+  async completeZeroRefund(id: number, user: AuthUser) {
+    return this.prisma.db.$transaction(async (tx) => {
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        include: { contract: true },
+      });
+      const isZero = [
+        settlement.depositRefundableAmount,
+        settlement.prepaymentRefundableAmount,
+        settlement.finalReceivable,
+      ].every((amount) => new Prisma.Decimal(amount).isZero());
+      if (
+        settlement.status !== 'APPROVED' ||
+        settlement.contract.status !== 'PENDING_CHECKOUT' ||
+        !isZero
+      )
+        throw new BadRequestException('零额最终确认条件不满足');
+
+      const claimed = await tx.checkoutSettlement.updateMany({
+        where: { id, status: 'APPROVED' },
+        data: { status: 'COMPLETED' },
+      });
+      if (claimed.count !== 1)
+        throw new ConflictException('结算单已被最终确认，请刷新后重试');
+
+      await this.completeWithoutDepositRefund(tx, settlement, user);
+      return { ...settlement, status: 'COMPLETED' as const };
     });
   }
   async reject(id: number, reason: string, user: AuthUser) {
@@ -310,6 +411,9 @@ export class CheckoutService {
       where: { id },
       data: { status: 'DRAFT' },
     });
+  }
+  private money(value: Prisma.Decimal | string | number) {
+    return new Prisma.Decimal(value).toFixed(2);
   }
   private async completeWithoutDepositRefund(
     tx: Prisma.TransactionClient,
