@@ -81,4 +81,75 @@ describe('CheckoutService', () => {
     expect(contractUpdate).not.toHaveBeenCalled();
     expect(roomUpdate).not.toHaveBeenCalled();
   });
+  it('completes an approved zero-refund settlement only after final confirmation', async () => {
+    const settlementUpdate = jest.fn().mockResolvedValue({
+      id: 1,
+      status: 'COMPLETED',
+    });
+    const contractUpdate = jest.fn();
+    const roomUpdate = jest.fn();
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'APPROVED',
+          targetRoomStatus: 'EMPTY',
+          depositRefundableAmount: '0.00',
+          prepaymentRefundableAmount: '0.00',
+          finalReceivable: '0.00',
+          contract: { id: 3, status: 'PENDING_CHECKOUT', roomId: 7 },
+        }),
+        update: settlementUpdate,
+      },
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        update: contractUpdate,
+      },
+      room: { update: roomUpdate },
+      roomStatusHistory: { create: jest.fn() },
+    };
+    const service = new CheckoutService({
+      db: { $transaction: jest.fn((callback) => callback(tx)) },
+    } as never);
+
+    await service.completeZeroRefund(1, {
+      ...user,
+      role: 'SUPER_ADMIN',
+    });
+
+    expect(settlementUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'COMPLETED' } }),
+    );
+    expect(contractUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'ENDED' } }),
+    );
+    expect(roomUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ roomStatus: 'EMPTY' }),
+      }),
+    );
+  });
+
+  it('rejects zero final confirmation when a locked amount is non-zero', async () => {
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'APPROVED',
+          depositRefundableAmount: '0.00',
+          prepaymentRefundableAmount: '500.00',
+          finalReceivable: '0.00',
+          contract: { status: 'PENDING_CHECKOUT' },
+        }),
+      },
+    };
+    const service = new CheckoutService({
+      db: { $transaction: jest.fn((callback) => callback(tx)) },
+    } as never);
+
+    await expect(
+      service.completeZeroRefund(1, { ...user, role: 'SUPER_ADMIN' }),
+    ).rejects.toThrow('零额最终确认条件不满足');
+  });
 });

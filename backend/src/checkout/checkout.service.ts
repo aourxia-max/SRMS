@@ -275,6 +275,26 @@ export class CheckoutService {
       return updated;
     });
   }
+  async completeZeroRefund(id: number, user: AuthUser) {
+    return this.prisma.db.$transaction(async (tx) => {
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        include: { contract: true },
+      });
+      const isZero = [
+        settlement.depositRefundableAmount,
+        settlement.prepaymentRefundableAmount,
+        settlement.finalReceivable,
+      ].every((amount) => new Prisma.Decimal(amount).isZero());
+      if (
+        settlement.status !== 'APPROVED' ||
+        settlement.contract.status !== 'PENDING_CHECKOUT' ||
+        !isZero
+      )
+        throw new BadRequestException('零额最终确认条件不满足');
+      return this.completeWithoutDepositRefund(tx, settlement, user);
+    });
+  }
   async reject(id: number, reason: string, user: AuthUser) {
     const settlement =
       await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
