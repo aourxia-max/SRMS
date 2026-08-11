@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useSessionStore } from '../stores/session'
 import { http } from '../services/http'
+import { contractChangeSubmitErrorMessage } from './contract-change-submit'
 
 type Concession = {
   concessionType: 'RENT_FREE' | 'FIXED_AMOUNT' | 'PERCENTAGE'
@@ -58,9 +60,13 @@ function afterSnapshot() {
 async function submit() {
   if (!selectedContractId.value || !form.effectiveDate || !form.reason) return alert('请选择合同，并填写生效日期和原因')
   if (form.changeType === 'CONCESSION' && !concessionsValid()) return alert('请完整填写每条优惠规则')
-  await http.post(`/contracts/${selectedContractId.value}/changes`, { changeType: form.changeType, effectiveDate: form.effectiveDate, afterSnapshot: afterSnapshot(), reason: form.reason })
-  await loadChanges()
-  alert('变更已提交，等待超级管理员确认')
+  try {
+    await http.post(`/contracts/${selectedContractId.value}/changes`, { changeType: form.changeType, effectiveDate: form.effectiveDate, afterSnapshot: afterSnapshot(), reason: form.reason })
+    await loadChanges()
+    ElMessage.success('变更已提交，等待超级管理员确认')
+  } catch (error) {
+    ElMessage.error(contractChangeSubmitErrorMessage(error))
+  }
 }
 async function approve(id: number) { await http.post(`/contracts/changes/${id}/approve`); await loadChanges() }
 async function reject(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/contracts/changes/${id}/reject`, { reason }); await loadChanges() } }
