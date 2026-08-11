@@ -18,6 +18,52 @@ export class CheckoutService {
       orderBy: { id: 'desc' },
     });
   }
+  async getDetail(id: number) {
+    const settlement =
+      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        include: {
+          contract: { include: { room: true } },
+          items: { orderBy: { sortOrder: 'asc' } },
+          depositRefunds: {
+            select: {
+              id: true,
+              refundNo: true,
+              refundAmount: true,
+              refundDate: true,
+              refundMethod: true,
+              approvalStatus: true,
+              submittedAt: true,
+              approvedAt: true,
+              files: { select: { fileAssetId: true } },
+            },
+          },
+        },
+      });
+    return {
+      ...settlement,
+      rentReceivable: this.money(settlement.rentReceivable),
+      rentReceived: this.money(settlement.rentReceived),
+      rentOutstanding: this.money(settlement.rentOutstanding),
+      prepaymentBalance: this.money(settlement.prepaymentBalance),
+      depositBalance: this.money(settlement.depositBalance),
+      depositOffsetAmount: this.money(settlement.depositOffsetAmount),
+      otherDeductionAmount: this.money(settlement.otherDeductionAmount),
+      depositRefundableAmount: this.money(settlement.depositRefundableAmount),
+      prepaymentRefundableAmount: this.money(
+        settlement.prepaymentRefundableAmount,
+      ),
+      finalReceivable: this.money(settlement.finalReceivable),
+      items: settlement.items.map((item) => ({
+        ...item,
+        amount: this.money(item.amount),
+      })),
+      depositRefunds: settlement.depositRefunds.map((refund) => ({
+        ...refund,
+        refundAmount: this.money(refund.refundAmount),
+      })),
+    };
+  }
   async initiate(contractId: number, dto: InitiateCheckoutDto, user: AuthUser) {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
@@ -324,6 +370,9 @@ export class CheckoutService {
       where: { id },
       data: { status: 'DRAFT' },
     });
+  }
+  private money(value: Prisma.Decimal | string | number) {
+    return new Prisma.Decimal(value).toFixed(2);
   }
   private async completeWithoutDepositRefund(
     tx: Prisma.TransactionClient,

@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { CheckoutService } from './checkout.service';
 
 describe('CheckoutService', () => {
@@ -151,5 +152,41 @@ describe('CheckoutService', () => {
     await expect(
       service.completeZeroRefund(1, { ...user, role: 'SUPER_ADMIN' }),
     ).rejects.toThrow('零额最终确认条件不满足');
+  });
+  it('returns settlement detail with contract room, items and locked refund components', async () => {
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 1,
+            rentReceivable: new Prisma.Decimal('0.00'),
+            rentReceived: new Prisma.Decimal('0.00'),
+            rentOutstanding: new Prisma.Decimal('0.00'),
+            prepaymentBalance: new Prisma.Decimal('500.00'),
+            depositBalance: new Prisma.Decimal('800.00'),
+            depositOffsetAmount: new Prisma.Decimal('0.00'),
+            otherDeductionAmount: new Prisma.Decimal('0.00'),
+            depositRefundableAmount: new Prisma.Decimal('800.00'),
+            prepaymentRefundableAmount: new Prisma.Decimal('500.00'),
+            finalReceivable: new Prisma.Decimal('0.00'),
+            contract: { id: 3, room: { id: 7, roomNo: '301' } },
+            items: [{ id: 1, amount: new Prisma.Decimal('120.00') }],
+            depositRefunds: [
+              { id: 9, refundAmount: new Prisma.Decimal('1300.00') },
+            ],
+          }),
+        },
+      },
+    } as never);
+
+    await expect(service.getDetail(1)).resolves.toMatchObject({
+      id: 1,
+      depositRefundableAmount: '800.00',
+      prepaymentRefundableAmount: '500.00',
+      finalReceivable: '0.00',
+      contract: { room: { roomNo: '301' } },
+      items: [{ amount: '120.00' }],
+      depositRefunds: [{ refundAmount: '1300.00' }],
+    });
   });
 });

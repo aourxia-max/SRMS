@@ -25,6 +25,14 @@ export class CheckoutController {
   @Get() async list() {
     return { code: 200, message: 'success', data: await this.checkout.list() };
   }
+  @Get(':id')
+  async detail(@Param('id', ParseIntPipe) id: number) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.getDetail(id),
+    };
+  }
   @Post('contract/:contractId/initiate')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async initiate(
