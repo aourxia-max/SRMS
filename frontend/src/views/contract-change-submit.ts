@@ -6,7 +6,10 @@ type ApiError = {
   }
 }
 
-export function contractChangeSubmitErrorMessage(error: unknown): string {
+export function contractChangeSubmitErrorMessage(
+  error: unknown,
+  fallback = '合同变更提交失败，请检查填写内容后重试',
+): string {
   const message = (error as ApiError | undefined)?.response?.data?.message
   if (typeof message === 'string' && message.trim()) return message
   if (Array.isArray(message)) {
@@ -15,5 +18,5 @@ export function contractChangeSubmitErrorMessage(error: unknown): string {
     )
     if (firstMessage) return firstMessage
   }
-  return '合同变更提交失败，请检查填写内容后重试'
+  return fallback
 }

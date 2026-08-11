@@ -17,8 +17,8 @@ describe('contract change submission errors', () => {
   })
 
   it('falls back to a clear Chinese message when the API response has no text', () => {
-    expect(contractChangeSubmitErrorMessage(new Error('network failed'))).toBe(
-      '合同变更提交失败，请检查填写内容后重试',
+    expect(contractChangeSubmitErrorMessage(new Error('network failed'), '合同变更确认失败，请检查生效日期与收款状态')).toBe(
+      '合同变更确认失败，请检查生效日期与收款状态',
     )
   })
 })
