@@ -23,4 +23,111 @@ describe('DepositRefundsService', () => {
 
     expect(result[0].files[0].fileAsset.sizeBytes).toBe('128');
   });
+  it('accepts only the locked deposit plus prepayment refund total', async () => {
+    const settlement = {
+      id: 1,
+      contractId: 3,
+      status: 'APPROVED',
+      handoverDate: new Date('2026-08-01'),
+      finalReceivable: '0.00',
+      depositRefundableAmount: '800.00',
+      prepaymentRefundableAmount: '500.00',
+      prepaymentBalance: '500.00',
+      contract: { status: 'PENDING_CHECKOUT' },
+    };
+    const create = jest.fn().mockResolvedValue({ id: 9 });
+    const service = new DepositRefundsService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
+        },
+        fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
+        depositRefund: { create },
+      },
+    } as never);
+    const dto = {
+      checkoutSettlementId: 1,
+      refundAmount: '1300.00',
+      refundDate: '2026-08-02',
+      refundMethod: 'BANK_TRANSFER',
+      proofFileIds: [4],
+    } as never;
+
+    await expect(
+      service.submit(dto, { id: 2, username: 'admin', role: 'ADMIN' }),
+    ).resolves.toEqual({ id: 9 });
+    await expect(
+      service.submit(
+        { ...dto, refundAmount: '1299.99' },
+        { id: 2, username: 'admin', role: 'ADMIN' },
+      ),
+    ).rejects.toThrow('退款金额必须等于结算单锁定的合计应退金额');
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes deposit and prepayment refund transactions when a combined refund is approved', async () => {
+    const depositTransactionCreate = jest.fn();
+    const prepaymentTransactionCreate = jest.fn();
+    const tx = {
+      depositRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          refundAmount: '1300.00',
+          approvalStatus: 'PENDING',
+          files: [{ fileAssetId: 4 }],
+          checkoutSettlement: {
+            id: 8,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '0.00',
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '500.00',
+            prepaymentBalance: '500.00',
+            contract: {
+              status: 'PENDING_CHECKOUT',
+              roomId: 7,
+              room: { roomStatus: 'PENDING_CHECKOUT' },
+            },
+          },
+        }),
+        update: jest.fn(),
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
+        create: depositTransactionCreate,
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
+        create: prepaymentTransactionCreate,
+      },
+      fileAsset: { updateMany: jest.fn() },
+      checkoutSettlement: { update: jest.fn() },
+      contract: { update: jest.fn() },
+      room: { update: jest.fn() },
+      roomStatusHistory: { create: jest.fn() },
+    };
+    const service = new DepositRefundsService({
+      db: { $transaction: jest.fn((callback) => callback(tx)) },
+    } as never);
+
+    await service.approve(1, { id: 1, username: 'root', role: 'SUPER_ADMIN' });
+
+    expect(depositTransactionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ transactionType: 'REFUND' }),
+      }),
+    );
+    expect(
+      depositTransactionCreate.mock.calls[0][0].data.amount.toString(),
+    ).toBe('800');
+    expect(prepaymentTransactionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ transactionType: 'REFUND' }),
+      }),
+    );
+    expect(
+      prepaymentTransactionCreate.mock.calls[0][0].data.amount.toString(),
+    ).toBe('500');
+  });
 });

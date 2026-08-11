@@ -35,12 +35,14 @@ export class DepositRefundsService {
       settlement.status !== 'APPROVED' ||
       settlement.contract.status !== 'PENDING_CHECKOUT' ||
       !settlement.handoverDate ||
-      !new Prisma.Decimal(settlement.finalReceivable).isZero() ||
-      !new Prisma.Decimal(settlement.prepaymentBalance).isZero()
+      !new Prisma.Decimal(settlement.finalReceivable).isZero()
     )
       throw new BadRequestException('当前不满足登记押金退款的条件');
-    if (!amount.equals(settlement.depositRefundableAmount))
-      throw new BadRequestException('退款金额必须等于结算单锁定的应退押金');
+    const expectedRefund = new Prisma.Decimal(
+      settlement.depositRefundableAmount,
+    ).plus(settlement.prepaymentRefundableAmount);
+    if (!amount.equals(expectedRefund))
+      throw new BadRequestException('退款金额必须等于结算单锁定的合计应退金额');
     const files = await this.prisma.db.fileAsset.findMany({
       where: {
         id: { in: dto.proofFileIds },
@@ -82,35 +84,63 @@ export class DepositRefundsService {
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
         !settlement.handoverDate ||
         !new Prisma.Decimal(settlement.finalReceivable).isZero() ||
-        !new Prisma.Decimal(settlement.prepaymentBalance).isZero() ||
         !new Prisma.Decimal(refund.refundAmount).equals(
-          settlement.depositRefundableAmount,
+          new Prisma.Decimal(settlement.depositRefundableAmount).plus(
+            settlement.prepaymentRefundableAmount,
+          ),
         ) ||
         !refund.files.length
       )
         throw new BadRequestException('当前不满足确认押金退款并结束合同的条件');
-      const latest = await tx.depositTransaction.findFirst({
+      const depositRefundableAmount = new Prisma.Decimal(
+        settlement.depositRefundableAmount,
+      );
+      const prepaymentRefundableAmount = new Prisma.Decimal(
+        settlement.prepaymentRefundableAmount,
+      );
+      const latestDeposit = await tx.depositTransaction.findFirst({
+        where: { contractId: refund.contractId },
+        orderBy: { id: 'desc' },
+      });
+      const latestPrepayment = await tx.prepaymentTransaction.findFirst({
         where: { contractId: refund.contractId },
         orderBy: { id: 'desc' },
       });
       if (
-        !new Prisma.Decimal(latest?.balanceAfter ?? 0).equals(
-          refund.refundAmount,
+        !new Prisma.Decimal(latestDeposit?.balanceAfter ?? 0).equals(
+          depositRefundableAmount,
+        ) ||
+        !new Prisma.Decimal(latestPrepayment?.balanceAfter ?? 0).equals(
+          prepaymentRefundableAmount,
         )
       )
-        throw new BadRequestException('当前押金余额与退款金额不一致');
-      await tx.depositTransaction.create({
-        data: {
-          contractId: refund.contractId,
-          transactionNo: `YJTK${Date.now()}${refund.id}`,
-          transactionType: 'REFUND',
-          amount: refund.refundAmount,
-          balanceAfter: 0,
-          checkoutSettlementId: settlement.id,
-          depositRefundId: refund.id,
-          reason: '退租结算押金退款',
-        },
-      });
+        throw new BadRequestException('当前资金余额与结算单锁定退款金额不一致');
+      if (depositRefundableAmount.gt(0)) {
+        await tx.depositTransaction.create({
+          data: {
+            contractId: refund.contractId,
+            transactionNo: `YJTK${Date.now()}${refund.id}`,
+            transactionType: 'REFUND',
+            amount: depositRefundableAmount,
+            balanceAfter: 0,
+            checkoutSettlementId: settlement.id,
+            depositRefundId: refund.id,
+            reason: '退租结算押金退款',
+          },
+        });
+      }
+      if (prepaymentRefundableAmount.gt(0)) {
+        await tx.prepaymentTransaction.create({
+          data: {
+            contractId: refund.contractId,
+            transactionNo: `YSKTH${Date.now()}${refund.id}`,
+            transactionType: 'REFUND',
+            amount: prepaymentRefundableAmount,
+            balanceAfter: 0,
+            reason: '退租结算预收款退款',
+          },
+        });
+      }
       await tx.fileAsset.updateMany({
         where: { id: { in: refund.files.map((file) => file.fileAssetId) } },
         data: { lockedAt: new Date() },
