@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
+import { checkoutApi } from "../../services/checkout";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
 import CheckoutWorkspace from "./CheckoutWorkspace.vue";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
@@ -76,7 +77,20 @@ vi.mock("../../services/checkout", () => ({
           refundAmount: "0.00",
           files: [{ fileAssetId: 77 }],
         },
+        {
+          id: 7,
+          approvalStatus: "REJECTED",
+          refundNo: "TK202608020002",
+          refundAmount: "500.00",
+          files: [{ fileAssetId: 78 }],
+        },
       ],
+    }),
+    downloadRefundProof: vi.fn().mockResolvedValue({
+      data: new Blob(["proof"]),
+      headers: {
+        "content-disposition": "attachment; filename*=UTF-8''refund.webp",
+      },
     }),
     approve: vi.fn(),
   },
@@ -157,7 +171,9 @@ describe("CheckoutTopNav", () => {
 
     expect(wrapper.text()).toContain("已退租合同");
     expect(wrapper.text()).toContain("HT202608010001");
-    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(
+      false,
+    );
   });
   it("opens the completed settlement detail without any editing action", async () => {
     const wrapper = mount(CheckoutWorkspace, {
@@ -166,14 +182,19 @@ describe("CheckoutTopNav", () => {
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
     await flushPromises();
-    await wrapper.get('[data-test="completed-contract-detail-9"]').trigger("click");
+    await wrapper
+      .get('[data-test="completed-contract-detail-9"]')
+      .trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).toContain("只读详情");
     expect(wrapper.text()).toContain("房态结果");
     expect(wrapper.text()).toContain("凭证编号：77");
-    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(false);
-  });  it("sends the keyword search and opens an existing checkout detail in read-only mode", async () => {
+    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(
+      false,
+    );
+  });
+  it("sends the keyword search and opens an existing checkout detail in read-only mode", async () => {
     const completedResult = {
       items: [
         {
@@ -195,11 +216,128 @@ describe("CheckoutTopNav", () => {
       props: { result: completedResult },
     });
 
-    await wrapper.get('[data-test="completed-contract-search"]').setValue("李四");
-    await wrapper.get('[data-test="completed-contract-search-submit"]').trigger("click");
+    await wrapper
+      .get('[data-test="completed-contract-search"]')
+      .setValue("李四");
+    await wrapper
+      .get('[data-test="completed-contract-search-submit"]')
+      .trigger("click");
     expect(wrapper.emitted("search")).toEqual([["李四"]]);
-    await wrapper.get('[data-test="completed-contract-detail-9"]').trigger("click");
+    await wrapper
+      .get('[data-test="completed-contract-detail-9"]')
+      .trigger("click");
     expect(wrapper.emitted("select")).toEqual([[9]]);
+  });
+  it("shows the completed audit timestamp with seconds", () => {
+    const wrapper = mount(CompletedCheckoutContractsPanel, {
+      props: {
+        result: {
+          items: [
+            {
+              settlementId: 9,
+              settlementNo: "TZ202608010009",
+              contractNo: "HT202608010001",
+              roomFullHouseNo: "2栋301",
+              tenantName: "李四",
+              actualCheckoutDate: "2026-08-01T00:00:00",
+              refundAmount: "1300.00",
+              completedAt: "2026-08-02T09:30:40",
+            },
+          ],
+          page: 1,
+          pageSize: 20,
+          total: 1,
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain("2026/08/02 09:30:40");
+  });
+  it("shows room and refund statuses in Chinese in the read-only detail", async () => {
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+    await wrapper
+      .get('[data-test="completed-contract-detail-9"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("空置");
+    expect(wrapper.text()).toContain("已确认");
+    expect(wrapper.text()).toContain("已驳回");
+  });
+
+  it("downloads a refund proof from the read-only detail", async () => {
+    const createObjectURL = vi.fn().mockReturnValue("blob:refund-proof");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+    await wrapper
+      .get('[data-test="completed-contract-detail-9"]')
+      .trigger("click");
+    await flushPromises();
+
+    await wrapper
+      .get('[data-test="refund-proof-download-6-77"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(
+      (
+        checkoutApi as unknown as {
+          downloadRefundProof: ReturnType<typeof vi.fn>;
+        }
+      ).downloadRefundProof,
+    ).toHaveBeenCalledWith(6, 77);
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(click).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:refund-proof");
+    click.mockRestore();
+  });
+
+  it("shows a Chinese error when a refund proof cannot be downloaded", async () => {
+    (
+      checkoutApi as unknown as {
+        downloadRefundProof: ReturnType<typeof vi.fn>;
+      }
+    ).downloadRefundProof.mockRejectedValueOnce(new Error("network"));
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+    await wrapper
+      .get('[data-test="completed-contract-detail-9"]')
+      .trigger("click");
+    await flushPromises();
+
+    await wrapper
+      .get('[data-test="refund-proof-download-6-77"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[role="alert"]').text()).toContain(
+      "退款凭证下载失败，请稍后重试",
+    );
   });
   it("shows zero-refund final confirmation without proof upload for a super admin", () => {
     const wrapper = mount(CheckoutRefundPanel, {

@@ -298,6 +298,27 @@ export class FilesService {
       uploadedAt: asset.uploadedAt,
     };
   }
+  async downloadDepositRefundProof(refundId: number, fileId: number) {
+    const item = await this.prisma.db.depositRefundFile.findFirst({
+      where: {
+        depositRefundId: refundId,
+        fileAssetId: fileId,
+        fileAsset: { category: 'DEPOSIT_REFUND_PROOF' },
+      },
+      include: { fileAsset: true },
+    });
+    if (!item) throw new NotFoundException('退款凭证不存在');
+    const content = await readFile(
+      resolve(
+        process.cwd(),
+        '..',
+        'uploads',
+        'deposit-refund-proofs',
+        basename(item.fileAsset.storedName),
+      ),
+    );
+    return { asset: item.fileAsset, content };
+  }
   async saveTenantId(tenantId: number, file: UploadedFile, user: AuthUser) {
     if (!file || !file.buffer) throw new BadRequestException('请上传证件附件');
     if (file.size > (await this.configLimit()))

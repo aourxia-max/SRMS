@@ -94,6 +94,11 @@ export const checkoutApi = {
         payload,
       ),
     ),
+  downloadRefundProof: async (refundId: number, fileId: number) =>
+    http.get(
+      "/deposit-refunds/" + refundId + "/files/" + fileId + "/download",
+      { responseType: "blob" },
+    ),
   approveRefund: async (id: number) =>
     data(
       await http.post<Envelope<Record<string, unknown>>>(

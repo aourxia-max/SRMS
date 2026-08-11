@@ -130,6 +130,73 @@ describe('FilesService payment proofs', () => {
   });
 });
 
+describe('FilesService deposit refund proofs', () => {
+  function serviceWith(findFirst: jest.Mock) {
+    return new FilesService(
+      { db: { depositRefundFile: { findFirst } } } as never,
+      {} as never,
+    );
+  }
+
+  it('downloads only a proof linked to the requested deposit refund', async () => {
+    jest.mocked(readFile).mockResolvedValue(Buffer.from('refund-proof'));
+    const findFirst = jest.fn().mockResolvedValue({
+      depositRefundId: 6,
+      fileAssetId: 77,
+      fileAsset: {
+        id: 77,
+        category: 'DEPOSIT_REFUND_PROOF',
+        storedName: 'stored-proof.webp',
+        originalName: '退款凭证.webp',
+        mimeType: 'image/webp',
+      },
+    });
+    const service = serviceWith(findFirst);
+
+    await expect(
+      Promise.resolve().then(() =>
+        (
+          service as unknown as {
+            downloadDepositRefundProof: (
+              refundId: number,
+              fileId: number,
+            ) => Promise<{ asset: { originalName: string }; content: Buffer }>;
+          }
+        ).downloadDepositRefundProof(6, 77),
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        asset: expect.objectContaining({ originalName: '退款凭证.webp' }),
+        content: Buffer.from('refund-proof'),
+      }),
+    );
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        depositRefundId: 6,
+        fileAssetId: 77,
+        fileAsset: { category: 'DEPOSIT_REFUND_PROOF' },
+      },
+      include: { fileAsset: true },
+    });
+  });
+
+  it('rejects a file that is not linked to the requested deposit refund', async () => {
+    const service = serviceWith(jest.fn().mockResolvedValue(null));
+
+    await expect(
+      Promise.resolve().then(() =>
+        (
+          service as unknown as {
+            downloadDepositRefundProof: (
+              refundId: number,
+              fileId: number,
+            ) => Promise<unknown>;
+          }
+        ).downloadDepositRefundProof(6, 99),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
 describe('FilesService contract files', () => {
   const user = {
     id: 7,

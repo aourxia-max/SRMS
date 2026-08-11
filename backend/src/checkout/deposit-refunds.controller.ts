@@ -6,12 +6,14 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user.type';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -61,6 +63,23 @@ export class DepositRefundsController {
       message: 'success',
       data: await this.files.saveDepositRefundProof(file, user),
     };
+  }
+  @Get(':id/files/:fileId/download')
+  async downloadProof(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('fileId', ParseIntPipe) fileId: number,
+    @Res() response: Response,
+  ) {
+    const { asset, content } = await this.files.downloadDepositRefundProof(
+      id,
+      fileId,
+    );
+    response.setHeader('Content-Type', asset.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(asset.originalName)}`,
+    );
+    response.send(content);
   }
   @Post(':id/approve')
   @Roles(UserRole.SUPER_ADMIN)

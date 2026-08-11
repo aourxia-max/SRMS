@@ -12,7 +12,6 @@ import type {
   CheckoutSettlement,
   CheckoutTab,
   CompletedCheckoutContractsResult,
-  DepositRefund,
 } from "./checkout-types";
 
 const session = useSessionStore();
@@ -105,14 +104,58 @@ function changeTab(tab: CheckoutTab) {
   completedDetail.value = undefined;
   if (tab === "completed") void loadCompletedContracts();
 }
-function refundProofIds(refund: DepositRefund) {
-  return refund.files?.map((file) => file.fileAssetId).join("、") || "无";
+const roomStatusLabels: Record<string, string> = {
+  EMPTY: "空置",
+  MAINTENANCE: "维修中",
+  DISABLED: "停用",
+};
+const refundApprovalStatusLabels: Record<string, string> = {
+  PENDING: "待确认",
+  APPROVED: "已确认",
+  REJECTED: "已驳回",
+};
+function roomStatusLabel(status?: string) {
+  return status ? roomStatusLabels[status] || status : "—";
+}
+function refundApprovalStatusLabel(status: string) {
+  return refundApprovalStatusLabels[status] || status;
 }
 function formatMoney(value: string) {
   return Number(value || 0).toLocaleString("zh-CN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+function refundProofFilename(disposition: unknown, fileId: number) {
+  const match = /filename\*=UTF-8''([^;]+)/i.exec(String(disposition || ""));
+  if (match?.[1]) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      // Fall back to a safe Chinese filename if the server header is malformed.
+    }
+  }
+  return "退款凭证-" + fileId;
+}
+async function downloadRefundProof(refundId: number, fileId: number) {
+  actionError.value = "";
+  try {
+    const response = await checkoutApi.downloadRefundProof(refundId, fileId);
+    const url = URL.createObjectURL(response.data);
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = refundProofFilename(
+        response.headers["content-disposition"],
+        fileId,
+      );
+      link.click();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch (error) {
+    actionError.value = message(error, "退款凭证下载失败，请稍后重试");
+  }
 }
 async function loadFinanceSnapshot(contractId: number) {
   try {
@@ -245,34 +288,69 @@ onMounted(loadData);
         @page-change="loadCompletedContracts($event)"
         @select="openCompletedDetail"
       />
-      <section v-if="completedDetail" class="checkout-workspace__readonly-detail">
+      <section
+        v-if="completedDetail"
+        class="checkout-workspace__readonly-detail"
+      >
         <header>
           <div>
             <span>只读详情</span>
             <h2>{{ completedDetail.settlementNo }}</h2>
           </div>
-          <button type="button" @click="completedDetail = undefined">关闭</button>
+          <button type="button" @click="completedDetail = undefined">
+            关闭
+          </button>
         </header>
         <div class="checkout-workspace__readonly-grid">
           <article>
             <h3>合同与房源</h3>
             <p>合同编号：{{ completedDetail.contract?.contractNo || "—" }}</p>
-            <p>房源：{{ completedDetail.contract?.room?.fullHouseNo || "—" }}</p>
-            <p>房态结果：{{ completedDetail.targetRoomStatus || "—" }}</p>
+            <p>
+              房源：{{ completedDetail.contract?.room?.fullHouseNo || "—" }}
+            </p>
+            <p>
+              房态结果：{{ roomStatusLabel(completedDetail.targetRoomStatus) }}
+            </p>
           </article>
           <article>
             <h3>结算项目</h3>
             <p v-if="!completedDetail.items?.length">本次无结算项目</p>
-            <p v-for="item in completedDetail.items" :key="item.id || item.description">
-              {{ item.description || item.itemType }}：¥{{ formatMoney(item.amount) }}
+            <p
+              v-for="item in completedDetail.items"
+              :key="item.id || item.description"
+            >
+              {{ item.description || item.itemType }}：¥{{
+                formatMoney(item.amount)
+              }}
             </p>
           </article>
           <article>
             <h3>退款凭证</h3>
             <p v-if="!completedDetail.depositRefunds?.length">本次无退款</p>
-            <p v-for="refund in completedDetail.depositRefunds" :key="refund.id">
-              {{ refund.refundNo || `退款单 #${refund.id}` }}：¥{{ formatMoney(refund.refundAmount) }}，凭证编号：{{ refundProofIds(refund) }}
-            </p>
+            <div
+              v-for="refund in completedDetail.depositRefunds"
+              :key="refund.id"
+              class="checkout-workspace__refund-proof"
+            >
+              <p>
+                {{ refund.refundNo || "退款单 #" + refund.id }}：¥{{
+                  formatMoney(refund.refundAmount)
+                }}，状态：{{ refundApprovalStatusLabel(refund.approvalStatus) }}
+              </p>
+              <p v-if="!refund.files?.length">未上传凭证</p>
+              <button
+                v-for="file in refund.files"
+                :key="file.fileAssetId"
+                :data-test="
+                  'refund-proof-download-' + refund.id + '-' + file.fileAssetId
+                "
+                type="button"
+                class="checkout-workspace__proof-download"
+                @click="downloadRefundProof(refund.id, file.fileAssetId)"
+              >
+                下载凭证（凭证编号：{{ file.fileAssetId }}）
+              </button>
+            </div>
           </article>
         </div>
       </section>
@@ -333,13 +411,60 @@ onMounted(loadData);
   justify-content: space-between;
   gap: 12px;
 }
-.checkout-workspace__readonly-detail h2 { margin: 6px 0 0; font-size: 18px; }
-.checkout-workspace__readonly-detail header span { color: #66758b; font-size: 13px; }
-.checkout-workspace__readonly-detail header button { min-height: 34px; padding: 0 12px; border: 1px solid #d9e1ec; border-radius: 6px; color: #39465a; background: #fff; font: inherit; cursor: pointer; }
-.checkout-workspace__readonly-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
-.checkout-workspace__readonly-grid article { padding: 16px; border-radius: 8px; background: #f7f9fc; }
-.checkout-workspace__readonly-grid h3 { margin: 0 0 10px; font-size: 15px; }
-.checkout-workspace__readonly-grid p { margin: 6px 0; color: #526178; font-size: 14px; line-height: 1.55; }
+.checkout-workspace__readonly-detail h2 {
+  margin: 6px 0 0;
+  font-size: 18px;
+}
+.checkout-workspace__readonly-detail header span {
+  color: #66758b;
+  font-size: 13px;
+}
+.checkout-workspace__readonly-detail header button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #d9e1ec;
+  border-radius: 6px;
+  color: #39465a;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.checkout-workspace__readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+.checkout-workspace__readonly-grid article {
+  padding: 16px;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+.checkout-workspace__readonly-grid h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.checkout-workspace__readonly-grid p {
+  margin: 6px 0;
+  color: #526178;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.checkout-workspace__refund-proof + .checkout-workspace__refund-proof {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e4eaf3;
+}
+.checkout-workspace__proof-download {
+  min-height: 32px;
+  margin: 4px 8px 0 0;
+  padding: 0;
+  border: 0;
+  color: #246bfd;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
 @media (max-width: 760px) {
   .checkout-workspace {
     padding: 16px;
@@ -348,6 +473,8 @@ onMounted(loadData);
     align-items: stretch;
     flex-direction: column;
   }
-  .checkout-workspace__readonly-grid { grid-template-columns: 1fr; }
+  .checkout-workspace__readonly-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
