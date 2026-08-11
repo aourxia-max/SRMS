@@ -6,6 +6,12 @@ export function isPrefixSelection(bills: Pick<RentBill, 'id' | 'periodSeq'>[], s
   return ordered.every((bill, index) => selected.has(bill.id) === index < selectedIds.length)
 }
 
+export function nextSuggestedPaymentAmount(currentAmount: string, previousSuggestedAmount: string, effectiveOutstanding: number) {
+  return currentAmount === previousSuggestedAmount
+    ? effectiveOutstanding.toFixed(2)
+    : currentAmount
+}
+
 export function allocationSummary(
   bills: Pick<RentBill, 'id' | 'outstandingAmount'>[],
   selectedIds: number[],

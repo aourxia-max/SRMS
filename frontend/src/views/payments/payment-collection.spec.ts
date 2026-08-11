@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allocationSummary, isPrefixSelection } from './payment-collection'
+import { allocationSummary, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
 
 const bills = [
   { id: 11, periodSeq: 1, outstandingAmount: '1000.00' },
@@ -22,5 +22,13 @@ describe('收款账期选择规则', () => {
       paymentAmount: 1700,
       prepaymentAmount: 50,
     })
+  })
+
+  it('填写优惠后自动将默认全额收款改为优惠后的实际应收', () => {
+    expect(nextSuggestedPaymentAmount('1350.00', '1350.00', 1250)).toBe('1250.00')
+  })
+
+  it('填写优惠后不覆盖手工录入的部分收款金额', () => {
+    expect(nextSuggestedPaymentAmount('500.00', '1350.00', 1250)).toBe('500.00')
   })
 })
