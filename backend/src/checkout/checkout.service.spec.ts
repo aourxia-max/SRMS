@@ -74,7 +74,11 @@ describe('CheckoutService', () => {
       prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const service = new CheckoutService({
-      db: { $transaction: jest.fn((callback) => callback(tx)) },
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
     } as never);
 
     await service.approve(1, { ...user, role: 'SUPER_ADMIN' });
@@ -111,7 +115,11 @@ describe('CheckoutService', () => {
       roomStatusHistory: { create: jest.fn() },
     };
     const service = new CheckoutService({
-      db: { $transaction: jest.fn((callback) => callback(tx)) },
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
     } as never);
 
     await service.completeZeroRefund(1, {
@@ -146,7 +154,11 @@ describe('CheckoutService', () => {
       },
     };
     const service = new CheckoutService({
-      db: { $transaction: jest.fn((callback) => callback(tx)) },
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
     } as never);
 
     await expect(

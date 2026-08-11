@@ -108,7 +108,11 @@ describe('DepositRefundsService', () => {
       roomStatusHistory: { create: jest.fn() },
     };
     const service = new DepositRefundsService({
-      db: { $transaction: jest.fn((callback) => callback(tx)) },
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
     } as never);
 
     await service.approve(1, { id: 1, username: 'root', role: 'SUPER_ADMIN' });
