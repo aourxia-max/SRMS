@@ -12,4 +12,10 @@ export const checkoutApi = {
   submit: async (id: number, payload: Record<string, unknown>) => data(await http.post<Envelope<CheckoutSettlement>>(`/checkout-settlements/${id}/submit`, payload)),
   approve: async (id: number) => data(await http.post<Envelope<CheckoutSettlement>>(`/checkout-settlements/${id}/approve`)),
   completeZeroRefund: async (id: number) => data(await http.post<Envelope<CheckoutSettlement>>(`/checkout-settlements/${id}/complete-zero-refund`)),
+  uploadRefundProof: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return data(await http.post<Envelope<{ id: number }>>('/deposit-refunds/proof-files', form))
+  },
+  submitRefund: async (payload: Record<string, unknown>) => data(await http.post<Envelope<Record<string, unknown>>>('/deposit-refunds', payload)),
 }
