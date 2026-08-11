@@ -39,7 +39,6 @@ export class CheckoutService {
             OR: [
               { contractNo: { contains: keyword } },
               { room: { fullHouseNo: { contains: keyword } } },
-              { room: { houseNo: { contains: keyword } } },
               {
                 members: {
                   some: {
@@ -103,16 +102,21 @@ export class CheckoutService {
     }
     const histories = historyFilters.length
       ? await this.prisma.db.roomStatusHistory.findMany({
-          where: { OR: historyFilters },
+          where: {
+            toStatus: { not: 'PENDING_CHECKOUT' },
+            OR: historyFilters,
+          },
+          orderBy: { changedAt: 'desc' },
           select: { businessType: true, businessId: true, changedAt: true },
         })
       : [];
-    const historyByBusiness = new Map(
-      histories.map((history) => [
-        `${history.businessType}:${history.businessId}`,
-        history.changedAt,
-      ]),
-    );
+    const historyByBusiness = new Map<string, Date>();
+    for (const history of histories) {
+      const key = `${history.businessType}:${history.businessId}`;
+      const current = historyByBusiness.get(key);
+      if (!current || history.changedAt > current)
+        historyByBusiness.set(key, history.changedAt);
+    }
 
     return {
       items: settlements.map((settlement) => {

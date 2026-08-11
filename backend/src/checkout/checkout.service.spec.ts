@@ -27,7 +27,14 @@ describe('CheckoutService', () => {
             {
               businessType: 'CHECKOUT',
               businessId: 9,
+              toStatus: 'EMPTY',
               changedAt: new Date('2026-08-12T10:00:00.000Z'),
+            },
+            {
+              businessType: 'CHECKOUT',
+              businessId: 9,
+              toStatus: 'PENDING_CHECKOUT',
+              changedAt: new Date('2026-08-10T10:00:00.000Z'),
             },
           ]),
         },
@@ -75,27 +82,21 @@ describe('CheckoutService', () => {
       pageSize: 20,
     });
 
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          contract: expect.objectContaining({
-            OR: expect.arrayContaining([
-              { contractNo: { contains: '2栋301' } },
-              { room: { fullHouseNo: { contains: '2栋301' } } },
-              { room: { houseNo: { contains: '2栋301' } } },
-              {
-                members: {
-                  some: {
-                    isCurrent: true,
-                    tenant: { name: { contains: '2栋301' } },
-                  },
-                },
-              },
-            ]),
-          }),
-        }),
-      }),
-    );
+    expect(findMany.mock.calls[0][0].where.contract).toEqual({
+      status: 'ENDED',
+      OR: [
+        { contractNo: { contains: '2栋301' } },
+        { room: { fullHouseNo: { contains: '2栋301' } } },
+        {
+          members: {
+            some: {
+              isCurrent: true,
+              tenant: { name: { contains: '2栋301' } },
+            },
+          },
+        },
+      ],
+    });
   });
 
   it('serializes approved combined refunds and zero refunds with two decimals', async () => {
