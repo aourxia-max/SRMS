@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Query,
   ParseIntPipe,
   Post,
   UseGuards,
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../authorization/roles.decorator';
 import { RolesGuard } from '../authorization/roles.guard';
 import { CheckoutService } from './checkout.service';
+import { CompletedCheckoutContractsQueryDto } from './dto/completed-checkout-contracts-query.dto';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { SubmitCheckoutSettlementDto } from './dto/submit-checkout-settlement.dto';
 import { RejectCheckoutSettlementDto } from './dto/reject-checkout-settlement.dto';
@@ -31,6 +33,14 @@ export class CheckoutController {
       code: 200,
       message: 'success',
       data: await this.checkout.getFinanceSnapshot(contractId),
+    };
+  }
+  @Get('completed-contracts')
+  async completedContracts(@Query() query: CompletedCheckoutContractsQueryDto) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.listCompletedContracts(query),
     };
   }
   @Get(':id')

@@ -18,6 +18,138 @@ export class CheckoutService {
       orderBy: { id: 'desc' },
     });
   }
+  async listCompletedContracts(query: {
+    keyword?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
+    const requestedPage = Math.trunc(query.page ?? 1);
+    const requestedPageSize = Math.trunc(query.pageSize ?? 20);
+    const page = Number.isFinite(requestedPage)
+      ? Math.max(1, requestedPage)
+      : 1;
+    const pageSize = Number.isFinite(requestedPageSize)
+      ? Math.min(100, Math.max(1, requestedPageSize))
+      : 20;
+    const keyword = query.keyword?.trim();
+    const contract: Prisma.ContractWhereInput = {
+      status: 'ENDED',
+      ...(keyword
+        ? {
+            OR: [
+              { contractNo: { contains: keyword } },
+              { room: { fullHouseNo: { contains: keyword } } },
+              { room: { houseNo: { contains: keyword } } },
+              {
+                members: {
+                  some: {
+                    isCurrent: true,
+                    tenant: { name: { contains: keyword } },
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const where: Prisma.CheckoutSettlementWhereInput = {
+      status: 'COMPLETED',
+      contract,
+    };
+    const [settlements, total] = await Promise.all([
+      this.prisma.db.checkoutSettlement.findMany({
+        where,
+        include: {
+          contract: {
+            select: {
+              contractNo: true,
+              room: { select: { id: true, fullHouseNo: true } },
+              members: {
+                where: { isCurrent: true, memberRole: 'PRIMARY' },
+                select: { tenant: { select: { name: true } } },
+                take: 1,
+              },
+            },
+          },
+          depositRefunds: {
+            where: { approvalStatus: 'APPROVED' },
+            select: { id: true, refundAmount: true },
+          },
+        },
+        orderBy: [{ actualCheckoutDate: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.db.checkoutSettlement.count({ where }),
+    ]);
+    const zeroRefundSettlementIds = settlements
+      .filter((settlement) => settlement.depositRefunds.length === 0)
+      .map((settlement) => settlement.id);
+    const approvedRefundIds = settlements.flatMap((settlement) =>
+      settlement.depositRefunds.map((refund) => refund.id),
+    );
+    const historyFilters: Prisma.RoomStatusHistoryWhereInput[] = [];
+    if (zeroRefundSettlementIds.length) {
+      historyFilters.push({
+        businessType: 'CHECKOUT',
+        businessId: { in: zeroRefundSettlementIds },
+      });
+    }
+    if (approvedRefundIds.length) {
+      historyFilters.push({
+        businessType: 'DEPOSIT_REFUND',
+        businessId: { in: approvedRefundIds },
+      });
+    }
+    const histories = historyFilters.length
+      ? await this.prisma.db.roomStatusHistory.findMany({
+          where: { OR: historyFilters },
+          select: { businessType: true, businessId: true, changedAt: true },
+        })
+      : [];
+    const historyByBusiness = new Map(
+      histories.map((history) => [
+        `${history.businessType}:${history.businessId}`,
+        history.changedAt,
+      ]),
+    );
+
+    return {
+      items: settlements.map((settlement) => {
+        const isZeroRefund = settlement.depositRefunds.length === 0;
+        const completionTimes = (
+          isZeroRefund
+            ? [historyByBusiness.get(`CHECKOUT:${settlement.id}`)]
+            : settlement.depositRefunds.map((refund) =>
+                historyByBusiness.get(`DEPOSIT_REFUND:${refund.id}`),
+              )
+        ).filter((value): value is Date => value instanceof Date);
+        return {
+          settlementId: settlement.id,
+          settlementNo: settlement.settlementNo,
+          contractNo: settlement.contract.contractNo,
+          roomFullHouseNo: settlement.contract.room.fullHouseNo,
+          tenantName: settlement.contract.members[0]?.tenant.name ?? '',
+          actualCheckoutDate: settlement.actualCheckoutDate,
+          refundAmount: this.money(
+            settlement.depositRefunds.reduce(
+              (sum, refund) => sum.plus(refund.refundAmount),
+              new Prisma.Decimal(0),
+            ),
+          ),
+          completedAt:
+            completionTimes.length > 0
+              ? new Date(
+                  Math.max(...completionTimes.map((value) => value.getTime())),
+                )
+              : null,
+        };
+      }),
+      page,
+      pageSize,
+      total,
+    };
+  }
   async getFinanceSnapshot(contractId: number, at = new Date()) {
     const contract = await this.prisma.db.contract.findUniqueOrThrow({
       where: { id: contractId },

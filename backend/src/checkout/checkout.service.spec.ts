@@ -5,6 +5,169 @@ import { CheckoutService } from './checkout.service';
 describe('CheckoutService', () => {
   const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
+  it('lists only completed settlements whose contracts are ended', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 9,
+        settlementNo: 'TZ202608120001',
+        actualCheckoutDate: new Date('2026-08-11'),
+        contract: {
+          contractNo: 'HT202608010001 | 2栋301 | 李四',
+          room: { id: 7, fullHouseNo: '2栋301' },
+          members: [{ tenant: { name: '李四' } }],
+        },
+        depositRefunds: [],
+      },
+    ]);
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: { findMany, count: jest.fn().mockResolvedValue(1) },
+        roomStatusHistory: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              businessType: 'CHECKOUT',
+              businessId: 9,
+              changedAt: new Date('2026-08-12T10:00:00.000Z'),
+            },
+          ]),
+        },
+      },
+    } as never);
+
+    await expect(
+      service.listCompletedContracts({ page: 1, pageSize: 20 }),
+    ).resolves.toEqual({
+      items: [
+        {
+          settlementId: 9,
+          settlementNo: 'TZ202608120001',
+          contractNo: 'HT202608010001 | 2栋301 | 李四',
+          roomFullHouseNo: '2栋301',
+          tenantName: '李四',
+          actualCheckoutDate: new Date('2026-08-11'),
+          refundAmount: '0.00',
+          completedAt: new Date('2026-08-12T10:00:00.000Z'),
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: 'COMPLETED', contract: { status: 'ENDED' } },
+      }),
+    );
+  });
+
+  it('searches completed contracts by contract number, room number, or tenant name', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: { findMany, count: jest.fn().mockResolvedValue(0) },
+        roomStatusHistory: { findMany: jest.fn() },
+      },
+    } as never);
+
+    await service.listCompletedContracts({
+      keyword: '2栋301',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contract: expect.objectContaining({
+            OR: expect.arrayContaining([
+              { contractNo: { contains: '2栋301' } },
+              { room: { fullHouseNo: { contains: '2栋301' } } },
+              { room: { houseNo: { contains: '2栋301' } } },
+              {
+                members: {
+                  some: {
+                    isCurrent: true,
+                    tenant: { name: { contains: '2栋301' } },
+                  },
+                },
+              },
+            ]),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('serializes approved combined refunds and zero refunds with two decimals', async () => {
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 9,
+              settlementNo: 'TZPOSITIVE',
+              actualCheckoutDate: new Date('2026-08-11'),
+              contract: {
+                contractNo: 'HTPOSITIVE',
+                room: { id: 7, fullHouseNo: '2栋301' },
+                members: [{ tenant: { name: '李四' } }],
+              },
+              depositRefunds: [
+                { id: 90, refundAmount: new Prisma.Decimal('800') },
+                { id: 91, refundAmount: new Prisma.Decimal('500') },
+              ],
+            },
+            {
+              id: 10,
+              settlementNo: 'TZZERO',
+              actualCheckoutDate: new Date('2026-08-10'),
+              contract: {
+                contractNo: 'HTZERO',
+                room: { id: 8, fullHouseNo: '2栋302' },
+                members: [{ tenant: { name: '王五' } }],
+              },
+              depositRefunds: [],
+            },
+          ]),
+          count: jest.fn().mockResolvedValue(2),
+        },
+        roomStatusHistory: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              businessType: 'DEPOSIT_REFUND',
+              businessId: 90,
+              changedAt: new Date('2026-08-12T11:00:00.000Z'),
+            },
+            {
+              businessType: 'DEPOSIT_REFUND',
+              businessId: 91,
+              changedAt: new Date('2026-08-12T11:00:00.000Z'),
+            },
+            {
+              businessType: 'CHECKOUT',
+              businessId: 10,
+              changedAt: new Date('2026-08-12T12:00:00.000Z'),
+            },
+          ]),
+        },
+      },
+    } as never);
+
+    await expect(
+      service.listCompletedContracts({ page: 1, pageSize: 20 }),
+    ).resolves.toMatchObject({
+      items: [
+        {
+          refundAmount: '1300.00',
+          completedAt: new Date('2026-08-12T11:00:00.000Z'),
+        },
+        {
+          refundAmount: '0.00',
+          completedAt: new Date('2026-08-12T12:00:00.000Z'),
+        },
+      ],
+    });
+  });
   it('returns a rejected settlement to draft without deleting its items', async () => {
     const update = jest.fn().mockResolvedValue({ id: 1, status: 'DRAFT' });
     const service = new CheckoutService({
