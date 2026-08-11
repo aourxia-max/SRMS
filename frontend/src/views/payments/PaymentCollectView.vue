@@ -7,7 +7,7 @@ import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
-import { allocationSummary, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,6 +26,10 @@ const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
 const selectedContract = computed(() => contracts.value.find((item) => item.id === form.contractId))
 const summary = computed(() => allocationSummary(bills.value, selectedBillIds.value, adjustment.enabled ? adjustment.amount : 0, form.amount))
 const manualAllocation = computed(() => !isPrefixSelection(bills.value, selectedBillIds.value))
+const eligibleAdjustmentBills = computed(() => {
+  const ids = new Set(eligibleAdjustmentBillIds(bills.value, selectedBillIds.value, form.amount, adjustment.amount))
+  return bills.value.filter((bill) => ids.has(bill.id))
+})
 
 watch(
   [() => adjustment.enabled, () => adjustment.amount, () => selectedBillIds.value.join(',')],
@@ -38,6 +42,15 @@ watch(
   },
 )
 
+watch(
+  [() => adjustment.enabled, () => adjustment.amount, () => form.amount, () => selectedBillIds.value.join(',')],
+  () => {
+    if (!adjustment.enabled) return
+    const allowed = eligibleAdjustmentBills.value
+    if (!allowed.some((bill) => bill.id === adjustment.rentBillId))
+      adjustment.rentBillId = allowed[0]?.id
+  },
+)
 function money(value: number | string | undefined) { return `¥${Number(value ?? 0).toFixed(2)}` }
 function roomLabel(contract: ContractSummary) { return contract.room?.fullHouseNo ? `${contract.contractNo} · ${contract.room.fullHouseNo}` : contract.contractNo }
 
@@ -77,6 +90,7 @@ async function submit() {
   if (Number(form.amount) <= 0) return ElMessage.warning('收款金额必须大于 0')
   if (manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
   if (adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')
+  if (adjustment.enabled && !eligibleAdjustmentBills.value.some((bill) => bill.id === adjustment.rentBillId)) return ElMessage.warning('优惠/减免金额需不大于归属账期在本次收款后的未收金额')
   submitting.value = true
   try {
     const result = await paymentApi.record({
@@ -132,7 +146,7 @@ onMounted(() => void loadContracts())
           <template #header><div class="card-title"><span class="step">3</span><b>优惠、减免与凭证</b></div></template>
           <el-switch v-model="adjustment.enabled" active-text="本次同时提交优惠/减免申请" />
           <el-row v-if="adjustment.enabled" :gutter="16" class="adjustment-form">
-            <el-col :xs="24" :md="8"><el-select v-model="adjustment.rentBillId" style="width:100%" placeholder="归属账期"><el-option v-for="bill in bills" :key="bill.id" :value="bill.id" :label="`第 ${bill.periodSeq} 期`" /></el-select></el-col>
+            <el-col :xs="24" :md="8"><el-select v-model="adjustment.rentBillId" style="width:100%" placeholder="归属账期"><el-option v-for="bill in eligibleAdjustmentBills" :key="bill.id" :value="bill.id" :label="`第 ${bill.periodSeq} 期`" /></el-select></el-col>
             <el-col :xs="24" :md="6"><el-select v-model="adjustment.adjustmentType" style="width:100%"><el-option label="优惠" value="DISCOUNT"/><el-option label="减免" value="WAIVER"/></el-select></el-col>
             <el-col :xs="24" :md="5"><el-input v-model="adjustment.amount" placeholder="金额" /></el-col>
             <el-col :xs="24" :md="5"><el-input v-model="adjustment.reason" placeholder="原因（必填）" /></el-col>

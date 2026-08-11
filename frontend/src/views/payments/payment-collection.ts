@@ -12,6 +12,26 @@ export function nextSuggestedPaymentAmount(currentAmount: string, previousSugges
     : currentAmount
 }
 
+export function eligibleAdjustmentBillIds(
+  bills: Pick<RentBill, 'id' | 'outstandingAmount'>[],
+  selectedIds: number[],
+  payment: string | number,
+  adjustment: string | number,
+) {
+  const billById = new Map(bills.map((bill) => [bill.id, bill]))
+  let remainingCash = Math.max(0, Number(payment) || 0)
+  const adjustmentAmount = Math.max(0, Number(adjustment) || 0)
+
+  return selectedIds.filter((id) => {
+    const bill = billById.get(id)
+    if (!bill) return false
+    const outstanding = Math.max(0, Number(bill.outstandingAmount) || 0)
+    const allocated = Math.min(remainingCash, outstanding)
+    remainingCash -= allocated
+    return outstanding - allocated + Number.EPSILON >= adjustmentAmount && outstanding - allocated > 0
+  })
+}
+
 export function allocationSummary(
   bills: Pick<RentBill, 'id' | 'outstandingAmount'>[],
   selectedIds: number[],

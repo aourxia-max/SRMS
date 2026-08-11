@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allocationSummary, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
 
 const bills = [
   { id: 11, periodSeq: 1, outstandingAmount: '1000.00' },
@@ -30,5 +30,9 @@ describe('收款账期选择规则', () => {
 
   it('填写优惠后不覆盖手工录入的部分收款金额', () => {
     expect(nextSuggestedPaymentAmount('500.00', '1350.00', 1250)).toBe('500.00')
+  })
+
+  it('multi-period discount can only target a bill with balance after cash allocation', () => {
+    expect(eligibleAdjustmentBillIds(bills, [11, 12], '1650.00', '150.00')).toEqual([12])
   })
 })
