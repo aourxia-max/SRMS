@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElOption, ElSelect } from 'element-plus'
+import { nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
@@ -11,10 +12,13 @@ import {
   buildFixedRentRebatePayload,
   contractConcessionError,
   createLatestRequestGuard,
+  filterFixedRentRebateContracts,
+  fixedRentRebateContractLabel,
+  isFixedRentRebateEligible,
   normalizeConcessionType,
   toContractPayload,
 } from '../../services/contracts'
-import type { ContractDetail, ContractFormModel } from '../../types/contracts'
+import { emptyContractForm, type ContractDetail, type ContractFormModel } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
 const completeForm = (): ContractFormModel => ({
@@ -34,7 +38,64 @@ const completeForm = (): ContractFormModel => ({
   commission: { recipientName: '员工A', amount: '800.00' },
 })
 
+const contractFormRooms = [
+  { id: 8, fullHouseNo: '1栋301', roomStatus: 'VACANT' },
+  { id: 22, fullHouseNo: '2栋602', roomStatus: 'PENDING_MOVE_IN' },
+]
+
+function mountContractFormWithParentFeedback(initial: ContractFormModel) {
+  let updateCount = 0
+  let wrapper: ReturnType<typeof mount>
+  const onUpdate = async (value: ContractFormModel) => {
+    updateCount += 1
+    if (updateCount <= 5) {
+      await wrapper.setProps({ modelValue: value })
+    }
+  }
+
+  wrapper = mount(ContractFormPanel, {
+    props: {
+      role: 'SUPER_ADMIN',
+      modelValue: initial,
+      rooms: contractFormRooms,
+      tenants: [],
+      'onUpdate:modelValue': onUpdate,
+    },
+    global: { plugins: [ElementPlus] },
+  })
+
+  return { wrapper, updateCount: () => updateCount }
+}
+
 describe('固定合同工作区', () => {
+  it('选择房源只向父页面发送一次有效更新且不会形成反馈循环', async () => {
+    const { wrapper, updateCount } = mountContractFormWithParentFeedback(emptyContractForm())
+    const roomSelect = wrapper.findAllComponents(ElSelect)[0]
+
+    await roomSelect.vm.$emit('update:modelValue', 8)
+    await flushPromises()
+    await nextTick()
+
+    expect(updateCount()).toBe(1)
+    expect((wrapper.vm.$props as { modelValue: ContractFormModel }).modelValue.roomId).toBe(8)
+    expect(roomSelect.props('modelValue')).toBe(8)
+  })
+
+  it('父页面重置或恢复草稿时只同步到子表单而不反向重复发送', async () => {
+    const { wrapper, updateCount } = mountContractFormWithParentFeedback(completeForm())
+    const roomSelect = wrapper.findAllComponents(ElSelect)[0]
+
+    await wrapper.setProps({ modelValue: emptyContractForm() })
+    await flushPromises()
+    expect(roomSelect.props('modelValue')).toBeNull()
+    expect(updateCount()).toBe(0)
+
+    await wrapper.setProps({ modelValue: { ...completeForm(), roomId: 22 } })
+    await flushPromises()
+    expect(roomSelect.props('modelValue')).toBe(22)
+    expect(updateCount()).toBe(0)
+  })
+
   it('仅展示四项固定合同导航，不出现阶梯功能', () => {
     const wrapper = mount(ContractTopNav, {
       props: { modelValue: 'list' },
@@ -135,6 +196,32 @@ const activeContract = (): ContractDetail => ({
 })
 
 describe('合同工作区复审边界', () => {
+  it('只把履行中的固定月租合同认定为可退差', () => {
+    expect(isFixedRentRebateEligible(activeContract())).toBe(true)
+    expect(isFixedRentRebateEligible({ ...activeContract(), status: 'PENDING_START' })).toBe(false)
+    expect(isFixedRentRebateEligible({ ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' })).toBe(false)
+    expect(isFixedRentRebateEligible(null)).toBe(false)
+  })
+
+  it.each([
+    ['合同编号', '050012'],
+    ['楼栋房号', '1栋301'],
+    ['主租户姓名', '张三'],
+  ])('按%s搜索符合退差条件的合同', (_field, keyword) => {
+    const eligible = activeContract()
+    const ineligible = { ...activeContract(), id: 13, contractNo: 'HT-OTHER', status: 'PENDING_START' }
+    expect(filterFixedRentRebateContracts([eligible, ineligible], keyword).map((item) => item.id)).toEqual([12])
+  })
+
+  it('搜索忽略首尾空格和英文大小写并生成完整标签', () => {
+    const eligible = activeContract()
+    expect(filterFixedRentRebateContracts([eligible], '  ht2026  ')).toEqual([eligible])
+    expect(fixedRentRebateContractLabel(eligible)).toContain('HT202608050012')
+    expect(fixedRentRebateContractLabel(eligible)).toContain('1栋301')
+    expect(fixedRentRebateContractLabel(eligible)).toContain('张三')
+    expect(fixedRentRebateContractLabel(eligible)).toBe(eligible.contractNo)
+  })
+
   it('仅允许最新预览请求更新状态', () => {
     const guard = createLatestRequestGuard()
     const first = guard.next()
@@ -166,6 +253,65 @@ describe('合同工作区复审边界', () => {
     ]
     expect(contractConcessionError(form.concessions)).toBeNull()
     expect(toContractPayload(form, 'ADMIN').concessions).toEqual(form.concessions)
+  })
+
+  it('仅在履行中的固定月租合同详情显示退差入口并携带合同编号', async () => {
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+    const button = wrapper.find('[data-test="open-fixed-rent-rebate"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('rebate')).toEqual([[12]])
+
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_START' } })
+    expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
+
+    await wrapper.setProps({ contract: { ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' } })
+    expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
+  })
+
+  it('退差页按三字段搜索符合资格的合同并支持切换', async () => {
+    const eligible = activeContract()
+    const second = {
+      ...activeContract(),
+      id: 14,
+      contractNo: 'HT202608050014 | 2栋602 | 李四',
+      roomId: 22,
+      room: { id: 22, fullHouseNo: '2栋602' },
+      members: [{ memberRole: 'PRIMARY' as const, tenant: { id: 31, name: '李四' } }],
+    }
+    const ineligible = { ...activeContract(), id: 15, contractNo: 'HT-NOT-ELIGIBLE', status: 'PENDING_START' }
+    const wrapper = mount(FixedRentRebatePanel, {
+      props: { contracts: [eligible, second, ineligible], contract: eligible, role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+
+    const search = wrapper.findAllComponents(ElSelect).find((item) => item.attributes('data-test') === 'fixed-rebate-contract-search')
+    expect(search).toBeDefined()
+    expect(search!.props('placeholder')).toBe('搜索合同编号、楼栋房号或租户姓名')
+    expect(search!.props('noMatchText')).toBe('未找到符合退差条件的合同')
+
+    const filter = search!.props('filterMethod') as (value: string) => void
+    filter('李四')
+    await flushPromises()
+    let labels = search!.findAllComponents(ElOption).map((option) => option.props('label'))
+    expect(labels).toEqual([fixedRentRebateContractLabel(second)])
+    expect(labels).not.toContain('HT-NOT-ELIGIBLE')
+
+    await search!.vm.$emit('change', 14)
+    expect(wrapper.emitted('select-contract')).toEqual([[14]])
+
+    filter('不存在')
+    await flushPromises()
+    labels = search!.findAllComponents(ElOption).map((option) => option.props('label'))
+    expect(labels).toEqual([])
+
+    filter('')
+    await flushPromises()
+    labels = search!.findAllComponents(ElOption).map((option) => option.props('label'))
+    expect(labels).toHaveLength(2)
   })
 
   it('仅为履行中的固定月租合同展示并生成退差载荷', () => {

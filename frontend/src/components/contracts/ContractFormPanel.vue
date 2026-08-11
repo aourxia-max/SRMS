@@ -34,12 +34,29 @@ const copyForm = (source: ContractFormModel): ContractFormModel => ({
   commission: source.commission ? { ...source.commission } : { recipientName: '', amount: '' },
 })
 
+const contractFormSnapshot = (source: ContractFormModel) => JSON.stringify(copyForm(source))
+
 const form = reactive(copyForm(props.modelValue))
 const formRef = ref<FormInstance>()
 const concessionError = ref('')
 
-watch(() => props.modelValue, (next) => Object.assign(form, copyForm(next)), { deep: true })
-watch(form, () => emit('update:modelValue', copyForm(form)), { deep: true })
+let lastSynchronizedSnapshot = contractFormSnapshot(form)
+
+watch(() => props.modelValue, (next) => {
+  const nextForm = copyForm(next)
+  const nextSnapshot = contractFormSnapshot(nextForm)
+  const currentSnapshot = contractFormSnapshot(form)
+  lastSynchronizedSnapshot = nextSnapshot
+  if (nextSnapshot !== currentSnapshot) Object.assign(form, nextForm)
+}, { deep: true })
+
+watch(form, () => {
+  const nextForm = copyForm(form)
+  const nextSnapshot = contractFormSnapshot(nextForm)
+  if (nextSnapshot === lastSynchronizedSnapshot) return
+  lastSynchronizedSnapshot = nextSnapshot
+  emit('update:modelValue', nextForm)
+}, { deep: true })
 
 const nonNegativeMoney = (_rule: unknown, value: string, callback: (error?: Error) => void) => {
   if (value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) callback(new Error('请输入不小于0的金额'))

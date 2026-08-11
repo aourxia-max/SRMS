@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { isFixedRentRebateEligible } from '../../services/contracts'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
@@ -13,7 +14,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: []; download: [file: ContractFile] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; download: [file: ContractFile] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
@@ -34,7 +35,18 @@ const paidBillCount = computed(() => props.bills.filter((item) => item.status ==
       </div>
       <header class="page-head">
         <div><h1>合同详情</h1><p>固定月租合同履行、账单、成员、附件和变更记录</p></div>
-        <div class="actions"><el-button @click="emit('back')">返回列表</el-button><el-button type="primary" plain @click="emit('rebate')">固定月租退差</el-button></div>
+        <div class="actions">
+          <el-button @click="emit('back')">返回列表</el-button>
+          <el-button
+            v-if="isFixedRentRebateEligible(contract)"
+            data-test="open-fixed-rent-rebate"
+            type="primary"
+            plain
+            @click="emit('rebate', contract.id)"
+          >
+            固定月租退差
+          </el-button>
+        </div>
       </header>
       <div class="metrics">
         <div><span>固定月租</span><b class="money-blue">{{ money(contract.monthlyRent) }}</b></div>

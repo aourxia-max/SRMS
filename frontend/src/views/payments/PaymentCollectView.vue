@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -7,7 +7,7 @@ import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
-import { allocationSummary, isPrefixSelection } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,13 +19,38 @@ const selectedBillIds = ref<number[]>([])
 const proofFiles = ref<Array<{ id: number; originalName: string }>>([])
 const loading = ref(false)
 const submitting = ref(false)
+const autoSuggestedPaymentAmount = ref('')
 const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as PaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
 const adjustment = reactive({ enabled: false, rentBillId: undefined as number | undefined, adjustmentType: 'DISCOUNT' as 'DISCOUNT' | 'WAIVER', amount: '', reason: '' })
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
 const selectedContract = computed(() => contracts.value.find((item) => item.id === form.contractId))
 const summary = computed(() => allocationSummary(bills.value, selectedBillIds.value, adjustment.enabled ? adjustment.amount : 0, form.amount))
 const manualAllocation = computed(() => !isPrefixSelection(bills.value, selectedBillIds.value))
+const eligibleAdjustmentBills = computed(() => {
+  const ids = new Set(eligibleAdjustmentBillIds(bills.value, selectedBillIds.value, form.amount, adjustment.amount))
+  return bills.value.filter((bill) => ids.has(bill.id))
+})
 
+watch(
+  [() => adjustment.enabled, () => adjustment.amount, () => selectedBillIds.value.join(',')],
+  () => {
+    if (!adjustment.enabled) return
+    if (form.amount !== autoSuggestedPaymentAmount.value) return
+    const nextAmount = nextSuggestedPaymentAmount(form.amount, autoSuggestedPaymentAmount.value, summary.value.effectiveOutstanding)
+    form.amount = nextAmount
+    autoSuggestedPaymentAmount.value = nextAmount
+  },
+)
+
+watch(
+  [() => adjustment.enabled, () => adjustment.amount, () => form.amount, () => selectedBillIds.value.join(',')],
+  () => {
+    if (!adjustment.enabled) return
+    const allowed = eligibleAdjustmentBills.value
+    if (!allowed.some((bill) => bill.id === adjustment.rentBillId))
+      adjustment.rentBillId = allowed[0]?.id
+  },
+)
 function money(value: number | string | undefined) { return `¥${Number(value ?? 0).toFixed(2)}` }
 function roomLabel(contract: ContractSummary) { return contract.room?.fullHouseNo ? `${contract.contractNo} · ${contract.room.fullHouseNo}` : contract.contractNo }
 
@@ -44,6 +69,7 @@ async function selectContract() {
     selectedBillIds.value = bills.value[0] ? [bills.value[0].id] : []
     adjustment.rentBillId = bills.value[0]?.id
     form.amount = bills.value[0]?.outstandingAmount ?? ''
+    autoSuggestedPaymentAmount.value = form.amount
   } finally { loading.value = false }
 }
 function toggleBill(bill: RentBill, checked: boolean) {
@@ -64,6 +90,7 @@ async function submit() {
   if (Number(form.amount) <= 0) return ElMessage.warning('收款金额必须大于 0')
   if (manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
   if (adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')
+  if (adjustment.enabled && !eligibleAdjustmentBills.value.some((bill) => bill.id === adjustment.rentBillId)) return ElMessage.warning('优惠/减免金额需不大于归属账期在本次收款后的未收金额')
   submitting.value = true
   try {
     const result = await paymentApi.record({
@@ -119,11 +146,12 @@ onMounted(() => void loadContracts())
           <template #header><div class="card-title"><span class="step">3</span><b>优惠、减免与凭证</b></div></template>
           <el-switch v-model="adjustment.enabled" active-text="本次同时提交优惠/减免申请" />
           <el-row v-if="adjustment.enabled" :gutter="16" class="adjustment-form">
-            <el-col :xs="24" :md="8"><el-select v-model="adjustment.rentBillId" style="width:100%" placeholder="归属账期"><el-option v-for="bill in bills" :key="bill.id" :value="bill.id" :label="`第 ${bill.periodSeq} 期`" /></el-select></el-col>
+            <el-col :xs="24" :md="8"><el-select v-model="adjustment.rentBillId" style="width:100%" placeholder="归属账期"><el-option v-for="bill in eligibleAdjustmentBills" :key="bill.id" :value="bill.id" :label="`第 ${bill.periodSeq} 期`" /></el-select></el-col>
             <el-col :xs="24" :md="6"><el-select v-model="adjustment.adjustmentType" style="width:100%"><el-option label="优惠" value="DISCOUNT"/><el-option label="减免" value="WAIVER"/></el-select></el-col>
             <el-col :xs="24" :md="5"><el-input v-model="adjustment.amount" placeholder="金额" /></el-col>
             <el-col :xs="24" :md="5"><el-input v-model="adjustment.reason" placeholder="原因（必填）" /></el-col>
           </el-row>
+          <p v-if="adjustment.enabled" class="adjustment-tip">已按优惠后的应收金额自动更新本次实收；如需部分收款，可直接修改实收金额。</p>
           <el-upload :http-request="uploadProof" :show-file-list="false" accept="image/jpeg,image/png,image/webp"><el-button>上传收款凭证</el-button><template #tip><div class="el-upload__tip">支持 JPG、PNG、WebP；凭证会与本次收款永久关联。</div></template></el-upload>
           <div v-if="proofFiles.length" class="proof-list"><el-tag v-for="file in proofFiles" :key="file.id" closable @close="proofFiles = proofFiles.filter((item) => item.id !== file.id)">{{ file.originalName }}</el-tag></div>
         </el-card>
@@ -141,5 +169,6 @@ onMounted(() => void loadContracts())
 
 <style scoped>
 .collect-layout { display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:18px; align-items:start; }.collect-main { display:grid; gap:16px; }.card-title { display:flex; align-items:center; gap:9px; color:#27364c; }.card-title small { margin-left:auto; color:#8a97a9; font-weight:400; }.step { display:grid; width:23px; height:23px; place-items:center; border-radius:7px; background:#e8f0ff; color:#246bfd; font-size:12px; font-weight:700; }.danger { color:#e05252; }.manual-reason,.adjustment-form { margin-top:16px; }.proof-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }.summary-card { position:sticky; top:88px; padding:22px; border:1px solid #e2e7ef; border-radius:12px; background:#fff; box-shadow:0 8px 25px rgba(34,51,84,.07); }.summary-contract { display:grid; gap:4px; padding-bottom:17px; border-bottom:1px solid #edf0f5; }.summary-contract small,dt { color:#8491a5; }.summary-contract b { margin-top:4px; color:#1f2d42; }.summary-contract span { color:#5b6980; font-size:13px; }dl { margin:10px 0 20px; }dl div { display:flex; justify-content:space-between; padding:10px 0; }dt { font-size:13px; }dd { margin:0; color:#314058; font-weight:600; }.discount { color:#2f9e65; }.primary { margin:4px -10px; padding:13px 10px!important; border-radius:8px; background:#eef4ff; }.primary dd { color:#246bfd; font-size:20px; }.permission-tip { color:#d46b4c; font-size:12px; text-align:center; }
+.adjustment-tip { margin:10px 0 0; color:#4f6380; font-size:12px; }
 @media (max-width:1050px) { .collect-layout { grid-template-columns:1fr; }.summary-card { position:static; } }
 </style>
