@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { DepositRefundsService } from './deposit-refunds.service';
 
 describe('DepositRefundsService', () => {
@@ -92,6 +93,7 @@ describe('DepositRefundsService', () => {
           },
         }),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       depositTransaction: {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
@@ -102,7 +104,10 @@ describe('DepositRefundsService', () => {
         create: prepaymentTransactionCreate,
       },
       fileAsset: { updateMany: jest.fn() },
-      checkoutSettlement: { update: jest.fn() },
+      checkoutSettlement: {
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       contract: { update: jest.fn() },
       room: { update: jest.fn() },
       roomStatusHistory: { create: jest.fn() },
@@ -133,5 +138,59 @@ describe('DepositRefundsService', () => {
     expect(
       prepaymentTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('500');
+  });
+
+  it('rejects duplicate refund approval before creating any ledger transaction', async () => {
+    const ledgerCreate = jest.fn();
+    const tx = {
+      depositRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          refundAmount: '800.00',
+          approvalStatus: 'PENDING',
+          files: [{ fileAssetId: 4 }],
+          checkoutSettlement: {
+            id: 8,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '0.00',
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '0.00',
+            contract: {
+              status: 'PENDING_CHECKOUT',
+              roomId: 7,
+              room: { roomStatus: 'PENDING_CHECKOUT' },
+            },
+          },
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
+        create: ledgerCreate,
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '0.00' }),
+        create: jest.fn(),
+      },
+      fileAsset: { updateMany: jest.fn() },
+      checkoutSettlement: { updateMany: jest.fn() },
+      contract: { update: jest.fn() },
+      room: { update: jest.fn() },
+      roomStatusHistory: { create: jest.fn() },
+    };
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(1, { id: 1, username: 'root', role: 'SUPER_ADMIN' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(ledgerCreate).not.toHaveBeenCalled();
   });
 });

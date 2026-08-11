@@ -18,6 +18,38 @@ export class CheckoutService {
       orderBy: { id: 'desc' },
     });
   }
+  async getFinanceSnapshot(contractId: number, at = new Date()) {
+    const contract = await this.prisma.db.contract.findUniqueOrThrow({
+      where: { id: contractId },
+      include: { bills: true },
+    });
+    const [deposit, prepayment] = await Promise.all([
+      this.prisma.db.depositTransaction.findFirst({
+        where: { contractId },
+        orderBy: { id: 'desc' },
+      }),
+      this.prisma.db.prepaymentTransaction.findFirst({
+        where: { contractId },
+        orderBy: { id: 'desc' },
+      }),
+    ]);
+    const validBills = contract.bills.filter(
+      (bill) => !['VOIDED', 'REFUNDED'].includes(bill.status),
+    );
+    const currentBills = validBills.filter((bill) => bill.periodStart <= at);
+    return {
+      depositBalance: this.money(deposit?.balanceAfter ?? 0),
+      rentOutstanding: this.money(
+        currentBills.reduce(
+          (sum, bill) => sum.plus(bill.outstandingAmount),
+          new Prisma.Decimal(0),
+        ),
+      ),
+      prepaymentBalance: this.money(prepayment?.balanceAfter ?? 0),
+      futureBillCount: validBills.filter((bill) => bill.periodStart > at)
+        .length,
+    };
+  }
   async getDetail(id: number) {
     const settlement =
       await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
@@ -338,7 +370,16 @@ export class CheckoutService {
         !isZero
       )
         throw new BadRequestException('零额最终确认条件不满足');
-      return this.completeWithoutDepositRefund(tx, settlement, user);
+
+      const claimed = await tx.checkoutSettlement.updateMany({
+        where: { id, status: 'APPROVED' },
+        data: { status: 'COMPLETED' },
+      });
+      if (claimed.count !== 1)
+        throw new ConflictException('结算单已被最终确认，请刷新后重试');
+
+      await this.completeWithoutDepositRefund(tx, settlement, user);
+      return { ...settlement, status: 'COMPLETED' as const };
     });
   }
   async reject(id: number, reason: string, user: AuthUser) {

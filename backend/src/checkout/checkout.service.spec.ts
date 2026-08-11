@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CheckoutService } from './checkout.service';
 
@@ -106,6 +106,7 @@ describe('CheckoutService', () => {
           contract: { id: 3, status: 'PENDING_CHECKOUT', roomId: 7 },
         }),
         update: settlementUpdate,
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       contract: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
@@ -199,6 +200,83 @@ describe('CheckoutService', () => {
       contract: { room: { roomNo: '301' } },
       items: [{ amount: '120.00' }],
       depositRefunds: [{ refundAmount: '1300.00' }],
+    });
+  });
+
+  it('rejects a zero-refund confirmation when another confirmation already claimed the settlement', async () => {
+    const contractUpdate = jest.fn();
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'APPROVED',
+          targetRoomStatus: 'EMPTY',
+          depositRefundableAmount: '0.00',
+          prepaymentRefundableAmount: '0.00',
+          finalReceivable: '0.00',
+          contract: { id: 3, status: 'PENDING_CHECKOUT', roomId: 7 },
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      contract: { findUniqueOrThrow: jest.fn(), update: contractUpdate },
+      room: { update: jest.fn() },
+      roomStatusHistory: { create: jest.fn() },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.completeZeroRefund(1, { ...user, role: 'SUPER_ADMIN' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(contractUpdate).not.toHaveBeenCalled();
+  });
+  it('returns a read-only checkout finance snapshot from current balances and bills', async () => {
+    const service = new CheckoutService({
+      db: {
+        contract: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 3,
+            bills: [
+              {
+                periodStart: new Date('2026-08-01'),
+                outstandingAmount: '120.00',
+                status: 'PARTIAL',
+              },
+              {
+                periodStart: new Date('2026-09-01'),
+                outstandingAmount: '300.00',
+                status: 'UNPAID',
+              },
+              {
+                periodStart: new Date('2026-07-01'),
+                outstandingAmount: '0.00',
+                status: 'PAID',
+              },
+            ],
+          }),
+        },
+        depositTransaction: {
+          findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
+        },
+        prepaymentTransaction: {
+          findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
+        },
+      },
+    } as never);
+
+    await expect(
+      service.getFinanceSnapshot(3, new Date('2026-08-15')),
+    ).resolves.toEqual({
+      depositBalance: '800.00',
+      rentOutstanding: '120.00',
+      prepaymentBalance: '500.00',
+      futureBillCount: 1,
     });
   });
 });

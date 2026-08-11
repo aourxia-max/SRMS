@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -115,6 +119,22 @@ export class DepositRefundsService {
         )
       )
         throw new BadRequestException('当前资金余额与结算单锁定退款金额不一致');
+      const claimedRefund = await tx.depositRefund.updateMany({
+        where: { id, approvalStatus: 'PENDING' },
+        data: {
+          approvalStatus: 'APPROVED',
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
+      if (claimedRefund.count !== 1)
+        throw new ConflictException('退款申请已被处理，请刷新后重试');
+      const claimedSettlement = await tx.checkoutSettlement.updateMany({
+        where: { id: settlement.id, status: 'APPROVED' },
+        data: { status: 'COMPLETED' },
+      });
+      if (claimedSettlement.count !== 1)
+        throw new ConflictException('结算单已被最终确认，请刷新后重试');
       if (depositRefundableAmount.gt(0)) {
         await tx.depositTransaction.create({
           data: {
@@ -144,18 +164,6 @@ export class DepositRefundsService {
       await tx.fileAsset.updateMany({
         where: { id: { in: refund.files.map((file) => file.fileAssetId) } },
         data: { lockedAt: new Date() },
-      });
-      await tx.depositRefund.update({
-        where: { id },
-        data: {
-          approvalStatus: 'APPROVED',
-          approvedBy: user.id,
-          approvedAt: new Date(),
-        },
-      });
-      await tx.checkoutSettlement.update({
-        where: { id: settlement.id },
-        data: { status: 'COMPLETED' },
       });
       await tx.contract.update({
         where: { id: refund.contractId },

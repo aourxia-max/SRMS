@@ -25,6 +25,14 @@ export class CheckoutController {
   @Get() async list() {
     return { code: 200, message: 'success', data: await this.checkout.list() };
   }
+  @Get('contract/:contractId/finance-snapshot')
+  async financeSnapshot(@Param('contractId', ParseIntPipe) contractId: number) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.getFinanceSnapshot(contractId),
+    };
+  }
   @Get(':id')
   async detail(@Param('id', ParseIntPipe) id: number) {
     return {
