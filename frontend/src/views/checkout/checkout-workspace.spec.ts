@@ -1,12 +1,16 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { createPinia } from 'pinia'
 import CheckoutTopNav from './CheckoutTopNav.vue'
 import CheckoutWorkspace from './CheckoutWorkspace.vue'
 import CheckoutInitiatePanel from './CheckoutInitiatePanel.vue'
+import CheckoutSettlementPanel from './CheckoutSettlementPanel.vue'
 vi.mock('../../services/checkout', () => ({
   checkoutApi: {
     contracts: vi.fn().mockResolvedValue([{ id: 1, contractNo: 'HT202608010001', status: 'ACTIVE' }]),
     initiate: vi.fn(),
+    settlements: vi.fn().mockResolvedValue([{ id: 8, settlementNo: 'TZ202608010001', status: 'PENDING', contractId: 1, depositRefundableAmount: '0.00', prepaymentRefundableAmount: '0.00', finalReceivable: '0.00' }]),
+    approve: vi.fn(),
   },
 }))
 
@@ -19,7 +23,7 @@ describe('CheckoutTopNav', () => {
     expect(wrapper.text()).toContain('3 押金退还确认')
   })
   it('opens the initiate checkout workspace by default', () => {
-    const wrapper = mount(CheckoutWorkspace)
+    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } })
 
     expect(wrapper.text()).toContain('发起退租')
     expect(wrapper.text()).toContain('请选择正在履行的合同')
@@ -35,9 +39,34 @@ describe('CheckoutTopNav', () => {
     expect(wrapper.text()).toContain('请填写退租原因')
   })
   it('loads active contracts into the initiate checkout form', async () => {
-    const wrapper = mount(CheckoutWorkspace)
+    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('HT202608010001')
+  })
+  it('shows an approved settlement as waiting for final refund confirmation', () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [{
+          id: 1,
+          settlementNo: 'TZ202608010001',
+          status: 'APPROVED',
+          contractId: 3,
+          depositRefundableAmount: '800.00',
+          prepaymentRefundableAmount: '500.00',
+          finalReceivable: '0.00',
+        }],
+      },
+    })
+
+    expect(wrapper.text()).toContain('等待最终退款确认')
+    expect(wrapper.text()).toContain('1,300.00')
+  })
+  it('loads settlement records when switching to the settlement tab', async () => {
+    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+    await wrapper.get('button:nth-child(2)').trigger('click')
+
+    expect(wrapper.text()).toContain('TZ202608010001')
   })
 })
