@@ -13,6 +13,7 @@ const emit = defineEmits<{
   approve: [id: number];
   submit: [id: number, payload: Record<string, unknown>];
   returnToDraft: [id: number];
+  cancel: [id: number];
 }>();
 
 const selectedId = ref<number | null>(null);
@@ -25,10 +26,15 @@ const form = reactive({
   remark: "",
 });
 const items = ref<CheckoutSettlementItem[]>([]);
+const actionableSettlements = computed(() =>
+  props.settlements.filter((item) =>
+    ["DRAFT", "PENDING", "REJECTED"].includes(item.status),
+  ),
+);
 const selected = computed(
   () =>
-    props.settlements.find((item) => item.id === selectedId.value) ??
-    props.settlements[0],
+    actionableSettlements.value.find((item) => item.id === selectedId.value) ??
+    actionableSettlements.value[0],
 );
 
 function isoDate(value?: string) {
@@ -109,7 +115,14 @@ function statusText(status: CheckoutSettlement["status"]) {
     APPROVED: "等待最终退款确认",
     REJECTED: "已驳回",
     COMPLETED: "已完成",
+    CANCELLED: "已取消",
   }[status];
+}
+function cancelSelected() {
+  if (!selected.value) return;
+  if (!window.confirm("确定取消该退租结算工单吗？取消后会恢复合同和房态。"))
+    return;
+  emit("cancel", selected.value.id);
 }
 </script>
 
@@ -123,13 +136,13 @@ function statusText(status: CheckoutSettlement["status"]) {
         </p>
       </div>
     </div>
-    <div v-if="!settlements.length" class="settlement-panel__empty">
+    <div v-if="!actionableSettlements.length" class="settlement-panel__empty">
       暂无已发起的退租结算单。
     </div>
     <template v-else>
       <div class="settlement-panel__list">
         <button
-          v-for="item in settlements"
+          v-for="item in actionableSettlements"
           :key="item.id"
           type="button"
           :class="{ active: selected?.id === item.id }"
@@ -271,6 +284,14 @@ function statusText(status: CheckoutSettlement["status"]) {
           </div>
           <div class="settlement-panel__actions">
             <button
+              type="button"
+              class="danger-button"
+              data-test="settlement-cancel"
+              @click="cancelSelected"
+            >
+              取消退租结算
+            </button>
+            <button
               data-test="settlement-submit"
               type="button"
               class="primary-button"
@@ -281,9 +302,17 @@ function statusText(status: CheckoutSettlement["status"]) {
           </div>
         </template>
         <div
-          v-else-if="selected.status === 'PENDING' && isSuper"
+          v-else-if="selected.status === 'PENDING'"
           class="settlement-panel__actions"
         >
+          <button
+            type="button"
+            class="danger-button"
+            data-test="settlement-cancel"
+            @click="cancelSelected"
+          >
+            取消退租结算
+          </button>
           <button
             type="button"
             class="primary-button"
@@ -296,6 +325,14 @@ function statusText(status: CheckoutSettlement["status"]) {
           v-else-if="selected.status === 'REJECTED'"
           class="settlement-panel__actions"
         >
+          <button
+            type="button"
+            class="danger-button"
+            data-test="settlement-cancel"
+            @click="cancelSelected"
+          >
+            取消退租结算
+          </button>
           <button
             type="button"
             class="secondary-button"

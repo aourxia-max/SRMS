@@ -71,6 +71,12 @@ export const checkoutApi = {
         `/checkout-settlements/${id}/return-to-draft`,
       ),
     ),
+  cancel: async (id: number) =>
+    data(
+      await http.post<Envelope<CheckoutSettlement>>(
+        `/checkout-settlements/${id}/cancel`,
+      ),
+    ),
   completeZeroRefund: async (id: number) =>
     data(
       await http.post<Envelope<CheckoutSettlement>>(

@@ -14,6 +14,7 @@ export class CheckoutService {
   constructor(private readonly prisma: PrismaService) {}
   async list() {
     return this.prisma.db.checkoutSettlement.findMany({
+      where: { status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
       include: { contract: { include: { room: true } }, items: true },
       orderBy: { id: 'desc' },
     });
@@ -533,6 +534,76 @@ export class CheckoutService {
         approvedBy: user.id,
         approvedAt: new Date(),
       },
+    });
+  }
+  async cancel(id: number, user: AuthUser) {
+    return this.prisma.db.$transaction(async (tx) => {
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        include: { contract: { include: { room: true } } },
+      });
+      if (!['DRAFT', 'PENDING', 'REJECTED'].includes(settlement.status))
+        throw new BadRequestException(
+          '只有草稿、待确认或已驳回的退租结算工单可以取消',
+        );
+      if (
+        settlement.contract.status !== 'PENDING_CHECKOUT' ||
+        settlement.contract.room.roomStatus !== 'PENDING_CHECKOUT'
+      )
+        throw new ConflictException('合同或房源状态已变化，请刷新后重试');
+
+      const initialHistory = await tx.roomStatusHistory.findFirst({
+        where: {
+          businessType: 'CHECKOUT',
+          businessId: id,
+          toStatus: 'PENDING_CHECKOUT',
+        },
+        orderBy: { changedAt: 'asc' },
+      });
+      if (!initialHistory?.fromStatus)
+        throw new ConflictException('缺少发起退租的房态历史，无法安全恢复房态');
+      const restoreStatus = initialHistory.fromStatus;
+
+      const claimed = await tx.checkoutSettlement.updateMany({
+        where: { id, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
+        data: { status: 'CANCELLED' },
+      });
+      if (claimed.count !== 1)
+        throw new ConflictException('退租结算工单状态已变化，请刷新后重试');
+
+      const contractRestored = await tx.contract.updateMany({
+        where: { id: settlement.contractId, status: 'PENDING_CHECKOUT' },
+        data: { status: 'ACTIVE' },
+      });
+      if (contractRestored.count !== 1)
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+
+      const roomRestored = await tx.room.updateMany({
+        where: {
+          id: settlement.contract.roomId,
+          roomStatus: 'PENDING_CHECKOUT',
+        },
+        data: {
+          roomStatus: restoreStatus,
+          statusChangedAt: new Date(),
+        },
+      });
+      if (roomRestored.count !== 1)
+        throw new ConflictException('房源状态已变化，请刷新后重试');
+
+      await tx.roomStatusHistory.create({
+        data: {
+          roomId: settlement.contract.roomId,
+          fromStatus: 'PENDING_CHECKOUT',
+          toStatus: restoreStatus,
+          changeReason: '取消退租结算',
+          businessType: 'CHECKOUT',
+          businessId: id,
+          changedBy: user.id,
+        },
+      });
+
+      return tx.checkoutSettlement.findUnique({ where: { id } });
     });
   }
   async returnToDraft(id: number, user: AuthUser) {

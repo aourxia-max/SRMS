@@ -93,6 +93,7 @@ vi.mock("../../services/checkout", () => ({
       },
     }),
     approve: vi.fn(),
+    cancel: vi.fn(),
   },
 }));
 
@@ -132,24 +133,23 @@ describe("CheckoutTopNav", () => {
 
     expect(wrapper.text()).toContain("HT202608010001");
   });
-  it("shows an approved settlement as waiting for final refund confirmation", () => {
-    const wrapper = mount(CheckoutSettlementPanel, {
+  it("keeps an approved settlement in the final refund confirmation panel", () => {
+    const wrapper = mount(CheckoutRefundPanel, {
       props: {
-        settlements: [
-          {
-            id: 1,
-            settlementNo: "TZ202608010001",
-            status: "APPROVED",
-            contractId: 3,
-            depositRefundableAmount: "800.00",
-            prepaymentRefundableAmount: "500.00",
-            finalReceivable: "0.00",
-          },
-        ],
+        settlement: {
+          id: 1,
+          settlementNo: "TZ202608010001",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "800.00",
+          prepaymentRefundableAmount: "500.00",
+          finalReceivable: "0.00",
+        },
+        role: "ADMIN",
       },
     });
 
-    expect(wrapper.text()).toContain("等待最终退款确认");
+    expect(wrapper.text()).toContain("押金退还确认");
     expect(wrapper.text()).toContain("1,300.00");
   });
   it("loads settlement records when switching to the settlement tab", async () => {
@@ -339,6 +339,74 @@ describe("CheckoutTopNav", () => {
       "退款凭证下载失败，请稍后重试",
     );
   });
+
+  it("shows only actionable settlement cards and hides approved records from the settlement tab", async () => {
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+
+    expect(wrapper.text()).toContain("TZ202608010001");
+    expect(wrapper.text()).not.toContain("TZ202608010002");
+  });
+
+  it("confirms and cancels a rejected checkout settlement from the settlement card", async () => {
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [
+          {
+            id: 10,
+            settlementNo: "TZ202608010010",
+            status: "REJECTED",
+            contractId: 3,
+            depositRefundableAmount: "0.00",
+            prepaymentRefundableAmount: "0.00",
+            finalReceivable: "0.00",
+          },
+        ],
+      },
+    });
+
+    await wrapper.get('[data-test="settlement-cancel"]').trigger("click");
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("取消后会恢复合同和房态"),
+    );
+    expect(wrapper.emitted("cancel")).toEqual([[10]]);
+    confirm.mockRestore();
+  });
+
+  it("calls the cancel API and reloads checkout data after cancellation", async () => {
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const api = checkoutApi as unknown as {
+      cancel: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    const initialSettlementCalls = api.settlements.mock.calls.length;
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+
+    await wrapper.get('[data-test="settlement-cancel"]').trigger("click");
+    await flushPromises();
+
+    expect(api.cancel).toHaveBeenCalledWith(8);
+    expect(api.settlements.mock.calls.length).toBe(initialSettlementCalls + 2);
+    confirm.mockRestore();
+  });
+
   it("shows zero-refund final confirmation without proof upload for a super admin", () => {
     const wrapper = mount(CheckoutRefundPanel, {
       props: {

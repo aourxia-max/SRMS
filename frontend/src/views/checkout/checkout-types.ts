@@ -35,7 +35,8 @@ export type DepositRefund = {
 export type CheckoutSettlement = {
   id: number;
   settlementNo: string;
-  status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "COMPLETED";
+  status:
+    "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED";
   contractId: number;
   actualCheckoutDate?: string;
   handoverDate?: string;

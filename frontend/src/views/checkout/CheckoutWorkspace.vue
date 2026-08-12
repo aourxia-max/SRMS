@@ -192,6 +192,15 @@ async function returnToDraft(id: number) {
     actionError.value = message(error, "退回草稿失败，请稍后重试");
   }
 }
+async function cancelSettlement(id: number) {
+  actionError.value = "";
+  try {
+    await checkoutApi.cancel(id);
+    await loadData();
+  } catch (error) {
+    actionError.value = message(error, "取消退租结算失败，请稍后重试");
+  }
+}
 async function approveSettlement(id: number) {
   actionError.value = "";
   try {
@@ -269,6 +278,7 @@ onMounted(loadData);
       @submit="submitSettlement"
       @approve="approveSettlement"
       @return-to-draft="returnToDraft"
+      @cancel="cancelSettlement"
     />
     <CheckoutRefundPanel
       v-else-if="activeTab === 'refund'"

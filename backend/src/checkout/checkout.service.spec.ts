@@ -169,6 +169,118 @@ describe('CheckoutService', () => {
       ],
     });
   });
+
+  it('cancels a draft checkout settlement and restores contract and original room status', async () => {
+    const settlementUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const contractUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const roomUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const historyCreate = jest.fn();
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'DRAFT',
+          contractId: 3,
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            roomId: 7,
+            room: { id: 7, roomStatus: 'PENDING_CHECKOUT' },
+          },
+        }),
+        updateMany: settlementUpdateMany,
+        findUnique: jest.fn().mockResolvedValue({ id: 1, status: 'CANCELLED' }),
+      },
+      roomStatusHistory: {
+        findFirst: jest.fn().mockResolvedValue({ fromStatus: 'RENTED' }),
+        create: historyCreate,
+      },
+      contract: { updateMany: contractUpdateMany },
+      room: { updateMany: roomUpdateMany },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.cancel(1, user)).resolves.toEqual({
+      id: 1,
+      status: 'CANCELLED',
+    });
+    expect(settlementUpdateMany).toHaveBeenCalledWith({
+      where: { id: 1, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
+      data: { status: 'CANCELLED' },
+    });
+    expect(contractUpdateMany).toHaveBeenCalledWith({
+      where: { id: 3, status: 'PENDING_CHECKOUT' },
+      data: { status: 'ACTIVE' },
+    });
+    expect(roomUpdateMany).toHaveBeenCalledWith({
+      where: { id: 7, roomStatus: 'PENDING_CHECKOUT' },
+      data: { roomStatus: 'RENTED', statusChangedAt: expect.any(Date) },
+    });
+    expect(historyCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        roomId: 7,
+        fromStatus: 'PENDING_CHECKOUT',
+        toStatus: 'RENTED',
+        changeReason: '取消退租结算',
+        businessType: 'CHECKOUT',
+        businessId: 1,
+        changedBy: user.id,
+      }),
+    });
+  });
+
+  it('rejects cancelling an approved settlement before restoring contract or room', async () => {
+    const contractUpdateMany = jest.fn();
+    const roomUpdateMany = jest.fn();
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'APPROVED',
+          contract: {
+            status: 'PENDING_CHECKOUT',
+            room: { roomStatus: 'PENDING_CHECKOUT' },
+          },
+        }),
+      },
+      contract: { updateMany: contractUpdateMany },
+      room: { updateMany: roomUpdateMany },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.cancel(1, user)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(contractUpdateMany).not.toHaveBeenCalled();
+    expect(roomUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('lists only actionable checkout settlements by default', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CheckoutService({
+      db: { checkoutSettlement: { findMany } },
+    } as never);
+
+    await service.list();
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
+      }),
+    );
+  });
   it('returns a rejected settlement to draft without deleting its items', async () => {
     const update = jest.fn().mockResolvedValue({ id: 1, status: 'DRAFT' });
     const service = new CheckoutService({
