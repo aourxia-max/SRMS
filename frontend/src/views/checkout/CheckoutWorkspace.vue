@@ -38,11 +38,7 @@ const loadingCompletedContracts = ref(false);
 const actionError = ref("");
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const isSuper = computed(() => session.user?.role === "SUPER_ADMIN");
-const approvedSettlement = computed(
-  () =>
-    refundSettlement.value ||
-    settlements.value.find((item) => item.status === "APPROVED"),
-);
+const approvedSettlement = computed(() => refundSettlement.value);
 
 function message(error: unknown, fallback: string) {
   return (
@@ -53,19 +49,17 @@ function message(error: unknown, fallback: string) {
 async function loadData() {
   loadingContracts.value = true;
   try {
-    const [loadedContracts, loadedSettlements] = await Promise.all([
+    const [loadedContracts, loadedSettlements, refundPending] = await Promise.all([
       checkoutApi.contracts(),
       checkoutApi.settlements(),
+      checkoutApi.refundPendingSettlements(),
     ]);
     contracts.value = loadedContracts;
     settlements.value = loadedSettlements;
-    const approved = loadedSettlements.find(
-      (item) => item.status === "APPROVED",
-    );
-    refundSettlement.value =
-      approved && typeof checkoutApi.detail === "function"
-        ? await checkoutApi.detail(approved.id)
-        : approved;
+    const approved = refundPending[0];
+    refundSettlement.value = approved
+      ? await checkoutApi.detail(approved.id)
+      : undefined;
   } catch (error) {
     actionError.value = message(error, "退租数据加载失败，请稍后重试");
   } finally {

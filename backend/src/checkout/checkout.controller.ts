@@ -35,6 +35,15 @@ export class CheckoutController {
       data: await this.checkout.getFinanceSnapshot(contractId),
     };
   }
+
+  @Get('refund-pending')
+  async refundPending() {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.listRefundPending(),
+    };
+  }
   @Get('completed-contracts')
   async completedContracts(@Query() query: CompletedCheckoutContractsQueryDto) {
     return {

@@ -267,6 +267,25 @@ describe('CheckoutService', () => {
     expect(roomUpdateMany).not.toHaveBeenCalled();
   });
 
+
+  it('lists approved settlements separately for final refund confirmation', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CheckoutService({
+      db: { checkoutSettlement: { findMany } },
+    } as never);
+
+    await service.listRefundPending();
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: 'APPROVED',
+          contract: { status: 'PENDING_CHECKOUT' },
+        },
+      }),
+    );
+  });
+
   it('lists only actionable checkout settlements by default', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const service = new CheckoutService({

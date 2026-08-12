@@ -26,6 +26,8 @@ vi.mock("../../services/checkout", () => ({
         prepaymentRefundableAmount: "0.00",
         finalReceivable: "0.00",
       },
+    ]),
+    refundPendingSettlements: vi.fn().mockResolvedValue([
       {
         id: 9,
         settlementNo: "TZ202608010002",
@@ -407,6 +409,25 @@ describe("CheckoutTopNav", () => {
     confirm.mockRestore();
   });
 
+  it("loads approved settlements for the final refund tab from a dedicated endpoint", async () => {
+    const api = checkoutApi as unknown as {
+      settlements: ReturnType<typeof vi.fn>;
+      refundPendingSettlements: ReturnType<typeof vi.fn>;
+      detail: ReturnType<typeof vi.fn>;
+    };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+
+    await flushPromises();
+    await wrapper.get("button:nth-child(3)").trigger("click");
+    await flushPromises();
+
+    expect(api.settlements).toHaveBeenCalled();
+    expect(api.refundPendingSettlements).toHaveBeenCalled();
+    expect(api.detail).toHaveBeenCalledWith(9);
+    expect(wrapper.text()).toContain("\u65e0\u9700\u9000\u6b3e\u786e\u8ba4");
+  });
   it("shows zero-refund final confirmation without proof upload for a super admin", () => {
     const wrapper = mount(CheckoutRefundPanel, {
       props: {

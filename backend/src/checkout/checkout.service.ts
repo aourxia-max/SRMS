@@ -19,6 +19,17 @@ export class CheckoutService {
       orderBy: { id: 'desc' },
     });
   }
+
+  async listRefundPending() {
+    return this.prisma.db.checkoutSettlement.findMany({
+      where: {
+        status: 'APPROVED',
+        contract: { status: 'PENDING_CHECKOUT' },
+      },
+      include: { contract: { include: { room: true } }, items: true },
+      orderBy: { id: 'desc' },
+    });
+  }
   async listCompletedContracts(query: {
     keyword?: string;
     page?: number;

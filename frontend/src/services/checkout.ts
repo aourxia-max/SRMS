@@ -22,6 +22,12 @@ export const checkoutApi = {
     data(
       await http.get<Envelope<CheckoutSettlement[]>>("/checkout-settlements"),
     ),
+  refundPendingSettlements: async () =>
+    data(
+      await http.get<Envelope<CheckoutSettlement[]>>(
+        "/checkout-settlements/refund-pending",
+      ),
+    ),
   completedContracts: async (params: {
     keyword?: string;
     page?: number;
