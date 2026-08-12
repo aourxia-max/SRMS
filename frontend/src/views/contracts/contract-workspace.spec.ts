@@ -360,3 +360,23 @@ describe('合同工作区复审边界', () => {
     expect(wrapper.emitted('download')?.[0]).toEqual([file])
   })
 })
+
+describe('????????', () => {
+  it('????????????????', async () => {
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+
+    const button = wrapper.find('[data-test="open-checkout"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('checkout')).toEqual([[12]])
+
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_CHECKOUT' } })
+    expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
+
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'ENDED' } })
+    expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
+  })
+})

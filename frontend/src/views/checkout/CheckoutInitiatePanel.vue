@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import type { CheckoutContract } from "./checkout-types";
 
 type CheckoutSnapshot = {
@@ -12,6 +12,7 @@ const props = defineProps<{
   contracts: CheckoutContract[];
   loading?: boolean;
   snapshot?: CheckoutSnapshot;
+  selectedContractId?: number | null;
 }>();
 const emit = defineEmits<{
   submit: [contractId: number, payload: Record<string, string>];
@@ -31,6 +32,18 @@ const form = reactive({
 const errors = ref<string[]>([]);
 const activeContracts = computed(() =>
   props.contracts.filter((item) => item.status === "ACTIVE"),
+);
+
+watch(
+  () => [props.selectedContractId, props.contracts] as const,
+  ([contractId]) => {
+    if (!contractId) return;
+    const exists = props.contracts.some((item) => item.id === contractId && item.status === "ACTIVE");
+    if (!exists || form.contractId === String(contractId)) return;
+    form.contractId = String(contractId);
+    emit("contractChange", contractId);
+  },
+  { immediate: true },
 );
 
 function contractChange() {
@@ -94,6 +107,7 @@ function submit() {
         <label class="form-field form-field--wide">
           <span><i>*</i>退租合同</span>
           <select
+            data-test="checkout-contract-select"
             v-model="form.contractId"
             :disabled="loading"
             @change="contractChange"

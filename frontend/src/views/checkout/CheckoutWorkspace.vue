@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import { checkoutApi } from "../../services/checkout";
 import { useSessionStore } from "../../stores/session";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
@@ -14,6 +15,7 @@ import type {
   CompletedCheckoutContractsResult,
 } from "./checkout-types";
 
+const route = useRoute() || { query: {} };
 const session = useSessionStore();
 const activeTab = ref<CheckoutTab>("initiate");
 const contracts = ref<CheckoutContract[]>([]);
@@ -36,8 +38,10 @@ const completedKeyword = ref("");
 const completedDetail = ref<CheckoutSettlement>();
 const loadingCompletedContracts = ref(false);
 const actionError = ref("");
+const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const isSuper = computed(() => session.user?.role === "SUPER_ADMIN");
+applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
 
 function message(error: unknown, fallback: string) {
@@ -46,6 +50,15 @@ function message(error: unknown, fallback: string) {
       ?.message || fallback
   );
 }
+function applyRouteState() {
+  const requestedTab = String(route.query.tab || "");
+  if (["initiate", "settlement", "refund", "completed"].includes(requestedTab)) {
+    activeTab.value = requestedTab as CheckoutTab;
+  }
+  const contractId = Number(route.query.contractId);
+  selectedInitiateContractId.value = Number.isInteger(contractId) && contractId > 0 ? contractId : null;
+}
+
 async function loadData() {
   loadingContracts.value = true;
   try {
@@ -262,6 +275,7 @@ onMounted(loadData);
       :contracts="contracts"
       :loading="loadingContracts"
       :snapshot="financeSnapshot"
+      :selected-contract-id="selectedInitiateContractId"
       @contract-change="loadFinanceSnapshot"
       @submit="initiate"
     />

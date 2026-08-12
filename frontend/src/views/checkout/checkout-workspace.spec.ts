@@ -16,6 +16,7 @@ vi.mock("../../services/checkout", () => ({
         { id: 1, contractNo: "HT202608010001", status: "ACTIVE" },
       ]),
     initiate: vi.fn(),
+    financeSnapshot: vi.fn().mockResolvedValue({ depositBalance: "1000.00", rentOutstanding: "0.00", prepaymentBalance: "0.00", futureBillCount: 0 }),
     settlements: vi.fn().mockResolvedValue([
       {
         id: 8,
@@ -580,3 +581,20 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.emitted("submit")?.[0]?.[1]).toMatchObject({ items: [] });
   });
 });
+
+
+describe('????????', () => {
+  it('?????????????????????????', async () => {
+    const wrapper = mount(CheckoutInitiatePanel, {
+      props: {
+        contracts: [{ id: 1, contractNo: 'HT202608010001', status: 'ACTIVE' }],
+        selectedContractId: 1,
+      },
+    })
+    await flushPromises()
+
+    const select = wrapper.find('[data-test="checkout-contract-select"]')
+    expect((select.element as HTMLSelectElement).value).toBe('1')
+    expect(wrapper.emitted('contractChange')).toEqual([[1]])
+  })
+})

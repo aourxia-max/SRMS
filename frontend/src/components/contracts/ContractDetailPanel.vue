@@ -14,13 +14,14 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; download: [file: ContractFile] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; download: [file: ContractFile] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
 const statusLabel: Record<string, string> = { DRAFT: '??', PENDING_START: '???', ACTIVE: '???', PENDING_CHECKOUT: '???', ENDED: '???', VOIDED: '???' }
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
+const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
 </script>
 
 <template>
@@ -37,6 +38,14 @@ const paidBillCount = computed(() => props.bills.filter((item) => item.status ==
         <div><h1>合同详情</h1><p>固定月租合同履行、账单、成员、附件和变更记录</p></div>
         <div class="actions">
           <el-button @click="emit('back')">返回列表</el-button>
+          <el-button
+            v-if="canInitiateCheckout"
+            data-test="open-checkout"
+            type="primary"
+            @click="emit('checkout', contract.id)"
+          >
+            ????
+          </el-button>
           <el-button
             v-if="isFixedRentRebateEligible(contract)"
             data-test="open-fixed-rent-rebate"
