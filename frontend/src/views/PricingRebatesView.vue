@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
+import { approvalStatusLabel, pricingRebateSourceLabel, settlementMethodLabel } from '../utils/status-labels'
 
 const session = useSessionStore()
 const contracts = ref<any[]>([])
@@ -74,6 +75,6 @@ onMounted(loadContracts)
       <div v-if="form.settlementMethod === 'ACTUAL_REFUND'"><el-upload :auto-upload="false" :show-file-list="false" :on-change="uploadProof"><el-button>上传退款凭证</el-button></el-upload><span style="margin-left: 12px">已上传 {{ proofFileIds.length }} 份凭证</span></div>
       <el-button type="primary" style="margin-top: 16px" @click="submit">提交退差单</el-button>
     </el-card>
-    <el-card header="退差记录" style="margin-top: 16px"><el-table :data="rebates"><el-table-column prop="rebateNo" label="退差编号" /><el-table-column prop="sourceType" label="来源" /><el-table-column prop="referenceAmount" label="系统参考额" /><el-table-column prop="actualAmount" label="实际退差" /><el-table-column prop="settlementMethod" label="结算方式" /><el-table-column prop="approvalStatus" label="状态" /><el-table-column prop="differenceReason" label="差异原因" /><el-table-column v-if="isSuperAdmin" label="审批"><template #default="{ row }"><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="primary" @click="approve(row.id)">确认</el-button><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="danger" @click="reject(row.id)">驳回</el-button></template></el-table-column></el-table></el-card>
+    <el-card header="退差记录" style="margin-top: 16px"><el-table :data="rebates"><el-table-column prop="rebateNo" label="退差编号" /><el-table-column label="来源"><template #default="{ row }">{{ pricingRebateSourceLabel(row.sourceType) }}</template></el-table-column><el-table-column prop="referenceAmount" label="系统参考额" /><el-table-column prop="actualAmount" label="实际退差" /><el-table-column label="结算方式"><template #default="{ row }">{{ settlementMethodLabel(row.settlementMethod) }}</template></el-table-column><el-table-column label="状态"><template #default="{ row }">{{ approvalStatusLabel(row.approvalStatus) }}</template></el-table-column><el-table-column prop="differenceReason" label="差异原因" /><el-table-column v-if="isSuperAdmin" label="审批"><template #default="{ row }"><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="primary" @click="approve(row.id)">确认</el-button><el-button v-if="row.approvalStatus === 'PENDING'" size="small" type="danger" @click="reject(row.id)">驳回</el-button></template></el-table-column></el-table></el-card>
   </main>
 </template>

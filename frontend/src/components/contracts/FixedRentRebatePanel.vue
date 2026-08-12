@@ -9,6 +9,7 @@ import {
   uploadPricingRebateProof,
 } from '../../services/contracts'
 import type { ContractDetail, ContractListItem, ContractRole, PricingRebate, RentBill } from '../../types/contracts'
+import { approvalStatusLabel } from '../../utils/status-labels'
 
 const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
@@ -175,7 +176,7 @@ function submit() {
         </div>
         <aside>
           <section class="contract-card"><header class="card-head"><h2>本次退差摘要</h2></header><div class="summary-list"><div><span>计价方式</span><b>固定月租</b></div><div><span>系统参考退差</span><b>—</b></div><div><span>实际退差</span><b class="money-blue">{{ money(form.actualAmount) }}</b></div><div><span>处理方式</span><b>{{ form.settlementMethod === 'ACTUAL_REFUND' ? '实际退款' : '转为预收款' }}</b></div></div></section>
-          <section class="contract-card"><header class="card-head"><h2>退差记录</h2></header><div class="rebate-list"><el-empty v-if="!rebates.length" :image-size="52" description="暂无退差记录" /><div v-for="item in rebates" :key="item.id" class="rebate-item"><div><b>{{ item.rebateNo }}</b><span>{{ money(item.actualAmount) }}</span></div><small>{{ item.approvalStatus }}</small><div v-if="role === 'SUPER_ADMIN' && item.approvalStatus === 'PENDING'" class="review-actions"><el-button type="danger" link @click="emit('reject', item.id)">驳回</el-button><el-button type="primary" link @click="emit('approve', item.id)">确认</el-button></div></div></div></section>
+          <section class="contract-card"><header class="card-head"><h2>退差记录</h2></header><div class="rebate-list"><el-empty v-if="!rebates.length" :image-size="52" description="暂无退差记录" /><div v-for="item in rebates" :key="item.id" class="rebate-item"><div><b>{{ item.rebateNo }}</b><span>{{ money(item.actualAmount) }}</span></div><small>{{ approvalStatusLabel(item.approvalStatus) }}</small><div v-if="role === 'SUPER_ADMIN' && item.approvalStatus === 'PENDING'" class="review-actions"><el-button type="danger" link @click="emit('reject', item.id)">驳回</el-button><el-button type="primary" link @click="emit('approve', item.id)">确认</el-button></div></div></div></section>
         </aside>
       </div>
     </template>

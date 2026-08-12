@@ -19,7 +19,7 @@ const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
-const statusLabel: Record<string, string> = { PENDING_START: '待开始', ACTIVE: '履行中', PENDING_CHECKOUT: '待退租', TERMINATED: '已终止', EXPIRED: '已到期', VOIDED: '已作废' }
+const statusLabel: Record<string, string> = { DRAFT: '??', PENDING_START: '???', ACTIVE: '???', PENDING_CHECKOUT: '???', ENDED: '???', VOIDED: '???' }
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
 </script>
 

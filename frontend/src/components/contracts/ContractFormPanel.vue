@@ -2,6 +2,7 @@
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { reactive, ref, watch } from 'vue'
 import { contractConcessionError, normalizeConcessionType, toContractPayload } from '../../services/contracts'
+import { roomStatusLabel } from '../../utils/status-labels'
 import type {
   ContractFormModel,
   ContractPayload,
@@ -154,7 +155,7 @@ function handleUpload(file: UploadFile) {
         <div class="card-body form-grid">
           <el-form-item label="房源" prop="roomId">
             <el-select v-model="form.roomId" filterable placeholder="请选择可签约房源">
-              <el-option v-for="room in rooms" :key="room.id" :label="`${room.fullHouseNo}${room.roomStatus ? `｜${room.roomStatus}` : ''}`" :value="room.id" />
+              <el-option v-for="room in rooms" :key="room.id" :label="`${room.fullHouseNo}${room.roomStatus ? `｜${roomStatusLabel(room.roomStatus)}` : ''}`" :value="room.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="主承租人" prop="primaryTenantId">

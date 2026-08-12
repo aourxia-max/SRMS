@@ -33,7 +33,7 @@ const editForm = reactive({
 
 const statusLabels: Record<string, string> = { EMPTY: '空置', PENDING_MOVE_IN: '待入住', RENTED: '已出租', PENDING_CHECKOUT: '待退房', MAINTENANCE: '维修中', FOR_SALE: '待出售', SOLD: '已出售', DISABLED: '停用', OTHER: '其他' }
 const decorationLabels: Record<string, string> = { RENOVATED: '已装修', UNRENOVATED: '未装修', RENOVATING: '装修中', UNKNOWN: '未知' }
-const contractLabels: Record<string, string> = { DRAFT: '草稿', PENDING_START: '待生效', ACTIVE: '履行中', PENDING_CHECKOUT: '待退房', ENDED: '已结束', TERMINATED: '已终止' }
+const contractLabels: Record<string, string> = { DRAFT: '??', PENDING_START: '???', ACTIVE: '???', PENDING_CHECKOUT: '???', ENDED: '???', VOIDED: '???' }
 function date(value: string | null | undefined) { return value ? new Date(value).toLocaleDateString('zh-CN') : '-' }
 function money(value: unknown) { return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function statusLabel(value: string) { return statusLabels[value] ?? value }
