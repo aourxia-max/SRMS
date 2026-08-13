@@ -267,7 +267,6 @@ describe('CheckoutService', () => {
     expect(roomUpdateMany).not.toHaveBeenCalled();
   });
 
-
   it('lists approved settlements separately for final refund confirmation', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const service = new CheckoutService({

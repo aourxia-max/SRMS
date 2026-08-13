@@ -42,12 +42,22 @@ describe('fixed contract management schema', () => {
     const draft = modelBlock(schema, 'ContractDraft');
     const file = modelBlock(schema, 'ContractFile');
 
-    expect(draft).toMatch(/id\s+Int\s+@id\s+@default\(autoincrement\(\)\)\s+@db\.UnsignedInt/);
-    expect(draft).toMatch(/roomId\s+Int\?\s+@map\("room_id"\)\s+@db\.UnsignedInt/);
+    expect(draft).toMatch(
+      /id\s+Int\s+@id\s+@default\(autoincrement\(\)\)\s+@db\.UnsignedInt/,
+    );
+    expect(draft).toMatch(
+      /roomId\s+Int\?\s+@map\("room_id"\)\s+@db\.UnsignedInt/,
+    );
     expect(draft).toMatch(/payload\s+Json\s+@map\("payload"\)/);
-    expect(draft).toMatch(/status\s+String\s+@default\("DRAFT"\)\s+@db\.VarChar\(20\)/);
-    expect(draft).toMatch(/createdBy\s+Int\s+@map\("created_by"\)\s+@db\.UnsignedInt/);
-    expect(draft).toMatch(/confirmedAt\s+DateTime\?\s+@map\("confirmed_at"\)\s+@db\.DateTime\(3\)/);
+    expect(draft).toMatch(
+      /status\s+String\s+@default\("DRAFT"\)\s+@db\.VarChar\(20\)/,
+    );
+    expect(draft).toMatch(
+      /createdBy\s+Int\s+@map\("created_by"\)\s+@db\.UnsignedInt/,
+    );
+    expect(draft).toMatch(
+      /confirmedAt\s+DateTime\?\s+@map\("confirmed_at"\)\s+@db\.DateTime\(3\)/,
+    );
     expect(draft).toMatch(
       /createdAt\s+DateTime\s+@default\(now\(\)\)\s+@map\("created_at"\)\s+@db\.DateTime\(3\)/,
     );
@@ -63,8 +73,12 @@ describe('fixed contract management schema', () => {
     expect(draft).toMatch(/@@index\(\[createdBy, status, updatedAt\]\)/);
     expect(draft).toMatch(/@@map\("contract_drafts"\)/);
     expect(draft).not.toMatch(/SUBMITTED/);
-    expect(file).toMatch(/contractId\s+Int\s+@map\("contract_id"\)\s+@db\.UnsignedInt/);
-    expect(file).toMatch(/fileAssetId\s+Int\s+@map\("file_asset_id"\)\s+@db\.UnsignedInt/);
+    expect(file).toMatch(
+      /contractId\s+Int\s+@map\("contract_id"\)\s+@db\.UnsignedInt/,
+    );
+    expect(file).toMatch(
+      /fileAssetId\s+Int\s+@map\("file_asset_id"\)\s+@db\.UnsignedInt/,
+    );
     expect(file).toMatch(
       /createdAt\s+DateTime\s+@default\(now\(\)\)\s+@map\("created_at"\)\s+@db\.DateTime\(3\)/,
     );
@@ -86,16 +100,26 @@ describe('fixed contract management schema', () => {
     expect(existsSync(migrationPath)).toBe(true);
     const migration = readFileSync(migrationPath, 'utf8');
 
-    expect(migration).toMatch(/ALTER TABLE `contracts`[\s\S]*`contract_no` VARCHAR\(120\)/);
-    expect(migration).toMatch(/ALTER TABLE `contracts`[\s\S]*`external_contract_no` VARCHAR\(80\) NULL/);
-    expect(migration).toMatch(/ALTER TABLE `rent_bills`[\s\S]*`bill_no` VARCHAR\(140\)/);
+    expect(migration).toMatch(
+      /ALTER TABLE `contracts`[\s\S]*`contract_no` VARCHAR\(120\)/,
+    );
+    expect(migration).toMatch(
+      /ALTER TABLE `contracts`[\s\S]*`external_contract_no` VARCHAR\(80\) NULL/,
+    );
+    expect(migration).toMatch(
+      /ALTER TABLE `rent_bills`[\s\S]*`bill_no` VARCHAR\(140\)/,
+    );
     expect(migration).toMatch(/CREATE TABLE `contract_drafts`/);
     expect(migration).toMatch(/CREATE TABLE `contract_files`/);
-    expect(migration).toMatch(/KEY `contract_drafts_room_id_idx` \(`room_id`\)/);
+    expect(migration).toMatch(
+      /KEY `contract_drafts_room_id_idx` \(`room_id`\)/,
+    );
     expect(migration).toMatch(
       /KEY `contract_drafts_created_by_status_updated_at_idx` \(`created_by`, `status`, `updated_at`\)/,
     );
-    expect(migration).toMatch(/KEY `contract_files_file_asset_id_idx` \(`file_asset_id`\)/);
+    expect(migration).toMatch(
+      /KEY `contract_files_file_asset_id_idx` \(`file_asset_id`\)/,
+    );
     expect(migration).toMatch(
       /CONSTRAINT `contract_drafts_room_id_fkey`\s+FOREIGN KEY \(`room_id`\) REFERENCES `rooms`\(`id`\) ON DELETE RESTRICT ON UPDATE CASCADE/,
     );
