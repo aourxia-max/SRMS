@@ -380,3 +380,18 @@ describe('????????', () => {
     expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
   })
 })
+
+
+describe('??????????', () => {
+  it('????????????????????', async () => {
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+
+    const button = wrapper.find('[data-test="open-payment-collect"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('payment')).toEqual([[12]])
+  })
+})

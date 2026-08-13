@@ -14,7 +14,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; download: [file: ContractFile] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; download: [file: ContractFile] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
@@ -39,12 +39,20 @@ const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
         <div class="actions">
           <el-button @click="emit('back')">返回列表</el-button>
           <el-button
+            data-test="open-payment-collect"
+            type="primary"
+            plain
+            @click="emit('payment', contract.id)"
+          >
+            登记收款
+          </el-button>
+          <el-button
             v-if="canInitiateCheckout"
             data-test="open-checkout"
             type="primary"
             @click="emit('checkout', contract.id)"
           >
-            ????
+            发起退租
           </el-button>
           <el-button
             v-if="isFixedRentRebateEligible(contract)"
