@@ -583,8 +583,8 @@ describe("CheckoutTopNav", () => {
 });
 
 
-describe('????????', () => {
-  it('?????????????????????????', async () => {
+describe('CheckoutTopNav', () => {
+  it('emits tab changes when a workflow tab is clicked', async () => {
     const wrapper = mount(CheckoutInitiatePanel, {
       props: {
         contracts: [{ id: 1, contractNo: 'HT202608010001', status: 'ACTIVE' }],
