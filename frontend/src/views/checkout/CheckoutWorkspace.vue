@@ -259,13 +259,6 @@ onMounted(loadData);
 
 <template>
   <main class="checkout-workspace">
-    <header class="checkout-workspace__header">
-      <div>
-        <span class="checkout-workspace__tag">退租结算</span>
-        <h1>退租结算</h1>
-        <p>按发起退租、退租结算、押金退还确认三个步骤完成交接。</p>
-      </div>
-    </header>
     <CheckoutTopNav :active-tab="activeTab" @change="changeTab" />
     <p v-if="actionError" class="checkout-workspace__error" role="alert">
       {{ actionError }}
@@ -382,29 +375,6 @@ onMounted(loadData);
   padding: 24px;
   color: #233044;
   background: #f3f6fb;
-}
-.checkout-workspace__header {
-  display: grid;
-  gap: 8px;
-}
-.checkout-workspace__tag {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 4px;
-  color: #246bfd;
-  background: #edf4ff;
-  font-size: 12px;
-}
-.checkout-workspace__header h1 {
-  margin: 8px 0 4px;
-  font-size: 24px;
-  line-height: 32px;
-}
-.checkout-workspace__header p {
-  margin: 0;
-  color: #66758b;
 }
 .checkout-workspace__error {
   padding: 10px 14px;

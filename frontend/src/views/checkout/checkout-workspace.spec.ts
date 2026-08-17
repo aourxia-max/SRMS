@@ -108,6 +108,14 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.text()).toContain("2 退租结算");
     expect(wrapper.text()).toContain("3 押金退还确认");
   });
+  it("places checkout workflow navigation at the top without the old page intro block", () => {
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+
+    expect(wrapper.find(".checkout-workspace__header").exists()).toBe(false);
+    expect(wrapper.find(".checkout-workspace > .checkout-top-nav").exists()).toBe(true);
+  });
   it("opens the initiate checkout workspace by default", () => {
     const wrapper = mount(CheckoutWorkspace, {
       global: { plugins: [createPinia()] },
