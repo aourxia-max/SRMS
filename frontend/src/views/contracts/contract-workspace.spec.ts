@@ -6,6 +6,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
+import ContractListPanel from '../../components/contracts/ContractListPanel.vue'
 import FixedRentRebatePanel from '../../components/contracts/FixedRentRebatePanel.vue'
 import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
 import {
@@ -196,6 +197,70 @@ const activeContract = (): ContractDetail => ({
 })
 
 describe('合同工作区复审边界', () => {
+  it('合同列表使用统一中文状态和标签颜色', async () => {
+    const contracts = [
+      ['DRAFT', '草稿'],
+      ['PENDING_START', '待开始'],
+      ['ACTIVE', '履行中'],
+      ['PENDING_CHECKOUT', '待退租'],
+      ['ENDED', '已结束'],
+      ['VOIDED', '已作废'],
+    ].map(([status, expectedLabel], index) => ({
+      ...activeContract(),
+      id: index + 1,
+      contractNo: `HT-STATUS-${index + 1}`,
+      status,
+      expectedLabel,
+    }))
+    const wrapper = mount(ContractListPanel, {
+      props: { contracts },
+      global: { plugins: [ElementPlus] },
+    })
+    await nextTick()
+    await flushPromises()
+
+    for (const contract of contracts) {
+      expect(wrapper.get(`[data-test="contract-status-${contract.id}"]`).text()).toBe(contract.expectedLabel)
+    }
+
+    expect(wrapper.get('[data-test="contract-status-3"]').classes()).toContain('el-tag--success')
+    expect(wrapper.text()).not.toContain('ACTIVE')
+    expect(wrapper.text()).not.toContain('PENDING_CHECKOUT')
+  })
+
+  it('合同详情将合同、账单和收款状态显示为中文', async () => {
+    const payments: PaymentListItem[] = [{
+      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentDate: '2026-08-02', amount: '2200.00',
+      method: 'WECHAT', status: 'CONFIRMED', contract: { id: 12, contractNo: activeContract().contractNo }, tenant: { id: 19, name: '张三' },
+    }]
+    const wrapper = mount(ContractDetailPanel, {
+      props: {
+        contract: activeContract(),
+        bills: [{ id: 1, periodSeq: 1, periodStart: '2026-08-01', periodEnd: '2026-08-31', payableAmount: '2200.00', outstandingAmount: '2200.00', status: 'OVERDUE' }],
+        payments,
+        role: 'ADMIN',
+      },
+      global: { plugins: [ElementPlus] },
+    })
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('履行中')
+    expect(wrapper.find('[data-test="contract-status-tag"]').classes()).toContain('el-tag--success')
+
+    const billsTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('租金账单'))
+    await billsTab!.trigger('click')
+    await flushPromises()
+    const paymentsTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('收款记录'))
+    await paymentsTab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已逾期')
+    expect(wrapper.text()).toContain('已确认')
+    expect(wrapper.text()).not.toContain('ACTIVE')
+    expect(wrapper.text()).not.toContain('OVERDUE')
+    expect(wrapper.text()).not.toContain('CONFIRMED')
+  })
   it('只把履行中的固定月租合同认定为可退差', () => {
     expect(isFixedRentRebateEligible(activeContract())).toBe(true)
     expect(isFixedRentRebateEligible({ ...activeContract(), status: 'PENDING_START' })).toBe(false)
