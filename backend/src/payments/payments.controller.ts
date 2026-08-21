@@ -26,6 +26,7 @@ import { RecordPaymentDto } from './dto/record-payment.dto';
 import { PaymentListQueryDto } from './dto/payment-list-query.dto';
 import { EditPaymentDto } from './dto/edit-payment.dto';
 import { PaymentsService } from './payments.service';
+import { ContractLifecycleService } from '../contracts/contract-lifecycle.service';
 
 @Controller('payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,6 +34,7 @@ export class PaymentsController {
   constructor(
     private readonly payments: PaymentsService,
     private readonly files: FilesService,
+    private readonly lifecycle: ContractLifecycleService,
   ) {}
   @Get()
   async list(
@@ -62,6 +64,7 @@ export class PaymentsController {
   @Post()
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async record(@Body() dto: RecordPaymentDto, @CurrentUser() user: AuthUser) {
+    await this.lifecycle.run();
     return {
       code: 200,
       message: 'success',

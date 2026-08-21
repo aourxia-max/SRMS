@@ -32,6 +32,7 @@ import { ContractDraftsService } from './contract-drafts.service';
 import { PreviewFixedContractDto } from './dto/preview-fixed-contract.dto';
 import { FilesService } from '../files/files.service';
 import type { UploadedFile as ContractUploadedFile } from '../files/files.service';
+import { ContractLifecycleService } from './contract-lifecycle.service';
 
 // Multer needs a synchronous cap before ConfigService/database settings are
 // available. The product allows a dynamic 1–100 MiB system limit, so this
@@ -46,6 +47,7 @@ export class ContractsController {
     private readonly contracts: ContractsService,
     private readonly drafts: ContractDraftsService,
     private readonly contractFiles: FilesService,
+    private readonly lifecycle: ContractLifecycleService,
   ) {}
 
   @Post('files')
@@ -223,6 +225,7 @@ export class ContractsController {
 
   @Get()
   async list(@CurrentUser() user: AuthUser) {
+    await this.lifecycle.run();
     return {
       code: 200,
       message: 'success',
@@ -273,6 +276,7 @@ export class ContractsController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthUser,
   ) {
+    await this.lifecycle.run();
     return {
       code: 200,
       message: 'success',
