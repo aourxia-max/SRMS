@@ -8,6 +8,14 @@ import type { AuthUser } from '../auth/auth-user.type';
 import { ContractsService } from './contracts.service';
 
 describe('ContractsService', () => {
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2025-12-01T00:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   const admin: AuthUser = {
     id: 7,
     role: UserRole.ADMIN,
@@ -334,6 +342,36 @@ describe('ContractsService', () => {
         data: expect.objectContaining({ roomStatus: 'PENDING_MOVE_IN' }),
       }),
     );
+  });
+
+  it('immediately activates a contract whose China start date has arrived', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-21T01:00:00.000Z'));
+    const tx = confirmationTx();
+
+    try {
+      await serviceFor(tx).createFixedContract(
+        {
+          ...input,
+          startDate: new Date('2026-08-20T00:00:00.000Z'),
+          endDate: new Date('2027-08-20T00:00:00.000Z'),
+        },
+        admin,
+      );
+
+      expect(tx.contract.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          status: 'ACTIVE',
+          activatedAt: new Date('2026-08-21T01:00:00.000Z'),
+        }),
+      });
+      expect(tx.room.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ roomStatus: 'RENTED' }),
+        }),
+      );
+    } finally {
+      jest.setSystemTime(new Date('2025-12-01T00:00:00.000Z'));
+    }
   });
 
   it('confirms a draft and marks it confirmed only after every formal write', async () => {

@@ -10,9 +10,10 @@ import { VoidRequestsService } from './void-requests.service';
 import { FilesModule } from '../files/files.module';
 import { PaymentReviewsController } from './payment-reviews.controller';
 import { PaymentReviewsService } from './payment-reviews.service';
+import { ContractsModule } from '../contracts/contracts.module';
 
 @Module({
-  imports: [FilesModule],
+  imports: [FilesModule, ContractsModule],
   controllers: [
     PaymentsController,
     AdjustmentsController,

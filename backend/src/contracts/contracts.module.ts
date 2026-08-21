@@ -13,5 +13,6 @@ import { FilesModule } from '../files/files.module';
     ContractLifecycleService,
     ContractDraftsService,
   ],
+  exports: [ContractLifecycleService],
 })
 export class ContractsModule {}

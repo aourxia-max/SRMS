@@ -119,4 +119,20 @@ describe('ContractLifecycleService', () => {
     expect(test.roomUpdateMany).not.toHaveBeenCalled();
     expect(test.roomStatusHistoryCreate).not.toHaveBeenCalled();
   });
+
+  it('uses the China calendar day when reconciling contracts around midnight', async () => {
+    const test = createService({});
+
+    await test.service.run(new Date('2026-08-20T16:05:00.000Z'));
+
+    expect(test.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          status: 'PENDING_START',
+          startDate: { lte: new Date('2026-08-21T00:00:00.000Z') },
+        },
+      }),
+    );
+  });
 });

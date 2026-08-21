@@ -1,6 +1,10 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  CONTRACT_TIME_ZONE,
+  contractBusinessDay,
+} from './contract-business-day';
 
 type LifecycleResult = { activated: number; pendingCheckout: number };
 
@@ -12,11 +16,9 @@ export class ContractLifecycleService implements OnApplicationBootstrap {
     await this.run();
   }
 
-  @Cron('0 5 0 * * *')
+  @Cron('0 5 0 * * *', { timeZone: CONTRACT_TIME_ZONE })
   async run(now = new Date()): Promise<LifecycleResult> {
-    const day = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
+    const day = contractBusinessDay(now);
     const pending = await this.prisma.db.contract.findMany({
       where: { status: 'PENDING_START', startDate: { lte: day } },
       select: { id: true, contractNo: true, roomId: true },
