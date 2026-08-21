@@ -36,6 +36,9 @@ jobs:
       - name: 安装后端依赖
         run: npm ci --prefix backend
 
+      - name: 生成 Prisma Client
+        run: npm --prefix backend run prisma:generate
+
       - name: 安装前端依赖
         run: npm ci --prefix frontend
 
