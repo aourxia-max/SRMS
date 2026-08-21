@@ -554,6 +554,37 @@ describe('合同附件图片预览生命周期', () => {
     expect(revokeObjectURL).toHaveBeenCalledTimes(3)
   })
 
+  it('旧预览请求晚于新请求返回时不覆盖当前图片且释放自身对象地址', async () => {
+    let resolveOld!: (blob: Blob) => void
+    let resolveNew!: (blob: Blob) => void
+    const oldPreview = new Promise<Blob>((resolve) => { resolveOld = resolve })
+    const newPreview = new Promise<Blob>((resolve) => { resolveNew = resolve })
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:contract-image-new')
+      .mockReturnValueOnce('blob:contract-image-stale')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const download = vi.fn<DownloadContractFile>()
+      .mockImplementationOnce(() => oldPreview)
+      .mockImplementationOnce(() => newPreview)
+    const { wrapper } = await mountWorkspace(download)
+
+    await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="preview-contract-file-45"]').trigger('click')
+    await nextTick()
+
+    resolveNew(new Blob(['new image']))
+    await flushPromises()
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('src')).toBe('blob:contract-image-new')
+
+    resolveOld(new Blob(['old image']))
+    await flushPromises()
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('src')).toBe('blob:contract-image-new')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:contract-image-stale')
+    wrapper.unmount()
+  })
   it('预览请求失败显示中文错误且不保留临时对象地址', async () => {
     const createObjectURL = vi.fn()
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
