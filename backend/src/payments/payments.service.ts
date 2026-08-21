@@ -18,59 +18,65 @@ export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(query: PaymentListQueryDto = {}, user?: AuthUser) {
-    const rows = await this.prisma.db.payment.findMany({
-      where: {
-        ...(query.contractId ? { contractId: query.contractId } : {}),
-        ...(query.receiptNo
-          ? { receiptNo: { contains: query.receiptNo } }
-          : {}),
-        ...(query.dateFrom || query.dateTo
-          ? {
-              paymentDate: {
-                ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-                ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-              },
-            }
-          : {}),
-        ...(query.roomKeyword || query.tenantKeyword
-          ? {
-              contract: {
-                ...(query.roomKeyword
-                  ? {
-                      room: {
-                        fullHouseNo: { contains: query.roomKeyword },
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 10;
+    const where: Prisma.PaymentWhereInput = {
+      ...(query.contractId ? { contractId: query.contractId } : {}),
+      ...(query.receiptNo ? { receiptNo: { contains: query.receiptNo } } : {}),
+      ...(query.dateFrom || query.dateTo
+        ? {
+            paymentDate: {
+              ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+              ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+            },
+          }
+        : {}),
+      ...(query.roomKeyword || query.tenantKeyword
+        ? {
+            contract: {
+              ...(query.roomKeyword
+                ? {
+                    room: {
+                      fullHouseNo: { contains: query.roomKeyword },
+                    },
+                  }
+                : {}),
+              ...(query.tenantKeyword
+                ? {
+                    members: {
+                      some: {
+                        isCurrent: true,
+                        tenant: { name: { contains: query.tenantKeyword } },
                       },
-                    }
-                  : {}),
-                ...(query.tenantKeyword
-                  ? {
-                      members: {
-                        some: {
-                          isCurrent: true,
-                          tenant: { name: { contains: query.tenantKeyword } },
-                        },
-                      },
-                    }
-                  : {}),
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.db.payment.findMany({
+        where,
+        include: {
+          contract: {
+            include: {
+              room: true,
+              members: {
+                where: { memberRole: 'PRIMARY', isCurrent: true },
+                include: { tenant: true },
               },
-            }
-          : {}),
-      },
-      include: {
-        contract: {
-          include: {
-            room: true,
-            members: {
-              where: { memberRole: 'PRIMARY', isCurrent: true },
-              include: { tenant: true },
             },
           },
+          adjustments: true,
         },
-        adjustments: true,
-      },
-      orderBy: { id: 'desc' },
-    });
-    return rows.map((row) => {
+        orderBy: { id: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.db.payment.count({ where }),
+    ]);
+    const items = rows.map((row) => {
       const tenant = row.contract.members[0]?.tenant;
       return {
         id: row.id,
@@ -88,6 +94,7 @@ export class PaymentsService {
         tenant: tenant ? this.presentTenant(tenant, user?.role) : null,
       };
     });
+    return { items, page, pageSize, total };
   }
 
   async detail(id: number, user: AuthUser) {

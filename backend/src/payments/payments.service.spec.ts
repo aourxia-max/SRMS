@@ -384,8 +384,9 @@ describe('PaymentsService payment views', () => {
 
   it('translates list filters to contract, room, tenant, receipt and date conditions', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
+    const count = jest.fn().mockResolvedValue(0);
     const service = new PaymentsService({
-      db: { payment: { findMany } },
+      db: { payment: { findMany, count } },
     } as never);
 
     await service.list(
@@ -416,6 +417,27 @@ describe('PaymentsService payment views', () => {
         }),
       }),
     );
+  });
+
+  it('returns one server-side page with the filtered total', async () => {
+    const findMany = jest.fn().mockResolvedValue([payment]);
+    const count = jest.fn().mockResolvedValue(26);
+    const service = new PaymentsService({
+      db: { payment: { findMany, count } },
+    } as never);
+
+    const result = await service.list({ page: 3, pageSize: 10 }, admin);
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 20, take: 10 }),
+    );
+    expect(count).toHaveBeenCalledWith({ where: expect.any(Object) });
+    expect(result).toMatchObject({
+      page: 3,
+      pageSize: 10,
+      total: 26,
+      items: [expect.objectContaining({ id: 81 })],
+    });
   });
 });
 

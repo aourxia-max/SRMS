@@ -32,7 +32,7 @@ import {
   uploadContractFile,
 } from '../../services/contracts'
 import { http } from '../../services/http'
-import { paymentApi } from '../../services/payments'
+import { listAllPayments } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import {
   emptyContractForm,
@@ -176,7 +176,7 @@ async function selectContract(summary: ContractListItem, syncRoute = true) {
       getContractFiles(summary.id),
       getContractChanges(summary.id),
       listFixedRentRebates(summary.id),
-      paymentApi.list({ contractId: summary.id }),
+      listAllPayments({ contractId: summary.id }),
     ])
     selectedContract.value = { ...detail, room: summary.room }
     bills.value = contractBills
