@@ -364,6 +364,11 @@ async function submitRebate(payload: Record<string, unknown>) {
   }
 }
 
+async function reloadSelectedContract() {
+  const summary = contracts.value.find((item) => item.id === selectedContractId.value)
+  if (summary) await selectContract(summary, false)
+}
+
 async function approveRebate(id: number) {
   try {
     await approveFixedRentRebate(id)
@@ -397,7 +402,7 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
         <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="setTab('list')" @upload-file="uploadFile" />
         <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="previewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @download="downloadFile" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @download="downloadFile" @commission-changed="reloadSelectedContract" />
       <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
     </main>
   </el-config-provider>

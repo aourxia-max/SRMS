@@ -46,7 +46,7 @@ export class PropertiesController {
 
   @Post('buildings')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPER_ADMIN)
   async createBuilding(@Body() dto: CreateBuildingDto) {
     return {
       code: 200,
@@ -86,7 +86,7 @@ export class PropertiesController {
 
   @Post('rooms')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPER_ADMIN)
   async createRoom(@Body() dto: CreateRoomDto, @CurrentUser() user: AuthUser) {
     const building = await this.prisma.db.building.findUniqueOrThrow({
       where: { id: dto.buildingId },
@@ -220,6 +220,36 @@ export class PropertiesController {
               { houseNo: { contains: keyword } },
               { ownerName: { contains: keyword } },
               { ownerPhone: { contains: keyword } },
+              {
+                contracts: {
+                  some: {
+                    status: {
+                      in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'],
+                    },
+                    members: {
+                      some: {
+                        isCurrent: true,
+                        tenant: { name: { contains: keyword } },
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                contracts: {
+                  some: {
+                    status: {
+                      in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'],
+                    },
+                    members: {
+                      some: {
+                        isCurrent: true,
+                        tenant: { phone: { contains: keyword } },
+                      },
+                    },
+                  },
+                },
+              },
             ],
           }
         : {}),
@@ -243,7 +273,7 @@ export class PropertiesController {
 
   @Delete('rooms/:id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPER_ADMIN)
   async deleteRoom(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.db.room.update({
       where: { id },

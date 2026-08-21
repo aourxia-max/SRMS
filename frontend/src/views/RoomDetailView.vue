@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
+import { usageTypeLabel } from '../utils/status-labels'
 
 const route = useRoute()
 const router = useRouter()
@@ -98,7 +99,7 @@ onMounted(load)
       <section class="risk-row"><el-tag v-for="label in detail.riskLabels" :key="label" :type="label === '当前无待办' ? 'success' : 'warning'" effect="light">{{ label }}</el-tag></section>
 
       <section class="detail-grid">
-        <el-card shadow="never"><template #header><h2>房屋现状</h2></template><dl class="info-grid"><dt>房源类型</dt><dd>{{ room.roomType === 'SHOP' ? '商铺' : '住宅' }}</dd><dt>面积</dt><dd>{{ room.area ? `${room.area} ㎡` : '-' }}</dd><dt>装修状态</dt><dd>{{ decorationLabels[room.decorationStatus] ?? room.decorationStatus }}</dd><dt>使用用途</dt><dd>{{ room.usageType === 'RESIDENCE' ? '居住' : room.usageType }}</dd><dt>房源备注</dt><dd>{{ room.remark || '-' }}</dd></dl></el-card>
+        <el-card shadow="never"><template #header><h2>房屋现状</h2></template><dl class="info-grid"><dt>房源类型</dt><dd>{{ room.roomType === 'SHOP' ? '商铺' : '住宅' }}</dd><dt>面积</dt><dd>{{ room.area ? `${room.area} ㎡` : '-' }}</dd><dt>装修状态</dt><dd>{{ decorationLabels[room.decorationStatus] ?? room.decorationStatus }}</dd><dt>使用用途</dt><dd>{{ usageTypeLabel(room.usageType) }}</dd><dt>房源备注</dt><dd>{{ room.remark || '-' }}</dd></dl></el-card>
         <el-card shadow="never"><template #header><h2>业主/租户信息</h2></template><dl class="info-grid"><dt>业主/租户姓名</dt><dd>{{ room.ownerName || '-' }}</dd><dt>业主/租户电话</dt><dd>{{ room.ownerPhone || '-' }}</dd><dt>业主/租户备注</dt><dd>{{ room.ownerRemark || '-' }}</dd></dl></el-card>
       </section>
 

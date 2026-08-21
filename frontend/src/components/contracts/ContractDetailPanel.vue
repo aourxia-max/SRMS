@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, reactive, ref } from 'vue'
 import { isFixedRentRebateEligible } from '../../services/contracts'
+import { http } from '../../services/http'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 import { contractStatusLabel } from '../../utils/status-labels'
@@ -15,13 +17,61 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; download: [file: ContractFile] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; download: [file: ContractFile]; commissionChanged: [] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
 const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
+const activeCommission = computed(() => props.contract?.commissions?.[0] ?? null)
+const commissionDialog = ref(false)
+const commissionSaving = ref(false)
+const commissionForm = reactive({ recipientName: '', amount: '' })
+
+function commissionError(error: unknown, fallback: string) {
+  const message = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message
+  return Array.isArray(message) ? message.join('；') : message || fallback
+}
+function openCommission() {
+  commissionForm.recipientName = activeCommission.value?.recipientName ?? ''
+  commissionForm.amount = activeCommission.value?.amount ?? ''
+  commissionDialog.value = true
+}
+async function saveCommission() {
+  const recipientName = commissionForm.recipientName.trim()
+  const amount = Number(commissionForm.amount)
+  if (!recipientName) return ElMessage.warning('请填写提成所属对象')
+  if (!Number.isFinite(amount) || amount < 0) return ElMessage.warning('提成金额不能小于 0')
+  commissionSaving.value = true
+  try {
+    const payload = { recipientName, amount: amount.toFixed(2) }
+    if (activeCommission.value?.id) await http.patch(`/commissions/${activeCommission.value.id}`, payload)
+    else await http.post('/commissions', { contractId: props.contract!.id, ...payload })
+    commissionDialog.value = false
+    emit('commissionChanged')
+    ElMessage.success('租房提成已保存')
+  } catch (error) {
+    ElMessage.error(commissionError(error, '租房提成保存失败'))
+  } finally {
+    commissionSaving.value = false
+  }
+}
+async function removeCommission() {
+  if (!activeCommission.value?.id) return
+  try {
+    await ElMessageBox.confirm('确认删除当前租房提成吗？删除操作会保留安全审计记录。', '删除提成', { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' })
+    commissionSaving.value = true
+    await http.delete(`/commissions/${activeCommission.value.id}`)
+    commissionDialog.value = false
+    emit('commissionChanged')
+    ElMessage.success('租房提成已删除')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(commissionError(error, '租房提成删除失败'))
+  } finally {
+    commissionSaving.value = false
+  }
+}
 </script>
 
 <template>
@@ -124,13 +174,21 @@ const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
               <div><span>计价方式</span><b>固定月租</b></div>
               <div><span>固定月租</span><b class="money-blue">{{ money(contract.monthlyRent) }}</b></div>
               <div><span>押金</span><b>{{ money(contract.depositRequired) }}</b></div>
-              <div v-if="role === 'SUPER_ADMIN' && contract.commissions?.length"><span>租房提成</span><b class="commission">{{ contract.commissions[0].recipientName }} · {{ money(contract.commissions[0].amount) }}</b></div>
+              <div v-if="role === 'SUPER_ADMIN'" class="commission-row"><span>租房提成</span><div><b v-if="activeCommission" class="commission">{{ activeCommission.recipientName }} · {{ money(activeCommission.amount) }}</b><b v-else>未登记</b><el-button link type="primary" data-test="maintain-commission" @click="openCommission">{{ activeCommission ? '编辑提成' : '登记提成' }}</el-button></div></div>
             </div>
           </section>
           <section class="notice">已确认合同的关键金额和日期不能直接编辑。如需调整，请进入合同变更流程。</section>
         </aside>
       </div>
     </template>
+
+    <el-dialog v-model="commissionDialog" :title="activeCommission ? '编辑租房提成' : '登记租房提成'" width="520px" append-to-body>
+      <el-form label-position="top">
+        <el-form-item label="提成所属对象" required><el-input v-model="commissionForm.recipientName" maxlength="120" placeholder="请输入姓名或单位" /></el-form-item>
+        <el-form-item label="提成金额（元）" required><el-input v-model="commissionForm.amount" inputmode="decimal" placeholder="0.00" /></el-form-item>
+      </el-form>
+      <template #footer><div class="commission-dialog-footer"><el-button v-if="activeCommission" type="danger" plain :disabled="commissionSaving" @click="removeCommission">删除提成</el-button><span></span><el-button @click="commissionDialog = false">取消</el-button><el-button type="primary" :loading="commissionSaving" @click="saveCommission">保存</el-button></div></template>
+    </el-dialog>
   </section>
 </template>
 
@@ -148,6 +206,6 @@ const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
 .detail-main { min-height: 420px; padding: 0 17px 17px; }
 .detail-main :deep(.el-tabs__header) { margin-bottom: 17px; }
 .card-head { padding: 14px 17px; border-bottom: 1px solid #edf1f5; }.card-head h2 { margin: 0; font-size: 16px; }
-.summary-list { display: grid; gap: 12px; padding: 17px; }.summary-list > div { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 1px dashed #e2e7ee; }.summary-list span { color: #748196; }.summary-list b { text-align: right; }.money-blue { color: #246bfd; }.commission { color: #6848c2; }
+.summary-list { display: grid; gap: 12px; padding: 17px; }.summary-list > div { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 1px dashed #e2e7ee; }.summary-list span { color: #748196; }.commission-row > div { display:flex; align-items:flex-end; flex-direction:column; gap:4px; }.commission-dialog-footer { display:grid; grid-template-columns:auto 1fr auto auto; gap:8px; }.summary-list b { text-align: right; }.money-blue { color: #246bfd; }.commission { color: #6848c2; }
 .notice { padding: 12px; margin-top: 15px; color: #46648e; font-size: 12px; background: #eef4ff; border: 1px solid #ccdcfb; border-radius: 8px; }.change-data { white-space: pre-wrap; }
 </style>
