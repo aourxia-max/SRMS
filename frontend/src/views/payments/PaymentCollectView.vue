@@ -7,7 +7,7 @@ import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
-import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillsOutstandingAmount } from './payment-collection'
 
 const route = useRoute()
 const router = useRouter()
@@ -54,6 +54,14 @@ watch(
 function money(value: number | string | undefined) { return `¥${Number(value ?? 0).toFixed(2)}` }
 function roomLabel(contract: ContractSummary) { return contract.room?.fullHouseNo ? `${contract.contractNo} · ${contract.room.fullHouseNo}` : contract.contractNo }
 
+function applySelectedBillsAmount(ids: number[]) {
+  const original = selectedBillsOutstandingAmount(bills.value, ids)
+  const adjustmentAmount = adjustment.enabled ? Math.max(0, Number(adjustment.amount) || 0) : 0
+  const suggested = original ? Math.max(0, Number(original) - adjustmentAmount).toFixed(2) : ''
+  form.amount = suggested
+  autoSuggestedPaymentAmount.value = suggested
+}
+
 async function loadContracts() {
   contracts.value = await paymentApi.contracts()
   const requested = Number(route.query.contractId)
@@ -68,8 +76,7 @@ async function selectContract() {
     prepayments.value = prep
     selectedBillIds.value = bills.value[0] ? [bills.value[0].id] : []
     adjustment.rentBillId = bills.value[0]?.id
-    form.amount = bills.value[0]?.outstandingAmount ?? ''
-    autoSuggestedPaymentAmount.value = form.amount
+    applySelectedBillsAmount(selectedBillIds.value)
   } finally { loading.value = false }
 }
 function toggleBill(bill: RentBill, checked: boolean) {
@@ -78,6 +85,7 @@ function toggleBill(bill: RentBill, checked: boolean) {
   const unique = [...new Set(current)]
   if (!isSuperAdmin.value && !isPrefixSelection(bills.value, unique)) { ElMessage.warning('普通管理员只能从最早未结账期连续选择'); return }
   selectedBillIds.value = unique
+  applySelectedBillsAmount(selectedBillIds.value)
 }
 async function uploadProof(options: UploadRequestOptions) {
   try {
