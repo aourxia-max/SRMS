@@ -6,6 +6,8 @@ import {
   paymentStatusLabel,
   pricingRebateSourceLabel,
   rentBillStatusLabel,
+  tenantStatusLabel,
+  usageTypeLabel,
 } from "./status-labels";
 
 describe("status label helpers", () => {
@@ -22,6 +24,15 @@ describe("status label helpers", () => {
     expect(billAdjustmentTypeLabel("DISCOUNT")).toBe("\u4e00\u6b21\u6027\u4f18\u60e0");
     expect(billAdjustmentTypeLabel("WAIVER")).toBe("\u51cf\u514d");
     expect(pricingRebateSourceLabel("FIXED_RENT_MANUAL")).toBe("\u56fa\u5b9a\u6708\u79df\u624b\u5de5\u9000\u5dee");
+  });
+
+  it("translates property usage and tenant status without exposing unknown codes", () => {
+    expect(usageTypeLabel("RESIDENCE")).toBe("居住");
+    expect(usageTypeLabel("STORAGE")).toBe("仓储");
+    expect(tenantStatusLabel("ACTIVE")).toBe("启用");
+    expect(tenantStatusLabel("INACTIVE")).toBe("停用");
+    expect(usageTypeLabel("UNEXPECTED")).toBe("未知状态");
+    expect(tenantStatusLabel("UNEXPECTED")).toBe("未知状态");
   });
 
   it("keeps unknown codes visible for diagnostics", () => {

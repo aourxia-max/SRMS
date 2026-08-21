@@ -132,14 +132,33 @@ export class DashboardService {
         include: { building: true },
         orderBy: { statusChangedAt: 'asc' },
       }),
-      this.prisma.db.billAdjustment.count({
+      this.prisma.db.billAdjustment.findMany({
         where: { approvalStatus: 'PENDING' },
+        select: {
+          rentBill: {
+            select: {
+              contract: {
+                select: { room: { select: { id: true, fullHouseNo: true } } },
+              },
+            },
+          },
+        },
       }),
-      this.prisma.db.paymentRefund.count({
+      this.prisma.db.paymentRefund.findMany({
         where: { approvalStatus: 'PENDING' },
+        select: {
+          contract: {
+            select: { room: { select: { id: true, fullHouseNo: true } } },
+          },
+        },
       }),
-      this.prisma.db.pricingRebate.count({
+      this.prisma.db.pricingRebate.findMany({
         where: { approvalStatus: 'PENDING' },
+        select: {
+          contract: {
+            select: { room: { select: { id: true, fullHouseNo: true } } },
+          },
+        },
       }),
       user.role === UserRole.SUPER_ADMIN
         ? this.finance.rentCollection(monthPeriod.from, monthPeriod.to)
@@ -159,6 +178,37 @@ export class DashboardService {
         },
       }),
     ]);
+    const approvalRoomSources = [
+      ...adjustments.map((item) => ({
+        room: item.rentBill.contract.room,
+        type: '账单调整',
+      })),
+      ...refunds.map((item) => ({
+        room: item.contract.room,
+        type: '退款申请',
+      })),
+      ...rebates.map((item) => ({
+        room: item.contract.room,
+        type: '固定月租退差',
+      })),
+    ];
+    const approvalRoomsById = new Map<
+      number,
+      { roomId: number; fullHouseNo: string; types: string[]; count: number }
+    >();
+    for (const source of approvalRoomSources) {
+      if (!source.room) continue;
+      const current = approvalRoomsById.get(source.room.id) ?? {
+        roomId: source.room.id,
+        fullHouseNo: source.room.fullHouseNo,
+        types: [],
+        count: 0,
+      };
+      current.count += 1;
+      if (!current.types.includes(source.type)) current.types.push(source.type);
+      approvalRoomsById.set(source.room.id, current);
+    }
+
     const result: Record<string, unknown> = {
       roomSummary: {
         total: rooms.length,
@@ -183,10 +233,11 @@ export class DashboardService {
       monthlyMoveInCount,
       monthlyCheckoutCount,
       approvals: {
-        billAdjustments: adjustments,
-        paymentRefunds: refunds,
-        pricingRebates: rebates,
+        billAdjustments: adjustments.length,
+        paymentRefunds: refunds.length,
+        pricingRebates: rebates.length,
       },
+      approvalRooms: Array.from(approvalRoomsById.values()),
     };
     if (user.role === UserRole.SUPER_ADMIN) {
       result['arrearsTotal'] = arrears.reduce(

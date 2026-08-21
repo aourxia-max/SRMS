@@ -39,6 +39,7 @@ const data = ref<any>({
   arrears: [],
   expiringContracts: [],
   approvals: {},
+  approvalRooms: [],
   rentCollectionOverview: null,
   monthlyMoveInCount: 0,
   monthlyCheckoutCount: 0,
@@ -94,43 +95,51 @@ const collectionState = computed(() => {
   if (collectionRate.value === 100) return '本月租金已全部收齐'
   return '仍有本月租金待收'
 })
+const selectedTodo = ref<any>(null)
+const todoDialogOpen = ref(false)
+function deDuplicatedTodoRooms(rows: Array<{ roomId: number; fullHouseNo: string; type: string; count?: number }>) {
+  const grouped = new Map<number, { roomId: number; fullHouseNo: string; types: string[]; count: number }>()
+  for (const row of rows) {
+    if (!row.roomId || !row.fullHouseNo) continue
+    const current = grouped.get(row.roomId) ?? { roomId: row.roomId, fullHouseNo: row.fullHouseNo, types: [], count: 0 }
+    current.count += row.count ?? 1
+    if (!current.types.includes(row.type)) current.types.push(row.type)
+    grouped.set(row.roomId, current)
+  }
+  return Array.from(grouped.values())
+}
+function billTodoRooms(items: any[], type: string) {
+  return deDuplicatedTodoRooms((items ?? []).map((item) => ({ roomId: item.contract?.room?.id, fullHouseNo: item.contract?.room?.fullHouseNo, type })))
+}
+function contractTodoRooms(items: any[], type: string) {
+  return deDuplicatedTodoRooms((items ?? []).map((item) => ({ roomId: item.room?.id, fullHouseNo: item.room?.fullHouseNo, type })))
+}
+function roomTodoRooms(items: any[], type: string) {
+  return deDuplicatedTodoRooms((items ?? []).map((room) => ({ roomId: room.id, fullHouseNo: room.fullHouseNo, type })))
+}
+function approvalTodoRooms() {
+  return deDuplicatedTodoRooms((data.value.approvalRooms ?? []).map((room: any) => ({ roomId: room.roomId, fullHouseNo: room.fullHouseNo, type: (room.types ?? []).join('、') || '审批待处理', count: room.count })))
+}
 const todoItems = computed(() => [
-  {
-    title: '逾期未收',
-    desc: '仍有未结清的逾期账单',
-    count: data.value.arrears?.length || 0,
-    tone: 'danger',
-    path: '/payments',
-  },
-  {
-    title: `${data.value.rentReminderDays || 7} 天内应缴`,
-    desc: '即将到期的租金账单',
-    count: data.value.rentReminders?.length || 0,
-    tone: 'warning',
-    path: '/payments',
-  },
-  {
-    title: '合同即将到期',
-    desc: `未来 ${data.value.contractExpiryDays || 30} 天内到期`,
-    count: data.value.expiringContracts?.length || 0,
-    tone: 'primary',
-    path: '/contracts',
-  },
-  {
-    title: '审批待处理',
-    desc: '账单、退款、固定月租退差待审批',
-    count: totalApprovals.value,
-    tone: 'purple',
-    path: '/contracts/changes',
-  },
-  {
-    title: '长期空置',
-    desc: `连续空置超过 ${data.value.longVacancyDays || 30} 天`,
-    count: data.value.longVacancyRooms?.length || 0,
-    tone: 'green',
-    path: '/properties',
-  },
+  { title: '逾期未收', desc: '仍有未结清的逾期账单', count: data.value.arrears?.length || 0, tone: 'danger', path: '/payments', rooms: billTodoRooms(data.value.arrears, '逾期未收') },
+  { title: String(data.value.rentReminderDays || 7) + ' 天内应缴', desc: '即将到期的租金账单', count: data.value.rentReminders?.length || 0, tone: 'warning', path: '/payments', rooms: billTodoRooms(data.value.rentReminders, '应缴提醒') },
+  { title: '合同即将到期', desc: '未来 ' + String(data.value.contractExpiryDays || 30) + ' 天内到期', count: data.value.expiringContracts?.length || 0, tone: 'primary', path: '/contracts', rooms: contractTodoRooms(data.value.expiringContracts, '合同即将到期') },
+  { title: '审批待处理', desc: '账单、退款、固定月租退差待审批', count: totalApprovals.value, tone: 'purple', path: '/contracts/changes', rooms: approvalTodoRooms() },
+  { title: '长期空置', desc: '连续空置超过 ' + String(data.value.longVacancyDays || 30) + ' 天', count: data.value.longVacancyRooms?.length || 0, tone: 'green', path: '/properties', rooms: roomTodoRooms(data.value.longVacancyRooms, '长期空置') },
 ])
+function openTodo(item: any) {
+  selectedTodo.value = item
+  todoDialogOpen.value = true
+}
+function openTodoRoom(roomId: number) {
+  todoDialogOpen.value = false
+  void router.push({ name: 'room-detail', params: { id: roomId } })
+}
+function openTodoTarget() {
+  if (!selectedTodo.value) return
+  todoDialogOpen.value = false
+  void router.push(selectedTodo.value.path)
+}
 const floorGroups = computed(() => {
   const grouped = new Map<string, DashboardRoom[]>()
   for (const room of rooms.value) {
@@ -356,7 +365,7 @@ onMounted(init)
           </div>
         </el-card>
 
-        <el-card class="panel-card" shadow="never">
+        <el-card v-if="isSuper" class="panel-card" shadow="never">
           <template #header>
             <div class="panel-head">
               <div>
@@ -403,7 +412,7 @@ onMounted(init)
             </div>
           </template>
           <div class="todo-list">
-            <button v-for="item in todoItems" :key="item.title" class="todo" :class="item.tone" @click="router.push(item.path)">
+            <button v-for="item in todoItems" :key="item.title" class="todo" :class="item.tone" @click="openTodo(item)">
               <span class="todo-icon">{{ item.count }}</span>
               <span><b>{{ item.title }}</b><small>{{ item.desc }}</small></span>
               <strong>{{ item.count }}</strong>
@@ -468,6 +477,17 @@ onMounted(init)
         <el-table-column label="空置起始时间" min-width="140"><template #default="{ row }">{{ formatDate(row.statusChangedAt) }}</template></el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="todoDialogOpen" :title="selectedTodo?.title || '今日待办'" width="620px">
+      <el-empty v-if="!selectedTodo?.rooms?.length" description="暂无待处理房源" />
+      <el-table v-else :data="selectedTodo.rooms" size="small">
+        <el-table-column prop="fullHouseNo" label="房号" min-width="130" />
+        <el-table-column label="待办类型" min-width="180"><template #default="{ row }">{{ row.types.join('、') }}</template></el-table-column>
+        <el-table-column prop="count" label="数量" width="80" />
+        <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openTodoRoom(row.roomId)">查看房源</el-button></template></el-table-column>
+      </el-table>
+      <template #footer><el-button @click="todoDialogOpen = false">关闭</el-button><el-button type="primary" @click="openTodoTarget">前往处理</el-button></template>
+    </el-dialog>
   </main>
 </template>
 

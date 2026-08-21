@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "../services/http";
 import { useSessionStore } from "../stores/session";
+import { tenantStatusLabel } from "../utils/status-labels";
 import {
   tenantFormFromListItem,
   tenantUpdatePayload,
@@ -143,7 +144,7 @@ onMounted(async () => {
         <el-table-column prop="maskedIdNo" label="证件号码（脱敏）" />
         <el-table-column label="状态">
           <template #default="{ row }">{{
-            row.status === "ACTIVE" ? "启用" : "停用"
+            tenantStatusLabel(row.status)
           }}</template>
         </el-table-column>
         <el-table-column label="操作" width="230">

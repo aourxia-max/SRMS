@@ -4,6 +4,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/authorization/roles.guard';
+import { ContractLifecycleService } from '../src/contracts/contract-lifecycle.service';
 import { FilesService } from '../src/files/files.service';
 import { PaymentsController } from '../src/payments/payments.controller';
 import { PaymentsService } from '../src/payments/payments.service';
@@ -19,6 +20,7 @@ describe('payments API authorization (e2e)', () => {
       providers: [
         { provide: PaymentsService, useValue: {} },
         { provide: FilesService, useValue: {} },
+        { provide: ContractLifecycleService, useValue: { run: jest.fn() } },
         { provide: PaymentReviewsService, useValue: {} },
       ],
     })

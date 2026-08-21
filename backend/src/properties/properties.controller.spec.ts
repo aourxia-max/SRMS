@@ -1,4 +1,5 @@
 import { RoomStatus, UserRole } from '@prisma/client';
+import { ROLES_KEY } from '../authorization/roles.decorator';
 import { PropertiesController } from './properties.controller';
 
 describe('PropertiesController', () => {
@@ -12,6 +13,35 @@ describe('PropertiesController', () => {
     displayName: '管理员',
     role: UserRole.ADMIN,
   };
+
+  it('reserves property creation and deletion for super administrators', () => {
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        PropertiesController.prototype.createBuilding,
+      ),
+    ).toEqual([UserRole.SUPER_ADMIN]);
+    expect(
+      Reflect.getMetadata(ROLES_KEY, PropertiesController.prototype.createRoom),
+    ).toEqual([UserRole.SUPER_ADMIN]);
+    expect(
+      Reflect.getMetadata(ROLES_KEY, PropertiesController.prototype.deleteRoom),
+    ).toEqual([UserRole.SUPER_ADMIN]);
+  });
+
+  it('keeps property editing available to administrators', () => {
+    const editableMethods = [
+      'updateBuilding',
+      'changeStatus',
+      'updateRoom',
+    ] as const;
+
+    for (const method of editableMethods) {
+      expect(
+        Reflect.getMetadata(ROLES_KEY, PropertiesController.prototype[method]),
+      ).toEqual([UserRole.SUPER_ADMIN, UserRole.ADMIN]);
+    }
+  });
 
   it('creates a room and writes its initial status history with operator', async () => {
     const create = jest.fn().mockResolvedValue({ id: 11 });
@@ -244,6 +274,32 @@ describe('PropertiesController', () => {
           { houseNo: { contains: '601' } },
           { ownerName: { contains: '601' } },
           { ownerPhone: { contains: '601' } },
+          {
+            contracts: {
+              some: {
+                status: { in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'] },
+                members: {
+                  some: {
+                    isCurrent: true,
+                    tenant: { name: { contains: '601' } },
+                  },
+                },
+              },
+            },
+          },
+          {
+            contracts: {
+              some: {
+                status: { in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'] },
+                members: {
+                  some: {
+                    isCurrent: true,
+                    tenant: { phone: { contains: '601' } },
+                  },
+                },
+              },
+            },
+          },
         ],
       },
       include: { building: true },

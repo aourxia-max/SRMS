@@ -2,6 +2,7 @@ export type ContractRole = 'SUPER_ADMIN' | 'ADMIN' | 'VISITOR'
 export type ContractWorkspaceTab = 'list' | 'create' | 'detail' | 'fixed-rebate'
 
 export type ContractCommission = {
+  id?: number
   recipientName: string
   amount: string
 }

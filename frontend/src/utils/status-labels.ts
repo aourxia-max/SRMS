@@ -111,3 +111,25 @@ export const contractPricingModeLabels: StatusMap = {
 };
 
 export const contractPricingModeLabel = (value?: string | null) => fallback(contractPricingModeLabels, value);
+
+
+export const usageTypeLabels: StatusMap = {
+  RESIDENCE: '居住',
+  SHOP: '商铺',
+  OFFICE: '办公',
+  STORAGE: '仓储',
+  OTHER: '其他',
+};
+
+export const tenantStatusLabels: StatusMap = {
+  ACTIVE: '启用',
+  INACTIVE: '停用',
+};
+
+const safeBusinessLabel = (map: StatusMap, value?: string | null) => {
+  if (!value) return '—';
+  return map[value] ?? '未知状态';
+};
+
+export const usageTypeLabel = (value?: string | null) => safeBusinessLabel(usageTypeLabels, value);
+export const tenantStatusLabel = (value?: string | null) => safeBusinessLabel(tenantStatusLabels, value);
