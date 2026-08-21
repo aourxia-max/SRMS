@@ -33,6 +33,13 @@ export interface PaymentListItem {
   tenant?: { id: number; name: string; phone?: string } | null
 }
 
+export interface PaymentListPage {
+  items: PaymentListItem[]
+  page: number
+  pageSize: number
+  total: number
+}
+
 export interface PaymentDetail extends PaymentListItem {
   externalReference?: string | null
   remark?: string | null

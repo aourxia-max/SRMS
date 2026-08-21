@@ -22,7 +22,7 @@ vi.mock('../services/http', () => ({
 }))
 
 vi.mock('../services/payments', () => ({
-  paymentApi: { list: vi.fn().mockResolvedValue([]) },
+  listAllPayments: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../services/contracts', () => ({

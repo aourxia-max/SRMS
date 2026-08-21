@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
+import PaymentRecordList from '../../components/payments/PaymentRecordList.vue'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
@@ -12,6 +13,9 @@ import { approvalStatusLabel, billAdjustmentTypeLabel } from '../../utils/status
 
 const route = useRoute(); const router = useRouter(); const session = useSessionStore()
 const rows = ref<PaymentListItem[]>([]); const detail = ref<PaymentDetail | null>(null); const loading = ref(false)
+const pageSize = 10
+const currentPage = ref(1)
+const total = ref(0)
 const filters = reactive({ receiptNo: '', roomKeyword: '', tenantKeyword: '', dateFrom: '', dateTo: '' })
 const refundOpen = ref(false); const voidOpen = ref(false); const editOpen = ref(false)
 const refund = reactive({ refundAmount: '', refundDate: new Date().toISOString().slice(0,10), refundMethod: 'BANK_TRANSFER' as PaymentMethod, reason: '', allocations: {} as Record<number,string> })
@@ -25,10 +29,16 @@ function money(value: unknown) { return `¥${Number(value ?? 0).toFixed(2)}` }
 function date(value: unknown) { return value ? String(value).slice(0,10) : '—' }
 function printReceipt() { window.print() }
 
-async function search() {
+async function loadPage() {
   loading.value = true
-  try { rows.value = await paymentApi.list(Object.fromEntries(Object.entries(filters).filter(([,value]) => value))) } finally { loading.value = false }
+  try {
+    const result = await paymentApi.list({ ...Object.fromEntries(Object.entries(filters).filter(([,value]) => value)), page: currentPage.value, pageSize })
+    rows.value = result.items
+    total.value = result.total
+  } finally { loading.value = false }
 }
+async function search() { currentPage.value = 1; await loadPage() }
+async function changePage(page: number) { currentPage.value = page; await loadPage() }
 async function openDetail(id: number) {
   loading.value = true
   try { detail.value = await paymentApi.detail(id); if (Number(route.params.id) !== id) await router.replace(`/payments/detail/${id}`) } finally { loading.value = false }
@@ -56,7 +66,7 @@ onMounted(() => void initialize())
   <PaymentWorkspace title="收款详情" description="按票据、房号、租户或日期查询，查看每一笔收款的完整资金轨迹。">
     <el-card shadow="never" class="filter-card"><el-form inline><el-form-item label="票据号"><el-input v-model="filters.receiptNo" clearable /></el-form-item><el-form-item label="房号"><el-input v-model="filters.roomKeyword" clearable /></el-form-item><el-form-item label="租户"><el-input v-model="filters.tenantKeyword" clearable /></el-form-item><el-form-item label="日期"><el-date-picker v-model="filters.dateFrom" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" type="date" placeholder="开始日期" /></el-form-item><el-form-item><el-date-picker v-model="filters.dateTo" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" type="date" placeholder="结束日期" /></el-form-item><el-button type="primary" @click="search">查询</el-button></el-form></el-card>
     <div class="detail-layout" v-loading="loading">
-      <el-card shadow="never" class="record-list"><template #header><b>收款记录（{{ rows.length }}）</b></template><button v-for="row in rows" :key="row.id" class="record-item" :class="{active:detail?.id===row.id}" @click="openDetail(row.id)"><span><b>{{ row.receiptNo }}</b><small>{{ row.contract.room?.fullHouseNo }} · {{ row.tenant?.name ?? '未登记租户' }}</small></span><span><b>{{ money(row.amount) }}</b><small>{{ date(row.paymentDate) }}</small></span></button><el-empty v-if="!rows.length" description="没有匹配的收款记录" /></el-card>
+      <PaymentRecordList :rows="rows" :total="total" :current-page="currentPage" :page-size="pageSize" :selected-id="detail?.id ?? null" @select="openDetail" @page-change="changePage" />
       <div v-if="detail" class="detail-content">
         <el-card shadow="never"><div class="receipt-head"><div><div class="receipt-tags"><el-tag v-for="tag in lifecycleTags" :key="tag.text" :type="tag.type">{{ tag.text }}</el-tag></div><h2>{{ detail.receiptNo }}</h2><p>{{ detail.contract.contractNo }} · {{ detail.contract.room?.fullHouseNo }} · {{ detail.tenant?.name ?? '未登记租户' }}</p></div><div class="actions"><el-button @click="printReceipt">打印票据</el-button><el-button v-if="isSuperAdmin" @click="prepareEdit">更正</el-button><el-button v-if="isAdmin" @click="prepareRefund">申请退款</el-button><el-button v-if="isAdmin" type="danger" plain @click="voidOpen=true">申请作废</el-button></div></div><div class="metrics"><div><small>本次实收</small><b>{{ money(detail.metrics.receivedAmount) }}</b></div><div><small>已确认优惠</small><b>{{ money(detail.metrics.confirmedAdjustmentAmount) }}</b></div><div><small>转入预收款</small><b>{{ money(detail.metrics.prepaymentAmount) }}</b></div><div><small>覆盖账期</small><b>{{ detail.metrics.coveredBillCount }} 期</b></div></div></el-card>
         <el-card shadow="never"><template #header><b>账期分配</b></template><el-table :data="detail.allocations" size="small"><el-table-column prop="allocationOrder" label="顺序" width="65"/><el-table-column label="账期"><template #default="{row}">第 {{ row.bill.periodSeq }} 期</template></el-table-column><el-table-column label="区间" min-width="180"><template #default="{row}">{{date(row.bill.periodStart)}} 至 {{date(row.bill.periodEnd)}}</template></el-table-column><el-table-column label="分配金额" align="right"><template #default="{row}">{{money(row.allocatedAmount)}}</template></el-table-column><el-table-column label="已冲回" align="right"><template #default="{row}">{{money(row.reversedAmount)}}</template></el-table-column><el-table-column label="有效金额" align="right"><template #default="{row}"><b>{{money(row.effectiveAmount)}}</b></template></el-table-column></el-table></el-card>
@@ -75,4 +85,5 @@ onMounted(() => void initialize())
 <style scoped>
 .filter-card :deep(.el-form-item){margin-bottom:0}.detail-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;align-items:start}.record-list{position:sticky;top:88px}.record-list :deep(.el-card__body){padding:0}.record-item{display:flex;width:100%;justify-content:space-between;gap:10px;padding:14px 16px;border:0;border-bottom:1px solid #edf0f4;background:#fff;color:#344258;text-align:left;cursor:pointer}.record-item:hover,.record-item.active{background:#edf4ff}.record-item span{display:grid;gap:5px}.record-item span:last-child{text-align:right}.record-item small{color:#8b98aa}.detail-content{display:grid;gap:16px}.receipt-head{display:flex;justify-content:space-between;gap:15px}.receipt-head h2{margin:10px 0 5px}.receipt-head p{margin:0;color:#78879b}.actions{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:20px}.metrics div{display:grid;gap:8px;padding:15px;border-radius:9px;background:#f5f7fb}.metrics small{color:#7e8b9e}.metrics b{font-size:19px}.detail-columns{display:grid;grid-template-columns:1fr 1fr;gap:16px}.file-row,.refund-line{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #edf0f5}.dialog-form{margin-top:18px}.empty-detail{padding:70px;background:#fff;border-radius:10px}.receipt-tags{display:flex;flex-wrap:wrap;gap:8px}@media(max-width:1100px){.detail-layout{grid-template-columns:1fr}.record-list{position:static}.metrics{grid-template-columns:repeat(2,1fr)}}@media(max-width:700px){.detail-columns{grid-template-columns:1fr}.receipt-head{flex-direction:column}}
 @media print{.filter-card,.record-list,.actions{display:none!important}.detail-layout{display:block}.detail-content>:not(:first-child){display:none}.receipt-head{display:block}}
+@media print{.payment-record-list{display:none!important}}
 </style>
