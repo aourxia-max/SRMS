@@ -93,9 +93,10 @@ jobs:
             "DEPLOY_DIR='$DEPLOY_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "$DEPLOY_DIR"
-          if [ -n "$(git status --porcelain)" ]; then
+          unsafe_changes="$(git status --porcelain | grep -v '^?? deploy/manual-backups/$' || true)"
+          if [ -n "$unsafe_changes" ]; then
             echo '服务器工作区存在未提交修改，停止自动部署以保护现有内容。'
-            git status --short
+            printf '%s\n' "$unsafe_changes"
             exit 1
           fi
           git fetch --prune origin main
