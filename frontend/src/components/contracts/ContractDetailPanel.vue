@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { isFixedRentRebateEligible } from '../../services/contracts'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
+import { contractStatusLabel } from '../../utils/status-labels'
 
 const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
@@ -19,7 +20,6 @@ const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
-const statusLabel: Record<string, string> = { DRAFT: '??', PENDING_START: '???', ACTIVE: '???', PENDING_CHECKOUT: '???', ENDED: '???', VOIDED: '???' }
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
 const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
 </script>
@@ -32,7 +32,7 @@ const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
     <template v-else>
       <div class="status-banner">
         <div><h1>{{ contract.contractNo }}</h1><p>{{ contract.room?.fullHouseNo || `房源${contract.roomId}` }}｜{{ primaryTenant?.name || '未记录承租人' }}｜合同期 {{ date(contract.startDate) }} 至 {{ date(contract.endDate) }}</p></div>
-        <el-tag effect="dark">{{ statusLabel[contract.status] || contract.status }}</el-tag>
+        <el-tag effect="dark">{{ contractStatusLabel(contract.status) }}</el-tag>
       </div>
       <header class="page-head">
         <div><h1>合同详情</h1><p>固定月租合同履行、账单、成员、附件和变更记录</p></div>

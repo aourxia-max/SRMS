@@ -203,6 +203,15 @@ describe('合同工作区复审边界', () => {
     expect(isFixedRentRebateEligible(null)).toBe(false)
   })
 
+  it('合同详情使用统一中文状态名称', () => {
+    const wrapper = mount(ContractDetailPanel, {
+      props: { contract: activeContract(), role: 'ADMIN' },
+      global: { plugins: [ElementPlus] },
+    })
+
+    expect(wrapper.text()).toContain('履行中')
+  })
+
   it.each([
     ['合同编号', '050012'],
     ['楼栋房号', '1栋301'],
