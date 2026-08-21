@@ -3,6 +3,7 @@ import {
   approvalStatusLabel,
   billAdjustmentTypeLabel,
   contractStatusLabel,
+  contractStatusTagType,
   paymentStatusLabel,
   pricingRebateSourceLabel,
   rentBillStatusLabel,
@@ -18,6 +19,17 @@ describe("status label helpers", () => {
     expect(paymentStatusLabel("FULLY_REFUNDED")).toBe("\u5df2\u5168\u989d\u9000\u6b3e");
     expect(rentBillStatusLabel("OVERDUE")).toBe("\u5df2\u903e\u671f");
     expect(contractStatusLabel("VOIDED")).toBe("\u5df2\u4f5c\u5e9f");
+  });
+
+  it("provides unified Chinese labels and tag colors for contract statuses", () => {
+    expect(contractStatusLabel("DRAFT")).toBe("草稿");
+    expect(contractStatusTagType("DRAFT")).toBe("info");
+    expect(contractStatusTagType("PENDING_START")).toBe("warning");
+    expect(contractStatusTagType("ACTIVE")).toBe("success");
+    expect(contractStatusTagType("PENDING_CHECKOUT")).toBe("warning");
+    expect(contractStatusTagType("ENDED")).toBe("primary");
+    expect(contractStatusTagType("VOIDED")).toBe("danger");
+    expect(contractStatusLabel("UNEXPECTED")).toBe("未知状态");
   });
 
   it("translates business operation codes instead of exposing raw English", () => {

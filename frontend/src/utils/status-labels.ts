@@ -29,6 +29,17 @@ export const rentBillStatusLabels: StatusMap = {
   REFUNDED: "\u5df2\u9000\u6b3e",
 };
 
+export type StatusTagType = "info" | "warning" | "success" | "danger" | "primary";
+
+const contractStatusTagTypes: Record<string, StatusTagType> = {
+  DRAFT: "info",
+  PENDING_START: "warning",
+  ACTIVE: "success",
+  PENDING_CHECKOUT: "warning",
+  ENDED: "primary",
+  VOIDED: "danger",
+};
+
 export const contractStatusLabels: StatusMap = {
   DRAFT: "\u8349\u7a3f",
   PENDING_START: "\u5f85\u5f00\u59cb",
@@ -95,7 +106,9 @@ export const paymentMethodLabels: StatusMap = {
 export const approvalStatusLabel = (value?: string | null) => fallback(approvalStatusLabels, value);
 export const paymentStatusLabel = (value?: string | null) => fallback(paymentStatusLabels, value);
 export const rentBillStatusLabel = (value?: string | null) => fallback(rentBillStatusLabels, value);
-export const contractStatusLabel = (value?: string | null) => fallback(contractStatusLabels, value);
+export const contractStatusLabel = (value?: string | null) => safeBusinessLabel(contractStatusLabels, value);
+export const contractStatusTagType = (value?: string | null): StatusTagType =>
+  value ? contractStatusTagTypes[value] ?? "info" : "info";
 export const roomStatusLabel = (value?: string | null) => fallback(roomStatusLabels, value);
 export const billAdjustmentTypeLabel = (value?: string | null) => fallback(billAdjustmentTypeLabels, value);
 export const adjustmentDirectionLabel = (value?: string | null) => fallback(adjustmentDirectionLabels, value);
