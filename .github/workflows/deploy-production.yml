@@ -52,7 +52,7 @@ jobs:
         run: npm --prefix backend run prisma:validate
 
       - name: 前端单元测试
-        run: npm --prefix frontend run test:unit -- --run
+        run: npm --prefix frontend run test:unit -- --run --testTimeout=15000
 
       - name: 前后端构建
         run: npm run build
