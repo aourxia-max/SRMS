@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
@@ -75,6 +75,8 @@ const previewOpen = ref(false)
 const previewLoading = ref(false)
 const previewUrl = ref('')
 const previewName = ref('')
+const previewScale = ref(1)
+const previewScaleLabel = computed(() => Math.round(previewScale.value * 100) + '%')
 const loading = ref(false)
 const saving = ref(false)
 const currentDraftId = ref<number | null>(null)
@@ -311,6 +313,7 @@ async function previewFile(file: ContractFile) {
   if (!selectedContractId.value) return
   const request = ++previewRequest
   releasePreviewUrl()
+  previewScale.value = 1
   previewLoading.value = true
   previewName.value = file.originalName
   previewOpen.value = true
@@ -333,10 +336,19 @@ async function previewFile(file: ContractFile) {
   }
 }
 
+function changePreviewScale(delta: number) {
+  previewScale.value = Math.min(3, Math.max(0.5, Number((previewScale.value + delta).toFixed(2))))
+}
+
+function resetPreviewScale() {
+  previewScale.value = 1
+}
+
 function closePreview() {
   previewRequest += 1
   previewOpen.value = false
   previewName.value = ''
+  resetPreviewScale()
   releasePreviewUrl()
 }
 async function loadPreview(generation: number) {
@@ -452,7 +464,17 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
     </main>
       <el-dialog v-model="previewOpen" :title="previewName || '合同附件预览'" width="880px" @closed="closePreview">
         <el-skeleton v-if="previewLoading" :rows="6" animated />
-        <img v-else-if="previewUrl" data-test="contract-image-preview" :src="previewUrl" :alt="previewName" class="contract-image-preview" />
+        <div v-else-if="previewUrl" class="contract-preview-viewer">
+          <div class="contract-preview-toolbar" aria-label="图片缩放控制">
+            <el-button data-test="contract-preview-zoom-out" :disabled="previewScale <= 0.5" @click="changePreviewScale(-0.25)">缩小</el-button>
+            <span data-test="contract-preview-scale">{{ previewScaleLabel }}</span>
+            <el-button data-test="contract-preview-zoom-in" :disabled="previewScale >= 3" @click="changePreviewScale(0.25)">放大</el-button>
+            <el-button data-test="contract-preview-reset" @click="resetPreviewScale">重置</el-button>
+          </div>
+          <div class="contract-preview-viewport">
+            <img data-test="contract-image-preview" :src="previewUrl" :alt="previewName" class="contract-image-preview" :style="{ transform: 'scale(' + previewScale + ')' }" />
+          </div>
+        </div>
       </el-dialog>
   </el-config-provider>
 </template>
@@ -462,5 +484,9 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
 .create-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 15px; align-items: start; }
 @media (max-width: 1100px) { .create-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) { .contracts-workspace { padding: 12px 10px 28px; } }
-.contract-image-preview { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; object-fit: contain; }
+.contract-preview-viewer { display: grid; gap: 12px; }
+.contract-preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.contract-preview-toolbar span { min-width: 48px; color: #526075; font-variant-numeric: tabular-nums; text-align: center; }
+.contract-preview-viewport { display: flex; min-height: 260px; max-height: 65vh; align-items: flex-start; justify-content: center; padding: 16px; overflow: auto; background: #f3f6fb; border-radius: 8px; }
+.contract-image-preview { display: block; max-width: 100%; max-height: 58vh; margin: 0 auto; object-fit: contain; transform-origin: top center; transition: transform 120ms ease; }
 </style>

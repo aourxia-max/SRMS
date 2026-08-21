@@ -3,10 +3,12 @@ import {
   approvalStatusLabel,
   billAdjustmentTypeLabel,
   contractStatusLabel,
+  contractStatusTagClass,
   contractStatusTagType,
   paymentStatusLabel,
   pricingRebateSourceLabel,
   rentBillStatusLabel,
+  roomStatusLabel,
   tenantStatusLabel,
   usageTypeLabel,
 } from "./status-labels";
@@ -25,8 +27,10 @@ describe("status label helpers", () => {
     expect(contractStatusLabel("DRAFT")).toBe("草稿");
     expect(contractStatusTagType("DRAFT")).toBe("info");
     expect(contractStatusTagType("PENDING_START")).toBe("warning");
+    expect(contractStatusTagClass("PENDING_START")).toBe("");
     expect(contractStatusTagType("ACTIVE")).toBe("success");
     expect(contractStatusTagType("PENDING_CHECKOUT")).toBe("warning");
+    expect(contractStatusTagClass("PENDING_CHECKOUT")).toBe("contract-status-tag--pending-checkout");
     expect(contractStatusTagType("ENDED")).toBe("primary");
     expect(contractStatusTagType("VOIDED")).toBe("danger");
     expect(contractStatusLabel("UNEXPECTED")).toBe("未知状态");
@@ -47,6 +51,11 @@ describe("status label helpers", () => {
     expect(tenantStatusLabel("UNEXPECTED")).toBe("未知状态");
   });
 
+  it("uses a safe Chinese fallback for payment, rent-bill, and room statuses", () => {
+    expect(paymentStatusLabel("UNEXPECTED_PAYMENT")).toBe("未知状态");
+    expect(rentBillStatusLabel("UNEXPECTED_BILL")).toBe("未知状态");
+    expect(roomStatusLabel("UNEXPECTED_ROOM")).toBe("未知状态");
+  });
   it("keeps unknown codes visible for diagnostics", () => {
     expect(approvalStatusLabel("UNKNOWN_STATUS")).toBe("UNKNOWN_STATUS");
   });

@@ -101,6 +101,41 @@ describe('FilesService payment proofs', () => {
     ).rejects.toThrow('附件类型或内容不符合限制');
   });
 
+  it('does not broaden GIF support to payment proof uploads', async () => {
+    const service = new FilesService(
+      {
+        db: {
+          systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
+        },
+      } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'TENANT_FILE_MAX_SIZE_BYTES'
+            ? '10485760'
+            : 'image/jpeg,image/png,image/webp,image/gif',
+        ),
+      } as never,
+    );
+    const content = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(8)]);
+
+    await expect(
+      service.savePaymentProof(
+        {
+          originalname: 'receipt.gif',
+          mimetype: 'image/gif',
+          size: content.length,
+          buffer: content,
+        },
+        {
+          id: 3,
+          username: 'cashier',
+          displayName: '收款员',
+          role: UserRole.ADMIN,
+        },
+      ),
+    ).rejects.toThrow('附件类型或内容不符合限制');
+  });
+
   it('downloads only a proof linked to the requested payment', async () => {
     jest.mocked(readFile).mockResolvedValue(Buffer.from('proof'));
     const service = new FilesService(
@@ -301,6 +336,77 @@ describe('FilesService contract files', () => {
       );
     },
   );
+
+  it.each(['GIF87a', 'GIF89a'])(
+    'stores a genuine %s contract upload with a .gif extension',
+    async (signature) => {
+      const create = jest.fn().mockImplementation(({ data }) =>
+        Promise.resolve({
+          id: 42,
+          originalName: data.originalName,
+          mimeType: data.mimeType,
+          sizeBytes: data.sizeBytes,
+          uploadedAt: new Date('2026-08-05T00:00:00Z'),
+        }),
+      );
+      const content = Buffer.concat([Buffer.from(signature), Buffer.alloc(8)]);
+
+      await expect(
+        serviceWith({ create }).saveContractFile(
+          {
+            originalname: 'signed-contract.gif',
+            mimetype: 'image/gif',
+            size: content.length,
+            buffer: content,
+          },
+          user,
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          id: 42,
+          originalName: 'signed-contract.gif',
+          mimeType: 'image/gif',
+          sizeBytes: String(content.length),
+        }),
+      );
+      expect(create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          category: 'CONTRACT',
+          extension: '.gif',
+          mimeType: 'image/gif',
+        }),
+      });
+    },
+  );
+
+  it('rejects a GIF MIME when its content has no GIF87a or GIF89a signature', async () => {
+    await expect(
+      serviceWith().saveContractFile(
+        {
+          originalname: 'contract.gif',
+          mimetype: 'image/gif',
+          size: 8,
+          buffer: Buffer.from('not-gif!'),
+        },
+        user,
+      ),
+    ).rejects.toThrow('附件类型或内容不符合限制');
+  });
+
+  it('rejects a genuine GIF signature when the filename extension is not .gif', async () => {
+    const content = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(8)]);
+    await expect(
+      serviceWith().saveContractFile(
+        {
+          originalname: 'contract.png',
+          mimetype: 'image/gif',
+          size: content.length,
+          buffer: content,
+        },
+        user,
+      ),
+    ).rejects.toThrow('附件类型或内容不符合限制');
+  });
 
   it('rejects a declared MIME whose content has no matching signature', async () => {
     await expect(

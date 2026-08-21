@@ -31,6 +31,20 @@ body {
 .el-table th.el-table__cell { color: #646a73; font-weight: 600; }
 .el-form-item__label { color: #3b3f45; font-weight: 500; }
 
+.el-tag.contract-status-tag--pending-checkout,
+.contract-status-tag--pending-checkout .el-tag {
+  --el-tag-bg-color: #fff1e8;
+  --el-tag-border-color: #ffad75;
+  --el-tag-text-color: #c2410c;
+}
+
+.el-tag.contract-status-tag--pending-checkout.el-tag--dark,
+.contract-status-tag--pending-checkout .el-tag.el-tag--dark {
+  --el-tag-bg-color: #e85d24;
+  --el-tag-border-color: #e85d24;
+  --el-tag-text-color: #fff;
+}
+
 button,
 input,
 textarea,

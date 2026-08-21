@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ContractListItem } from '../../types/contracts'
-import { contractStatusLabel, contractStatusLabels, contractStatusTagType } from '../../utils/status-labels'
+import { contractStatusLabel, contractStatusLabels, contractStatusTagClass, contractStatusTagType } from '../../utils/status-labels'
 
 const props = withDefaults(defineProps<{
   contracts: ContractListItem[]
@@ -58,7 +58,7 @@ const filtered = computed(() => props.contracts.filter((item) => {
         <el-table-column label="主承租人" min-width="110"><template #default="{ row }">{{ row.members?.find((item: any) => item.memberRole === 'PRIMARY')?.tenant.name || '—' }}</template></el-table-column>
         <el-table-column label="合同期" min-width="205"><template #default="{ row }">{{ String(row.startDate).slice(0, 10) }} 至 {{ String(row.endDate).slice(0, 10) }}</template></el-table-column>
         <el-table-column label="月租" width="120"><template #default="{ row }">¥{{ Number(row.monthlyRent).toLocaleString('zh-CN') }}</template></el-table-column>
-        <el-table-column label="状态" width="105"><template #default="{ row }"><el-tag :data-test="`contract-status-${row.id}`" :class="`el-tag--${contractStatusTagType(row.status)}`" :type="contractStatusTagType(row.status)" effect="light">{{ contractStatusLabel(row.status) }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="105"><template #default="{ row }"><el-tag :data-test="`contract-status-${row.id}`" :class="['el-tag--' + contractStatusTagType(row.status), contractStatusTagClass(row.status)]" :type="contractStatusTagType(row.status)" effect="light">{{ contractStatusLabel(row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="110" fixed="right"><template #default="{ row }"><el-button :type="row.id === selectedContractId ? 'primary' : 'default'" link @click="emit('select', row)">查看详情</el-button></template></el-table-column>
       </el-table>
     </section>

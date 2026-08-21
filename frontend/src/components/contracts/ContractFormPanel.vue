@@ -232,7 +232,7 @@ function handleUpload(file: UploadFile) {
           <el-alert v-if="concessionError" type="error" :closable="false" :title="concessionError" show-icon />
           <div class="other-grid">
             <el-form-item label="合同附件">
-              <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp" :on-change="handleUpload">
+              <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif" :on-change="handleUpload">
                 <el-button>上传 PDF / 图片</el-button>
               </el-upload>
               <span v-if="form.fileAssetIds.length" class="file-count">已上传 {{ form.fileAssetIds.length }} 个附件</span>

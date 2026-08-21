@@ -5,7 +5,7 @@ import { isFixedRentRebateEligible, isPreviewableContractImage } from '../../ser
 import { http } from '../../services/http'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
-import { contractStatusLabel, contractStatusTagType, paymentStatusLabel, rentBillStatusLabel } from '../../utils/status-labels'
+import { contractStatusLabel, contractStatusTagClass, contractStatusTagType, paymentStatusLabel, rentBillStatusLabel } from '../../utils/status-labels'
 
 const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
@@ -84,7 +84,7 @@ async function removeCommission() {
     <template v-else>
       <div class="status-banner">
         <div><h1>{{ contract.contractNo }}</h1><p>{{ contract.room?.fullHouseNo || `房源${contract.roomId}` }}｜{{ primaryTenant?.name || '未记录承租人' }}｜合同期 {{ date(contract.startDate) }} 至 {{ date(contract.endDate) }}</p></div>
-        <el-tag data-test="contract-status-tag" :class="`el-tag--${contractStatusTagType(contract.status)}`" :type="contractStatusTagType(contract.status)" effect="dark">{{ contractStatusLabel(contract.status) }}</el-tag>
+        <el-tag data-test="contract-status-tag" :class="['el-tag--' + contractStatusTagType(contract.status), contractStatusTagClass(contract.status)]" :type="contractStatusTagType(contract.status)" effect="dark">{{ contractStatusLabel(contract.status) }}</el-tag>
       </div>
       <header class="page-head">
         <div><h1>合同详情</h1><p>固定月租合同履行、账单、成员、附件和变更记录</p></div>

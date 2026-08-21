@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
+import { createLatestRequestGuard } from '../../services/contracts'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
@@ -20,6 +21,7 @@ const proofFiles = ref<Array<{ id: number; originalName: string }>>([])
 const loading = ref(false)
 const submitting = ref(false)
 const autoSuggestedPaymentAmount = ref('')
+const contractLoadRequests = createLatestRequestGuard()
 const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as PaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
 const adjustment = reactive({ enabled: false, rentBillId: undefined as number | undefined, adjustmentType: 'DISCOUNT' as 'DISCOUNT' | 'WAIVER', amount: '', reason: '' })
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
@@ -67,17 +69,36 @@ async function loadContracts() {
   const requested = Number(route.query.contractId)
   if (requested > 0 && contracts.value.some((item) => item.id === requested)) { form.contractId = requested; await selectContract() }
 }
-async function selectContract() {
-  if (!form.contractId) return
+function clearContractPaymentState() {
+  bills.value = []
+  prepayments.value = { balance: '0.00', items: [] }
+  selectedBillIds.value = []
+  adjustment.rentBillId = undefined
+  form.amount = ''
+  form.manualAllocationReason = ''
+  autoSuggestedPaymentAmount.value = ''
+}
+async function selectContract(contractId = form.contractId) {
+  const request = contractLoadRequests.next()
+  clearContractPaymentState()
+  if (!contractId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    const [billRows, prep] = await Promise.all([paymentApi.bills(form.contractId), paymentApi.prepayments(form.contractId)])
+    const [billRows, prep] = await Promise.all([paymentApi.bills(contractId), paymentApi.prepayments(contractId)])
+    if (!contractLoadRequests.isCurrent(request)) return
     bills.value = billRows.filter((bill) => !['VOIDED', 'REFUNDED'].includes(bill.status ?? '') && Number(bill.outstandingAmount) > 0).sort((a, b) => a.periodSeq - b.periodSeq)
     prepayments.value = prep
     selectedBillIds.value = bills.value[0] ? [bills.value[0].id] : []
     adjustment.rentBillId = bills.value[0]?.id
     applySelectedBillsAmount(selectedBillIds.value)
-  } finally { loading.value = false }
+  } catch {
+    if (contractLoadRequests.isCurrent(request)) ElMessage.error('合同账单加载失败，请稍后重试')
+  } finally {
+    if (contractLoadRequests.isCurrent(request)) loading.value = false
+  }
 }
 function toggleBill(bill: RentBill, checked: boolean) {
   const current = [...selectedBillIds.value]

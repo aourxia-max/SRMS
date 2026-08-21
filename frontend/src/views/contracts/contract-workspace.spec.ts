@@ -133,6 +133,20 @@ describe('固定合同工作区', () => {
     expect(wrapper.text()).toContain('固定月租')
   })
 
+  it('合同附件文件选择器允许选择 GIF 文件', () => {
+    const wrapper = mount(ContractFormPanel, {
+      props: {
+        role: 'ADMIN',
+        modelValue: completeForm(),
+        rooms: [],
+        tenants: [],
+      },
+      global: { plugins: [ElementPlus] },
+    })
+
+    const accept = wrapper.get('input[type="file"]').attributes('accept') || ''
+    expect(accept.split(',')).toContain('.gif')
+  })
   it('普通管理员看不到提成且载荷不会提交提成', () => {
     const wrapper = mount(ContractFormPanel, {
       props: {
@@ -207,7 +221,7 @@ describe('合同工作区复审边界', () => {
     const contracts = [
       ['DRAFT', '草稿'],
       ['PENDING_START', '待开始'],
-      ['ACTIVE', '履行中'],
+      ['ACTIVE', '履约中'],
       ['PENDING_CHECKOUT', '待退租'],
       ['ENDED', '已结束'],
       ['VOIDED', '已作废'],
@@ -229,7 +243,11 @@ describe('合同工作区复审边界', () => {
       expect(wrapper.get(`[data-test="contract-status-${contract.id}"]`).text()).toBe(contract.expectedLabel)
     }
 
+    expect(wrapper.get('[data-test="contract-status-2"]').classes()).toContain('el-tag--warning')
+    expect(wrapper.get('[data-test="contract-status-2"]').classes()).not.toContain('contract-status-tag--pending-checkout')
     expect(wrapper.get('[data-test="contract-status-3"]').classes()).toContain('el-tag--success')
+    expect(wrapper.get('[data-test="contract-status-4"]').classes()).toContain('contract-status-tag--pending-checkout')
+    expect(wrapper.get('[data-test="contract-status-6"]').classes()).toContain('el-tag--danger')
     expect(wrapper.text()).not.toContain('ACTIVE')
     expect(wrapper.text()).not.toContain('PENDING_CHECKOUT')
   })
@@ -251,7 +269,7 @@ describe('合同工作区复审边界', () => {
     await nextTick()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('履行中')
+    expect(wrapper.text()).toContain('履约中')
     expect(wrapper.find('[data-test="contract-status-tag"]').classes()).toContain('el-tag--success')
 
     const billsTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('租金账单'))
@@ -274,13 +292,15 @@ describe('合同工作区复审边界', () => {
     expect(isFixedRentRebateEligible(null)).toBe(false)
   })
 
-  it('合同详情使用统一中文状态名称', () => {
+  it('合同详情使用统一中文状态名称和待退租橙红色标签', async () => {
     const wrapper = mount(ContractDetailPanel, {
       props: { contract: activeContract(), role: 'ADMIN' },
       global: { plugins: [ElementPlus] },
     })
 
-    expect(wrapper.text()).toContain('履行中')
+    expect(wrapper.text()).toContain('履约中')
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_CHECKOUT' } })
+    expect(wrapper.get('[data-test="contract-status-tag"]').classes()).toContain('contract-status-tag--pending-checkout')
   })
 
   it.each([
@@ -524,6 +544,34 @@ describe('合同附件图片预览生命周期', () => {
     return { wrapper, jpeg, png }
   }
 
+  it('提供可见缩放控件并在切换附件时重置缩放比例', async () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:contract-image-1')
+      .mockReturnValueOnce('blob:contract-image-2')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const { wrapper } = await mountWorkspace(vi.fn<DownloadContractFile>().mockResolvedValue(new Blob(['image'])))
+
+    await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="contract-preview-scale"]').text()).toBe('100%')
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('style')).toContain('scale(1)')
+
+    await wrapper.get('[data-test="contract-preview-zoom-in"]').trigger('click')
+    expect(wrapper.get('[data-test="contract-preview-scale"]').text()).toBe('125%')
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('style')).toContain('scale(1.25)')
+
+    await wrapper.get('[data-test="contract-preview-reset"]').trigger('click')
+    expect(wrapper.get('[data-test="contract-preview-scale"]').text()).toBe('100%')
+
+    await wrapper.get('[data-test="contract-preview-zoom-in"]').trigger('click')
+    await wrapper.get('[data-test="preview-contract-file-45"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="contract-preview-scale"]').text()).toBe('100%')
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('style')).toContain('scale(1)')
+    wrapper.unmount()
+  })
   it('预览关闭、切换附件和卸载时各释放一次临时对象地址', async () => {
     const createObjectURL = vi.fn()
       .mockReturnValueOnce('blob:contract-image-1')

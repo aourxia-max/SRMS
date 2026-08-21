@@ -35,11 +35,19 @@ const signatures: Record<string, (content: Buffer) => boolean> = {
   'image/heic': (content) =>
     content.subarray(4, 12).toString().startsWith('ftyphei'),
 };
+const contractSignatures: Record<string, (content: Buffer) => boolean> = {
+  ...signatures,
+  'image/gif': (content) => {
+    const header = content.subarray(0, 6).toString();
+    return header === 'GIF87a' || header === 'GIF89a';
+  },
+};
 const contractExtensions: Record<string, string[]> = {
   'application/pdf': ['.pdf'],
   'image/jpeg': ['.jpg', '.jpeg'],
   'image/png': ['.png'],
   'image/webp': ['.webp'],
+  'image/gif': ['.gif'],
 };
 
 @Injectable()
@@ -95,7 +103,7 @@ export class FilesService {
     const extension = extname(originalName).toLowerCase();
     if (
       !contractExtensions[file.mimetype]?.includes(extension) ||
-      !signatures[file.mimetype]?.(file.buffer)
+      !contractSignatures[file.mimetype]?.(file.buffer)
     )
       throw new BadRequestException('附件类型或内容不符合限制');
 
