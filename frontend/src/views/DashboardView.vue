@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
+import { usageTypeLabel } from '../utils/status-labels'
 
 type RoomStatus =
   | 'EMPTY'
@@ -24,6 +25,8 @@ type DashboardRoom = {
   decorationStatus?: string | null
   statusChangedAt?: string | null
   ownerName?: string | null
+  usageType?: string | null
+  currentMonthlyRent?: string | null
   building?: { id: number; buildingNo?: string; buildingName: string }
 }
 
@@ -174,6 +177,25 @@ function statusCount(status: string) {
 function formatMoney(value: unknown) {
   const amount = Number(value || 0)
   return `￥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+function roomBusinessMeta(room: DashboardRoom) {
+  const usage = usageTypeLabel(room.usageType)
+  if (!isSuper.value) return usage
+  if (
+    room.currentMonthlyRent === null ||
+    room.currentMonthlyRent === undefined ||
+    room.currentMonthlyRent === ''
+  ) {
+    return `${usage} · 租金未定`
+  }
+  const monthlyRent = Number(room.currentMonthlyRent)
+  const rentText = Number.isFinite(monthlyRent)
+    ? monthlyRent.toLocaleString('zh-CN', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      })
+    : '租金未定'
+  return rentText === '租金未定' ? `${usage} · ${rentText}` : `${usage} · ¥${rentText}/月`
 }
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return '-'
@@ -359,7 +381,7 @@ onMounted(init)
               >
                 <b>{{ room.fullHouseNo || room.houseNo }}</b>
                 <span class="room-status">{{ statusLabel(room.roomStatus) }}</span>
-                <span class="room-owner">{{ room.building?.buildingName || '未设置楼栋' }}</span>
+                <span class="room-owner" :title="roomBusinessMeta(room)">{{ roomBusinessMeta(room) }}</span>
               </button>
             </div>
           </div>

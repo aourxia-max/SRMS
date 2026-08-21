@@ -38,6 +38,7 @@ export class DashboardService {
     const monthPeriod = currentMonthPeriod(now);
     const monthFrom = new Date(monthPeriod.from);
     const monthTo = new Date(monthPeriod.to);
+    const canViewRoomRent = user.role === UserRole.SUPER_ADMIN;
     const rooms = await this.prisma.db.room.findMany({
       where: {
         deletedAt: null,
@@ -46,8 +47,45 @@ export class DashboardService {
           ? { roomStatus: { in: statuses as never[] } }
           : {}),
       },
-      include: { building: true },
+      include: {
+        building: true,
+        ...(canViewRoomRent
+          ? {
+              contracts: {
+                where: {
+                  status: {
+                    in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'],
+                  },
+                },
+                select: { status: true, monthlyRent: true, startDate: true },
+                orderBy: { startDate: 'asc' as const },
+              },
+            }
+          : {}),
+      },
       orderBy: [{ buildingId: 'asc' }, { floorNo: 'asc' }, { houseNo: 'asc' }],
+    });
+    const roomSummaries = rooms.map((room) => {
+      const roomWithContracts = room;
+      const { contracts = [], ...summary } = roomWithContracts;
+      if (!canViewRoomRent) return summary;
+      const expectedContractStatus =
+        room.roomStatus === 'PENDING_MOVE_IN'
+          ? 'PENDING_START'
+          : room.roomStatus === 'RENTED'
+            ? 'ACTIVE'
+            : room.roomStatus === 'PENDING_CHECKOUT'
+              ? 'PENDING_CHECKOUT'
+              : null;
+      const currentContract = expectedContractStatus
+        ? contracts.find(
+            (contract) => contract.status === expectedContractStatus,
+          )
+        : undefined;
+      return {
+        ...summary,
+        currentMonthlyRent: currentContract?.monthlyRent.toString() ?? null,
+      };
     });
     const operating = rooms.filter((item) =>
       [
@@ -221,7 +259,7 @@ export class DashboardService {
               .toDecimalPlaces(2)
           : null,
         statusCounts,
-        rooms,
+        rooms: roomSummaries,
       },
       rentReminders: reminders,
       rentReminderDays,
