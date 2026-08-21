@@ -132,6 +132,16 @@ export async function previewFixedContract(payload: ContractPayload) {
   return (await http.post<ApiResponse<ContractPreview>>('/contracts/fixed/preview', body)).data.data
 }
 
+const previewableContractImageTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+])
+
+export function isPreviewableContractImage(file: Pick<ContractFile, 'mimeType'>) {
+  return previewableContractImageTypes.has(file.mimeType.toLowerCase())
+}
 export async function uploadContractFile(file: File) {
   const body = new FormData()
   body.append('file', file)

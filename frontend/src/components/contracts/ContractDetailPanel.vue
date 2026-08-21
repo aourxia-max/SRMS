@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
-import { isFixedRentRebateEligible } from '../../services/contracts'
+import { isFixedRentRebateEligible, isPreviewableContractImage } from '../../services/contracts'
 import { http } from '../../services/http'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; download: [file: ContractFile]; commissionChanged: [] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; commissionChanged: [] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
@@ -163,7 +163,7 @@ async function removeCommission() {
                 <el-table-column prop="originalName" label="文件名" />
                 <el-table-column prop="mimeType" label="类型" />
                 <el-table-column label="大小"><template #default="{ row }">{{ row.sizeBytes ? `${Math.ceil(Number(row.sizeBytes) / 1024)} KB` : '—' }}</template></el-table-column>
-                <el-table-column label="操作" width="100"><template #default="{ row }"><el-button :data-test="`download-contract-file-${row.id}`" type="primary" link @click="emit('download', row)">下载</el-button></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row }"><el-button v-if="isPreviewableContractImage(row)" :data-test="`preview-contract-file-${row.id}`" type="primary" link @click="emit('preview', row)">预览</el-button><el-button :data-test="`download-contract-file-${row.id}`" type="primary" link @click="emit('download', row)">下载</el-button></template></el-table-column>
               </el-table>
             </el-tab-pane>
             <el-tab-pane label="变更记录" name="changes"><el-empty v-if="!changes.length" :image-size="64" description="暂无合同变更记录" /><pre v-else class="change-data">{{ changes }}</pre></el-tab-pane>

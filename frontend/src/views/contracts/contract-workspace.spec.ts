@@ -1,14 +1,20 @@
 // @vitest-environment happy-dom
 
-import ElementPlus, { ElOption, ElSelect } from 'element-plus'
+import ElementPlus, { ElDialog, ElMessage, ElOption, ElSelect } from 'element-plus'
 import { nextTick } from 'vue'
+import { createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
+import ContractsWorkspace from './ContractsWorkspace.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
 import ContractListPanel from '../../components/contracts/ContractListPanel.vue'
 import FixedRentRebatePanel from '../../components/contracts/FixedRentRebatePanel.vue'
 import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
+import * as contractService from '../../services/contracts'
+import { http } from '../../services/http'
+import * as paymentService from '../../services/payments'
 import {
   buildFixedRentRebatePayload,
   contractConcessionError,
@@ -422,16 +428,23 @@ describe('合同工作区复审边界', () => {
     expect(wrapper.text()).toContain('¥2,200.00')
   })
 
-  it('合同附件提供安全下载动作', async () => {
-    const file = { id: 44, originalName: '合同.pdf', mimeType: 'application/pdf', sizeBytes: '1024' }
+  it('合同图片附件提供预览和下载动作，非图片附件仅可下载', async () => {
+    const jpeg = { id: 44, originalName: '合同.jpg', mimeType: 'image/jpeg', sizeBytes: '1024' }
+    const pdf = { id: 45, originalName: '合同.pdf', mimeType: 'application/pdf', sizeBytes: '2048' }
     const wrapper = mount(ContractDetailPanel, {
-      props: { contract: activeContract(), bills: [], files: [file], changes: [], payments: [], role: 'ADMIN' },
+      props: { contract: activeContract(), bills: [], files: [jpeg, pdf], changes: [], payments: [], role: 'ADMIN' },
       global: { plugins: [ElementPlus] },
     })
     const tab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('附件'))
     await tab!.trigger('click')
+
     await wrapper.get('[data-test="download-contract-file-44"]').trigger('click')
-    expect(wrapper.emitted('download')?.[0]).toEqual([file])
+    await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
+
+    expect(wrapper.find('[data-test="download-contract-file-45"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="preview-contract-file-45"]').exists()).toBe(false)
+    expect(wrapper.emitted('download')?.[0]).toEqual([jpeg])
+    expect(wrapper.emitted('preview')?.[0]).toEqual([jpeg])
   })
 })
 
@@ -467,5 +480,91 @@ describe('??????????', () => {
     expect(button.exists()).toBe(true)
     await button.trigger('click')
     expect(wrapper.emitted('payment')).toEqual([[12]])
+  })
+})
+
+describe('合同附件图片预览生命周期', () => {
+  type DownloadContractFile = (contractId: number, fileId: number) => Promise<Blob>
+  const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+  const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL)
+    else Reflect.deleteProperty(URL, 'createObjectURL')
+    if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL)
+    else Reflect.deleteProperty(URL, 'revokeObjectURL')
+  })
+
+  async function mountWorkspace(download: DownloadContractFile) {
+    const jpeg = { id: 44, originalName: '合同.jpg', mimeType: 'image/jpeg', sizeBytes: '1024' }
+    const png = { id: 45, originalName: '补充条款.png', mimeType: 'image/png', sizeBytes: '2048' }
+    vi.spyOn(http, 'get').mockImplementation((url: string) => Promise.resolve({
+      data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+    }) as never)
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
+    vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([jpeg, png])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'downloadContractFile').mockImplementation(download)
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=detail&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [createPinia(), router, ElementPlus] },
+    })
+    await flushPromises()
+    return { wrapper, jpeg, png }
+  }
+
+  it('预览关闭、切换附件和卸载时各释放一次临时对象地址', async () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:contract-image-1')
+      .mockReturnValueOnce('blob:contract-image-2')
+      .mockReturnValueOnce('blob:contract-image-3')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const { wrapper } = await mountWorkspace(vi.fn<DownloadContractFile>().mockResolvedValue(new Blob(['image'])))
+
+    await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('src')).toBe('blob:contract-image-1')
+
+    await wrapper.get('[data-test="preview-contract-file-45"]').trigger('click')
+    await flushPromises()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:contract-image-1')
+    expect(wrapper.get('[data-test="contract-image-preview"]').attributes('src')).toBe('blob:contract-image-2')
+
+    wrapper.findAllComponents(ElDialog).find((dialog) => dialog.props('modelValue'))!.vm.$emit('closed')
+    await nextTick()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:contract-image-2')
+
+    await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
+    await flushPromises()
+    wrapper.unmount()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:contract-image-3')
+    expect(revokeObjectURL).toHaveBeenCalledTimes(3)
+  })
+
+  it('预览请求失败显示中文错误且不保留临时对象地址', async () => {
+    const createObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    const messageError = vi.spyOn(ElMessage, 'error')
+    const { wrapper } = await mountWorkspace(vi.fn<DownloadContractFile>().mockRejectedValue(new Error('network failed')))
+
+    await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
+    await flushPromises()
+
+    expect(createObjectURL).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="contract-image-preview"]').exists()).toBe(false)
+    expect(messageError).toHaveBeenCalledWith('合同附件预览失败，请稍后重试')
   })
 })
