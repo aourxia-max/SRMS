@@ -19,15 +19,33 @@ export class CommissionsService {
       throw new BadRequestException('提成金额不能小于零');
     return this.prisma.db.$transaction(async (tx) => {
       await tx.contract.findUniqueOrThrow({ where: { id: dto.contractId } });
-      const item = await tx.contractCommission.create({
-        data: {
-          contractId: dto.contractId,
-          recipientName: dto.recipientName,
-          amount,
-          createdBy: user.id,
-          updatedBy: user.id,
+      const existing = await tx.contractCommission.findUnique({
+        where: {
+          contractId_recipientName: {
+            contractId: dto.contractId,
+            recipientName: dto.recipientName,
+          },
         },
       });
+      const item = existing?.deletedAt
+        ? await tx.contractCommission.update({
+            where: { id: existing.id },
+            data: {
+              amount,
+              deletedAt: null,
+              deletedBy: null,
+              updatedBy: user.id,
+            },
+          })
+        : await tx.contractCommission.create({
+            data: {
+              contractId: dto.contractId,
+              recipientName: dto.recipientName,
+              amount,
+              createdBy: user.id,
+              updatedBy: user.id,
+            },
+          });
       await this.audit(tx, 'CREATE_COMMISSION', item.id, user, null, item);
       return item;
     });

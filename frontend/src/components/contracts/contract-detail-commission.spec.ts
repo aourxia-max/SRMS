@@ -68,6 +68,21 @@ describe('合同详情租房提成', () => {
     expect(wrapper.emitted('commissionChanged')).toHaveLength(1)
   })
 
+  it('rejects an empty amount instead of silently converting it to zero', async () => {
+    const wrapper = mountPanel('SUPER_ADMIN')
+    const vm = wrapper.vm as unknown as {
+      commissionForm: { recipientName: string; amount: string }
+      saveCommission: () => Promise<void>
+    }
+    vm.commissionForm.recipientName = '招商主管'
+    vm.commissionForm.amount = '   '
+
+    await vm.saveCommission()
+
+    expect(http.post).not.toHaveBeenCalled()
+    expect(wrapper.emitted('commissionChanged')).toBeUndefined()
+  })
+
   it('updates and deletes an existing commission by id', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     const wrapper = mountPanel('SUPER_ADMIN', contract({ id: 31, recipientName: '招商主管', amount: '600.00' }))

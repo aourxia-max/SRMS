@@ -40,8 +40,10 @@ function openCommission() {
 }
 async function saveCommission() {
   const recipientName = commissionForm.recipientName.trim()
-  const amount = Number(commissionForm.amount)
+  const amountText = commissionForm.amount.trim()
   if (!recipientName) return ElMessage.warning('请填写提成所属对象')
+  if (!amountText) return ElMessage.warning('请填写提成金额')
+  const amount = Number(amountText)
   if (!Number.isFinite(amount) || amount < 0) return ElMessage.warning('提成金额不能小于 0')
   commissionSaving.value = true
   try {
