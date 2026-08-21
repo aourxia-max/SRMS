@@ -92,6 +92,47 @@ export class TenantsService {
       }),
     );
   }
+  async remove(id: number, user: AuthUser) {
+    try {
+      return await this.prisma.db.$transaction(async (tx) => {
+        const tenant = await tx.tenant.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            name: true,
+            _count: { select: { contractMembers: true, files: true } },
+          },
+        });
+        if (!tenant) throw new NotFoundException('承租人不存在');
+        if (tenant._count.contractMembers > 0) {
+          throw new ConflictException('该承租人已关联合同，不能删除');
+        }
+        if (tenant._count.files > 0) {
+          throw new ConflictException('该承租人已有证件附件，不能删除');
+        }
+
+        await tx.securityAuditLog.create({
+          data: {
+            eventType: 'TENANT_DELETE',
+            entityType: 'TENANT',
+            entityId: id,
+            operatorId: user.id,
+            eventData: { name: tenant.name },
+          },
+        });
+        await tx.tenant.delete({ where: { id } });
+        return { id };
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new ConflictException('该承租人已有业务关联，不能删除');
+      }
+      throw error;
+    }
+  }
   async sensitive(id: number, user: AuthUser) {
     const tenant = await this.prisma.db.tenant.findUnique({ where: { id } });
     if (!tenant) throw new NotFoundException('承租人不存在');

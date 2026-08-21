@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -65,6 +66,19 @@ export class TenantsController {
       code: 200,
       message: 'success',
       data: await this.tenants.update(id, dto),
+    };
+  }
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.tenants.remove(id, user),
     };
   }
   @Get(':id/sensitive')
