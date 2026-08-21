@@ -33,6 +33,7 @@ import {
   buildContractNumber,
   buildTemporaryContractNumber,
 } from './contract-number';
+import { contractBusinessDay } from './contract-business-day';
 
 type FixedContractInput = {
   externalContractNo?: string;
@@ -592,6 +593,15 @@ export class ContractsService {
       if (!input) throw new BadRequestException('合同确认信息不完整');
 
       this.validateFixedConfirmation(input, user);
+      const confirmedAt = new Date();
+      const startsImmediately =
+        input.startDate <= contractBusinessDay(confirmedAt);
+      const initialContractStatus = startsImmediately
+        ? ('ACTIVE' as const)
+        : ('PENDING_START' as const);
+      const initialRoomStatus = startsImmediately
+        ? ('RENTED' as const)
+        : ('PENDING_MOVE_IN' as const);
       const room = await tx.room.findFirstOrThrow({
         where: { id: input.roomId, deletedAt: null },
       });
@@ -639,8 +649,9 @@ export class ContractsService {
           pricingMode: 'FIXED',
           paymentCycleMonths: input.paymentCycleMonths,
           depositRequired: input.depositRequired,
-          status: 'PENDING_START',
-          billingGeneratedAt: new Date(),
+          status: initialContractStatus,
+          activatedAt: startsImmediately ? confirmedAt : null,
+          billingGeneratedAt: confirmedAt,
           remark: input.remark ?? null,
           members: {
             create: [
@@ -709,13 +720,16 @@ export class ContractsService {
       await tx.rentBill.createMany({ data: bills });
       await tx.room.update({
         where: { id: room.id },
-        data: { roomStatus: 'PENDING_MOVE_IN', statusChangedAt: new Date() },
+        data: {
+          roomStatus: initialRoomStatus,
+          statusChangedAt: confirmedAt,
+        },
       });
       await tx.roomStatusHistory.create({
         data: {
           roomId: room.id,
           fromStatus: room.roomStatus,
-          toStatus: 'PENDING_MOVE_IN',
+          toStatus: initialRoomStatus,
           changeReason: `合同确认：${contractNo}`,
           businessType: 'CONTRACT',
           businessId: contract.id,

@@ -17,13 +17,35 @@ describe('ContractsController', () => {
   function controllerWith(
     contracts: Record<string, jest.Mock> = {},
     files: Record<string, jest.Mock> = {},
+    lifecycle: Record<string, jest.Mock> = {},
   ) {
     return Reflect.construct(ContractsController, [
       contracts,
       {},
       files,
+      lifecycle,
     ]) as ContractsController;
   }
+
+  it('reconciles due lifecycle changes before returning the contract list', async () => {
+    let status = 'PENDING_START';
+    const lifecycle = {
+      run: jest.fn().mockImplementation(() => {
+        status = 'ACTIVE';
+        return Promise.resolve({ activated: 1, pendingCheckout: 0 });
+      }),
+    };
+    const list = jest
+      .fn()
+      .mockImplementation(() => Promise.resolve([{ id: 15, status }]));
+    const controller = controllerWith({ list }, {}, lifecycle);
+
+    await expect(controller.list(admin)).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: [{ id: 15, status: 'ACTIVE' }],
+    });
+  });
 
   it('rejects commission data from an admin before creating a fixed contract', async () => {
     const createFixedContract = jest.fn();
