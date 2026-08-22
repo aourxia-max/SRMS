@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
-import { isFixedRentRebateEligible } from '../../services/contracts'
+import { isFixedRentRebateEligible, isPreviewableContractImage } from '../../services/contracts'
 import { http } from '../../services/http'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
-import { contractStatusLabel } from '../../utils/status-labels'
+import { contractStatusLabel, contractStatusTagClass, contractStatusTagType, paymentStatusLabel, rentBillStatusLabel } from '../../utils/status-labels'
 
 const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; download: [file: ContractFile]; commissionChanged: [] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; commissionChanged: [] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
@@ -84,7 +84,7 @@ async function removeCommission() {
     <template v-else>
       <div class="status-banner">
         <div><h1>{{ contract.contractNo }}</h1><p>{{ contract.room?.fullHouseNo || `房源${contract.roomId}` }}｜{{ primaryTenant?.name || '未记录承租人' }}｜合同期 {{ date(contract.startDate) }} 至 {{ date(contract.endDate) }}</p></div>
-        <el-tag effect="dark">{{ contractStatusLabel(contract.status) }}</el-tag>
+        <el-tag data-test="contract-status-tag" :class="['el-tag--' + contractStatusTagType(contract.status), contractStatusTagClass(contract.status)]" :type="contractStatusTagType(contract.status)" effect="dark">{{ contractStatusLabel(contract.status) }}</el-tag>
       </div>
       <header class="page-head">
         <div><h1>合同详情</h1><p>固定月租合同履行、账单、成员、附件和变更记录</p></div>
@@ -143,7 +143,7 @@ async function removeCommission() {
                 <el-table-column label="账期" min-width="210"><template #default="{ row }">{{ date(row.periodStart) }} 至 {{ date(row.periodEnd) }}</template></el-table-column>
                 <el-table-column label="应收"><template #default="{ row }">{{ money(row.payableAmount) }}</template></el-table-column>
                 <el-table-column label="未收"><template #default="{ row }">{{ money(row.outstandingAmount) }}</template></el-table-column>
-                <el-table-column prop="status" label="状态" />
+                <el-table-column label="状态"><template #default="{ row }">{{ rentBillStatusLabel(row.status) }}</template></el-table-column>
               </el-table>
             </el-tab-pane>
             <el-tab-pane label="收款记录" name="payments">
@@ -152,7 +152,7 @@ async function removeCommission() {
                 <el-table-column label="收款日期" width="130"><template #default="{ row }">{{ date(row.paymentDate) }}</template></el-table-column>
                 <el-table-column label="金额" width="130"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
                 <el-table-column prop="method" label="支付方式" width="120" />
-                <el-table-column prop="status" label="状态" width="120" />
+                <el-table-column label="状态" width="120"><template #default="{ row }">{{ paymentStatusLabel(row.status) }}</template></el-table-column>
               </el-table>
             </el-tab-pane>
             <el-tab-pane label="合同成员" name="members">
@@ -163,7 +163,7 @@ async function removeCommission() {
                 <el-table-column prop="originalName" label="文件名" />
                 <el-table-column prop="mimeType" label="类型" />
                 <el-table-column label="大小"><template #default="{ row }">{{ row.sizeBytes ? `${Math.ceil(Number(row.sizeBytes) / 1024)} KB` : '—' }}</template></el-table-column>
-                <el-table-column label="操作" width="100"><template #default="{ row }"><el-button :data-test="`download-contract-file-${row.id}`" type="primary" link @click="emit('download', row)">下载</el-button></template></el-table-column>
+                <el-table-column label="操作" width="150"><template #default="{ row }"><el-button v-if="isPreviewableContractImage(row)" :data-test="`preview-contract-file-${row.id}`" type="primary" link @click="emit('preview', row)">预览</el-button><el-button :data-test="`download-contract-file-${row.id}`" type="primary" link @click="emit('download', row)">下载</el-button></template></el-table-column>
               </el-table>
             </el-tab-pane>
             <el-tab-pane label="变更记录" name="changes"><el-empty v-if="!changes.length" :image-size="64" description="暂无合同变更记录" /><pre v-else class="change-data">{{ changes }}</pre></el-tab-pane>

@@ -11,6 +11,18 @@ export function nextSuggestedPaymentAmount(currentAmount: string, previousSugges
     ? effectiveOutstanding.toFixed(2)
     : currentAmount
 }
+export function selectedBillsOutstandingAmount(
+  bills: Pick<RentBill, 'id' | 'outstandingAmount'>[],
+  selectedIds: number[],
+) {
+  if (!selectedIds.length) return ''
+  const selected = new Set(selectedIds)
+  return bills
+    .filter((bill) => selected.has(bill.id))
+    .reduce((sum, bill) => sum + Math.max(0, Number(bill.outstandingAmount) || 0), 0)
+    .toFixed(2)
+}
+
 
 export function eligibleAdjustmentBillIds(
   bills: Pick<RentBill, 'id' | 'outstandingAmount'>[],

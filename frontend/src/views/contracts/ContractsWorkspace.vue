@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
@@ -70,12 +70,19 @@ const rebates = ref<PricingRebate[]>([])
 const payments = ref<PaymentListItem[]>([])
 const form = ref<ContractFormModel>(emptyContractForm())
 const preview = ref<ContractPreview | null>(null)
+const fixedPreviewLoading = ref(false)
+const previewOpen = ref(false)
 const previewLoading = ref(false)
+const previewUrl = ref('')
+const previewName = ref('')
+const previewScale = ref(1)
+const previewScaleLabel = computed(() => Math.round(previewScale.value * 100) + '%')
 const loading = ref(false)
 const saving = ref(false)
 const currentDraftId = ref<number | null>(null)
 let previewTimer: ReturnType<typeof setTimeout> | null = null
 const previewRequests = createLatestRequestGuard()
+let previewRequest = 0
 let baseDataLoaded = false
 
 const workspaceTabs: ContractWorkspaceTab[] = ['list', 'create', 'detail', 'fixed-rebate']
@@ -297,23 +304,70 @@ async function downloadFile(file: ContractFile) {
   }
 }
 
+function releasePreviewUrl() {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+}
+
+async function previewFile(file: ContractFile) {
+  if (!selectedContractId.value) return
+  const request = ++previewRequest
+  releasePreviewUrl()
+  previewScale.value = 1
+  previewLoading.value = true
+  previewName.value = file.originalName
+  previewOpen.value = true
+  try {
+    const blob = await downloadContractFile(selectedContractId.value, file.id)
+    const url = URL.createObjectURL(blob)
+    if (request !== previewRequest) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    previewUrl.value = url
+  } catch (error) {
+    if (request === previewRequest) {
+      previewOpen.value = false
+      releasePreviewUrl()
+      ElMessage.error(errorMessage(error, '合同附件预览失败，请稍后重试'))
+    }
+  } finally {
+    if (request === previewRequest) previewLoading.value = false
+  }
+}
+
+function changePreviewScale(delta: number) {
+  previewScale.value = Math.min(3, Math.max(0.5, Number((previewScale.value + delta).toFixed(2))))
+}
+
+function resetPreviewScale() {
+  previewScale.value = 1
+}
+
+function closePreview() {
+  previewRequest += 1
+  previewOpen.value = false
+  previewName.value = ''
+  resetPreviewScale()
+  releasePreviewUrl()
+}
 async function loadPreview(generation: number) {
   const payload = toContractPayload(form.value, role)
   if (!payload.startDate || !payload.endDate || payload.endDate < payload.startDate || payload.monthlyRent === undefined || Number(payload.monthlyRent) < 0) {
     if (previewRequests.isCurrent(generation)) {
       preview.value = null
-      previewLoading.value = false
+      fixedPreviewLoading.value = false
     }
     return
   }
-  if (previewRequests.isCurrent(generation)) previewLoading.value = true
+  if (previewRequests.isCurrent(generation)) fixedPreviewLoading.value = true
   try {
     const result = await previewFixedContract(payload)
     if (previewRequests.isCurrent(generation)) preview.value = result
   } catch {
     if (previewRequests.isCurrent(generation)) preview.value = null
   } finally {
-    if (previewRequests.isCurrent(generation)) previewLoading.value = false
+    if (previewRequests.isCurrent(generation)) fixedPreviewLoading.value = false
   }
 }
 
@@ -322,7 +376,7 @@ watch(
   () => {
     const generation = previewRequests.next()
     preview.value = null
-    previewLoading.value = false
+    fixedPreviewLoading.value = false
     if (previewTimer) clearTimeout(previewTimer)
     previewTimer = setTimeout(() => loadPreview(generation), 300)
   },
@@ -389,7 +443,10 @@ async function rejectRebate(id: number) {
 }
 
 onMounted(loadBaseData)
-onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
+onBeforeUnmount(() => {
+  if (previewTimer) clearTimeout(previewTimer)
+  closePreview()
+})
 watch(() => [route.query.tab, route.query.contractId], () => void applyRouteState())
 </script>
 
@@ -400,11 +457,25 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
       <ContractListPanel v-if="tab === 'list'" :contracts="contracts" :selected-contract-id="selectedContractId" :draft-id="currentDraftId" :loading="loading" @select="selectContract" @create="startCreate" @continue-draft="setTab('create')" />
       <div v-else-if="tab === 'create'" class="create-grid">
         <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="setTab('list')" @upload-file="uploadFile" />
-        <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="previewLoading" />
+        <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="fixedPreviewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @download="downloadFile" @commission-changed="reloadSelectedContract" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @preview="previewFile" @download="downloadFile" @commission-changed="reloadSelectedContract" />
       <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
     </main>
+      <el-dialog v-model="previewOpen" :title="previewName || '合同附件预览'" width="880px" @closed="closePreview">
+        <el-skeleton v-if="previewLoading" :rows="6" animated />
+        <div v-else-if="previewUrl" class="contract-preview-viewer">
+          <div class="contract-preview-toolbar" aria-label="图片缩放控制">
+            <el-button data-test="contract-preview-zoom-out" :disabled="previewScale <= 0.5" @click="changePreviewScale(-0.25)">缩小</el-button>
+            <span data-test="contract-preview-scale">{{ previewScaleLabel }}</span>
+            <el-button data-test="contract-preview-zoom-in" :disabled="previewScale >= 3" @click="changePreviewScale(0.25)">放大</el-button>
+            <el-button data-test="contract-preview-reset" @click="resetPreviewScale">重置</el-button>
+          </div>
+          <div class="contract-preview-viewport">
+            <img data-test="contract-image-preview" :src="previewUrl" :alt="previewName" class="contract-image-preview" :style="{ transform: 'scale(' + previewScale + ')' }" />
+          </div>
+        </div>
+      </el-dialog>
   </el-config-provider>
 </template>
 
@@ -413,4 +484,9 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
 .create-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 15px; align-items: start; }
 @media (max-width: 1100px) { .create-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) { .contracts-workspace { padding: 12px 10px 28px; } }
+.contract-preview-viewer { display: grid; gap: 12px; }
+.contract-preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.contract-preview-toolbar span { min-width: 48px; color: #526075; font-variant-numeric: tabular-nums; text-align: center; }
+.contract-preview-viewport { display: flex; min-height: 260px; max-height: 65vh; align-items: flex-start; justify-content: center; padding: 16px; overflow: auto; background: #f3f6fb; border-radius: 8px; }
+.contract-image-preview { display: block; max-width: 100%; max-height: 58vh; margin: 0 auto; object-fit: contain; transform-origin: top center; transition: transform 120ms ease; }
 </style>

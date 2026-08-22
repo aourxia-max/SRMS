@@ -3,9 +3,12 @@ import {
   approvalStatusLabel,
   billAdjustmentTypeLabel,
   contractStatusLabel,
+  contractStatusTagClass,
+  contractStatusTagType,
   paymentStatusLabel,
   pricingRebateSourceLabel,
   rentBillStatusLabel,
+  roomStatusLabel,
   tenantStatusLabel,
   usageTypeLabel,
 } from "./status-labels";
@@ -18,6 +21,19 @@ describe("status label helpers", () => {
     expect(paymentStatusLabel("FULLY_REFUNDED")).toBe("\u5df2\u5168\u989d\u9000\u6b3e");
     expect(rentBillStatusLabel("OVERDUE")).toBe("\u5df2\u903e\u671f");
     expect(contractStatusLabel("VOIDED")).toBe("\u5df2\u4f5c\u5e9f");
+  });
+
+  it("provides unified Chinese labels and tag colors for contract statuses", () => {
+    expect(contractStatusLabel("DRAFT")).toBe("草稿");
+    expect(contractStatusTagType("DRAFT")).toBe("info");
+    expect(contractStatusTagType("PENDING_START")).toBe("warning");
+    expect(contractStatusTagClass("PENDING_START")).toBe("");
+    expect(contractStatusTagType("ACTIVE")).toBe("success");
+    expect(contractStatusTagType("PENDING_CHECKOUT")).toBe("warning");
+    expect(contractStatusTagClass("PENDING_CHECKOUT")).toBe("contract-status-tag--pending-checkout");
+    expect(contractStatusTagType("ENDED")).toBe("primary");
+    expect(contractStatusTagType("VOIDED")).toBe("danger");
+    expect(contractStatusLabel("UNEXPECTED")).toBe("未知状态");
   });
 
   it("translates business operation codes instead of exposing raw English", () => {
@@ -35,6 +51,11 @@ describe("status label helpers", () => {
     expect(tenantStatusLabel("UNEXPECTED")).toBe("未知状态");
   });
 
+  it("uses a safe Chinese fallback for payment, rent-bill, and room statuses", () => {
+    expect(paymentStatusLabel("UNEXPECTED_PAYMENT")).toBe("未知状态");
+    expect(rentBillStatusLabel("UNEXPECTED_BILL")).toBe("未知状态");
+    expect(roomStatusLabel("UNEXPECTED_ROOM")).toBe("未知状态");
+  });
   it("keeps unknown codes visible for diagnostics", () => {
     expect(approvalStatusLabel("UNKNOWN_STATUS")).toBe("UNKNOWN_STATUS");
   });

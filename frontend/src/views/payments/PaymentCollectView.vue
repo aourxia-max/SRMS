@@ -4,10 +4,11 @@ import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
+import { createLatestRequestGuard } from '../../services/contracts'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
-import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillsOutstandingAmount } from './payment-collection'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +21,7 @@ const proofFiles = ref<Array<{ id: number; originalName: string }>>([])
 const loading = ref(false)
 const submitting = ref(false)
 const autoSuggestedPaymentAmount = ref('')
+const contractLoadRequests = createLatestRequestGuard()
 const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as PaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
 const adjustment = reactive({ enabled: false, rentBillId: undefined as number | undefined, adjustmentType: 'DISCOUNT' as 'DISCOUNT' | 'WAIVER', amount: '', reason: '' })
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
@@ -54,23 +56,53 @@ watch(
 function money(value: number | string | undefined) { return `¥${Number(value ?? 0).toFixed(2)}` }
 function roomLabel(contract: ContractSummary) { return contract.room?.fullHouseNo ? `${contract.contractNo} · ${contract.room.fullHouseNo}` : contract.contractNo }
 
+function applySelectedBillsAmount(ids: number[]) {
+  const original = selectedBillsOutstandingAmount(bills.value, ids)
+  const adjustmentAmount = adjustment.enabled ? Math.max(0, Number(adjustment.amount) || 0) : 0
+  const suggested = original ? Math.max(0, Number(original) - adjustmentAmount).toFixed(2) : ''
+  form.amount = suggested
+  autoSuggestedPaymentAmount.value = suggested
+}
+
 async function loadContracts() {
   contracts.value = await paymentApi.contracts()
   const requested = Number(route.query.contractId)
   if (requested > 0 && contracts.value.some((item) => item.id === requested)) { form.contractId = requested; await selectContract() }
 }
-async function selectContract() {
-  if (!form.contractId) return
+function clearContractPaymentState() {
+  bills.value = []
+  prepayments.value = { balance: '0.00', items: [] }
+  selectedBillIds.value = []
+  adjustment.enabled = false
+  adjustment.rentBillId = undefined
+  adjustment.adjustmentType = 'DISCOUNT'
+  adjustment.amount = ''
+  adjustment.reason = ''
+  form.amount = ''
+  form.manualAllocationReason = ''
+  autoSuggestedPaymentAmount.value = ''
+}
+async function selectContract(contractId = form.contractId) {
+  const request = contractLoadRequests.next()
+  clearContractPaymentState()
+  if (!contractId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    const [billRows, prep] = await Promise.all([paymentApi.bills(form.contractId), paymentApi.prepayments(form.contractId)])
+    const [billRows, prep] = await Promise.all([paymentApi.bills(contractId), paymentApi.prepayments(contractId)])
+    if (!contractLoadRequests.isCurrent(request)) return
     bills.value = billRows.filter((bill) => !['VOIDED', 'REFUNDED'].includes(bill.status ?? '') && Number(bill.outstandingAmount) > 0).sort((a, b) => a.periodSeq - b.periodSeq)
     prepayments.value = prep
     selectedBillIds.value = bills.value[0] ? [bills.value[0].id] : []
     adjustment.rentBillId = bills.value[0]?.id
-    form.amount = bills.value[0]?.outstandingAmount ?? ''
-    autoSuggestedPaymentAmount.value = form.amount
-  } finally { loading.value = false }
+    applySelectedBillsAmount(selectedBillIds.value)
+  } catch {
+    if (contractLoadRequests.isCurrent(request)) ElMessage.error('合同账单加载失败，请稍后重试')
+  } finally {
+    if (contractLoadRequests.isCurrent(request)) loading.value = false
+  }
 }
 function toggleBill(bill: RentBill, checked: boolean) {
   const current = [...selectedBillIds.value]
@@ -78,6 +110,7 @@ function toggleBill(bill: RentBill, checked: boolean) {
   const unique = [...new Set(current)]
   if (!isSuperAdmin.value && !isPrefixSelection(bills.value, unique)) { ElMessage.warning('普通管理员只能从最早未结账期连续选择'); return }
   selectedBillIds.value = unique
+  applySelectedBillsAmount(selectedBillIds.value)
 }
 async function uploadProof(options: UploadRequestOptions) {
   try {
