@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import ElementPlus, { ElMessage, ElSelect } from 'element-plus'
+import ElementPlus, { ElMessage, ElSelect, ElSwitch } from 'element-plus'
 import { createPinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -68,7 +68,10 @@ async function mountView() {
   return { wrapper, contractSelect }
 }
 
-async function selectContract(contractSelect: ReturnType<typeof mount>['vm'], contractId: number) {
+async function selectContract(
+  contractSelect: ReturnType<typeof mount>['vm'],
+  contractId: number | undefined,
+) {
   contractSelect.$emit('update:modelValue', contractId)
   contractSelect.$emit('change', contractId)
   await nextTick()
@@ -78,9 +81,112 @@ function amountValue(wrapper: ReturnType<typeof mount>) {
   return (wrapper.get('input[placeholder="0.00"]').element as HTMLInputElement).value
 }
 
+function adjustmentControls(wrapper: ReturnType<typeof mount>) {
+  const toggle = wrapper.findComponent(ElSwitch)
+  const rentBillSelect = wrapper.findAllComponents(ElSelect)
+    .find((select) => select.props('placeholder') === '归属账期')
+  const adjustmentTypeSelect = wrapper.findAllComponents(ElSelect)
+    .find((select) => ['DISCOUNT', 'WAIVER'].includes(String(select.props('modelValue'))))
+  if (!toggle.exists() || !rentBillSelect || !adjustmentTypeSelect) {
+    throw new Error('adjustment controls not found')
+  }
+  return {
+    toggle,
+    rentBillSelect,
+    adjustmentTypeSelect,
+    amountInput: wrapper.get('input[placeholder="金额"]'),
+    reasonInput: wrapper.get('input[placeholder="原因（必填）"]'),
+  }
+}
+
+async function populateAdjustment(wrapper: ReturnType<typeof mount>) {
+  const toggle = wrapper.findComponent(ElSwitch)
+  toggle.vm.$emit('update:modelValue', true)
+  await nextTick()
+  const controls = adjustmentControls(wrapper)
+  controls.rentBillSelect.vm.$emit('update:modelValue', 101)
+  controls.adjustmentTypeSelect.vm.$emit('update:modelValue', 'WAIVER')
+  await controls.amountInput.setValue('25.00')
+  await controls.reasonInput.setValue('跨合同不应保留')
+  await nextTick()
+  expect(controls.toggle.props('modelValue')).toBe(true)
+  expect(controls.rentBillSelect.props('modelValue')).toBe(101)
+  expect(controls.adjustmentTypeSelect.props('modelValue')).toBe('WAIVER')
+  expect((controls.amountInput.element as HTMLInputElement).value).toBe('25.00')
+  expect((controls.reasonInput.element as HTMLInputElement).value).toBe('跨合同不应保留')
+}
+
+async function expectNeutralAdjustment(wrapper: ReturnType<typeof mount>) {
+  const toggle = wrapper.findComponent(ElSwitch)
+  expect(toggle.props('modelValue')).toBe(false)
+  toggle.vm.$emit('update:modelValue', true)
+  await nextTick()
+  const controls = adjustmentControls(wrapper)
+  expect(controls.rentBillSelect.props('modelValue')).toBeUndefined()
+  expect(controls.adjustmentTypeSelect.props('modelValue')).toBe('DISCOUNT')
+  expect((controls.amountInput.element as HTMLInputElement).value).toBe('')
+  expect((controls.reasonInput.element as HTMLInputElement).value).toBe('')
+  controls.toggle.vm.$emit('update:modelValue', false)
+  await nextTick()
+}
+
 afterEach(() => vi.restoreAllMocks())
 
 describe('收款登记合同切换', () => {
+  it('切换合同时在新请求返回前重置全部调整字段且旧响应或失败不能恢复', async () => {
+    const staleBills = deferred<RentBill[]>()
+    const stalePrepayments = deferred<{ balance: string; items: Record<string, unknown>[] }>()
+    const failedBills = deferred<RentBill[]>()
+    const failedPrepayments = deferred<{ balance: string; items: Record<string, unknown>[] }>()
+    let contractOneBillCalls = 0
+    let contractOnePrepaymentCalls = 0
+    vi.spyOn(paymentApi, 'bills').mockImplementation((contractId) => {
+      if (contractId === 2) return staleBills.promise
+      contractOneBillCalls += 1
+      return contractOneBillCalls === 1
+        ? Promise.resolve([bill(101, '111.00')])
+        : failedBills.promise
+    })
+    vi.spyOn(paymentApi, 'prepayments').mockImplementation((contractId) => {
+      if (contractId === 2) return stalePrepayments.promise
+      contractOnePrepaymentCalls += 1
+      return contractOnePrepaymentCalls === 1
+        ? Promise.resolve({ balance: '11.00', items: [] })
+        : failedPrepayments.promise
+    })
+    vi.spyOn(ElMessage, 'error')
+    const { wrapper, contractSelect } = await mountView()
+
+    await selectContract(contractSelect.vm, 1)
+    await flushPromises()
+    await populateAdjustment(wrapper)
+
+    await selectContract(contractSelect.vm, 2)
+    await expectNeutralAdjustment(wrapper)
+
+    await selectContract(contractSelect.vm, 1)
+    staleBills.resolve([bill(202, '222.00')])
+    stalePrepayments.resolve({ balance: '22.00', items: [] })
+    failedBills.reject(new Error('network failed'))
+    failedPrepayments.resolve({ balance: '99.00', items: [] })
+    await flushPromises()
+    await expectNeutralAdjustment(wrapper)
+    wrapper.unmount()
+  })
+
+  it('清空合同选择时重置全部调整字段', async () => {
+    vi.spyOn(paymentApi, 'bills').mockResolvedValue([bill(101, '111.00')])
+    vi.spyOn(paymentApi, 'prepayments').mockResolvedValue({ balance: '11.00', items: [] })
+    const { wrapper, contractSelect } = await mountView()
+
+    await selectContract(contractSelect.vm, 1)
+    await flushPromises()
+    await populateAdjustment(wrapper)
+
+    await selectContract(contractSelect.vm, undefined)
+    await expectNeutralAdjustment(wrapper)
+    wrapper.unmount()
+  })
   it('切换合同时立即清空旧状态且只允许最新请求写回', async () => {
     const firstBills = deferred<RentBill[]>()
     const firstPrepayments = deferred<{ balance: string; items: Record<string, unknown>[] }>()

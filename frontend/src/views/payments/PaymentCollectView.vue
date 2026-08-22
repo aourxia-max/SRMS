@@ -73,7 +73,11 @@ function clearContractPaymentState() {
   bills.value = []
   prepayments.value = { balance: '0.00', items: [] }
   selectedBillIds.value = []
+  adjustment.enabled = false
   adjustment.rentBillId = undefined
+  adjustment.adjustmentType = 'DISCOUNT'
+  adjustment.amount = ''
+  adjustment.reason = ''
   form.amount = ''
   form.manualAllocationReason = ''
   autoSuggestedPaymentAmount.value = ''
