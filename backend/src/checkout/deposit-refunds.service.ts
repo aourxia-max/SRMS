@@ -39,7 +39,7 @@ export class DepositRefundsService {
       settlement.status !== 'APPROVED' ||
       settlement.contract.status !== 'PENDING_CHECKOUT' ||
       !settlement.handoverDate ||
-      !new Prisma.Decimal(settlement.finalReceivable).isZero()
+      !this.isSupplementalCleared(settlement)
     )
       throw new BadRequestException('当前不满足登记押金退款的条件');
     const expectedRefund = new Prisma.Decimal(
@@ -87,7 +87,7 @@ export class DepositRefundsService {
         settlement.status !== 'APPROVED' ||
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
         !settlement.handoverDate ||
-        !new Prisma.Decimal(settlement.finalReceivable).isZero() ||
+        !this.isSupplementalCleared(settlement) ||
         !new Prisma.Decimal(refund.refundAmount).equals(
           new Prisma.Decimal(settlement.depositRefundableAmount).plus(
             settlement.prepaymentRefundableAmount,
@@ -190,6 +190,17 @@ export class DepositRefundsService {
       return refund;
     });
   }
+  private isSupplementalCleared(settlement: {
+    finalReceivable: Prisma.Decimal.Value;
+    supplementalRequired?: boolean;
+    supplementalOutstandingAmount?: Prisma.Decimal.Value;
+  }) {
+    const outstanding = settlement.supplementalRequired
+      ? (settlement.supplementalOutstandingAmount ?? settlement.finalReceivable)
+      : settlement.finalReceivable;
+    return new Prisma.Decimal(outstanding).isZero();
+  }
+
   private serializeFiles<
     T extends { files: Array<{ fileAsset: { sizeBytes: bigint } }> },
   >(refund: T) {

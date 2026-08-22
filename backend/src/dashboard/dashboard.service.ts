@@ -117,6 +117,7 @@ export class DashboardService {
     ] = await Promise.all([
       this.prisma.db.rentBill.findMany({
         where: {
+          billCategory: 'RENT',
           dueDate: { gte: now, lte: in7 },
           outstandingAmount: { gt: 0 },
           status: { notIn: ['VOIDED', 'REFUNDED'] },
@@ -136,6 +137,7 @@ export class DashboardService {
       }),
       this.prisma.db.rentBill.findMany({
         where: {
+          billCategory: 'RENT',
           dueDate: { lt: now },
           outstandingAmount: { gt: 0 },
           status: { notIn: ['VOIDED', 'REFUNDED'] },

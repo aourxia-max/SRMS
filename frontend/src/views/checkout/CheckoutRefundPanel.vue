@@ -11,6 +11,7 @@ const emit = defineEmits<{
   submit: [payload: Record<string, unknown>];
   approve: [refundId: number];
   completeZero: [settlementId: number];
+  collectSupplemental: [settlementId: number];
 }>();
 
 const today = new Date().toISOString().slice(0, 10);
@@ -27,6 +28,17 @@ const total = computed(
     Number(props.settlement?.prepaymentRefundableAmount || 0),
 );
 const isApproved = computed(() => props.settlement?.status === "APPROVED");
+const hasSupplementalReceivable = computed(() => {
+  if (props.settlement?.supplementalRequired) {
+    return Number(props.settlement.supplementalOutstandingAmount || 0) > 0;
+  }
+  return Number(props.settlement?.finalReceivable || 0) > 0;
+});
+const supplementalOutstandingAmount = computed(() =>
+  props.settlement?.supplementalRequired
+    ? Number(props.settlement.supplementalOutstandingAmount || 0)
+    : Number(props.settlement?.finalReceivable || 0),
+);
 const pendingRefund = computed(() =>
   props.settlement?.depositRefunds?.find(
     (item) => item.approvalStatus === "PENDING",
@@ -85,6 +97,29 @@ defineExpose({ addProof });
     <div v-else-if="!isApproved" class="refund-panel__empty">
       当前结算单尚未确认，暂不能进行最终退款处理。
     </div>
+    <article
+      v-else-if="hasSupplementalReceivable"
+      class="refund-panel__card refund-panel__supplemental"
+    >
+      <span class="refund-panel__badge refund-panel__badge--warning">待补收</span>
+      <h3>请先收清退租补收款</h3>
+      <p>本次退租尚有待补收 ¥{{ format(supplementalOutstandingAmount) }}。收清前不能确认退款或完成退租。</p>
+      <dl v-if="settlement.supplementalRequired" class="refund-panel__supplemental-breakdown">
+        <div><dt>欠租补收</dt><dd>¥{{ format(Number(settlement.supplementalArrearsAmount || 0)) }}</dd></div>
+        <div><dt>验房扣款</dt><dd>¥{{ format(Number(settlement.supplementalInspectionAmount || 0)) }}</dd></div>
+        <div><dt>本次已收</dt><dd>¥{{ format(Number(settlement.supplementalReceivedAmount || 0)) }}</dd></div>
+      </dl>
+      <button
+        v-if="role !== 'VISITOR'"
+        data-test="supplemental-collect"
+        type="button"
+        class="primary-button"
+        @click="emit('collectSupplemental', settlement.id)"
+      >
+        前往收款登记
+      </button>
+      <p v-else class="refund-panel__hint">访客仅可查看，不可登记补收款。</p>
+    </article>
     <article
       v-else-if="total === 0"
       class="refund-panel__card refund-panel__zero"
@@ -217,6 +252,26 @@ defineExpose({ addProof });
   border: 1px solid #e4eaf3;
   border-radius: 12px;
   background: #fff;
+}
+.refund-panel__supplemental-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.refund-panel__supplemental-breakdown div {
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff8e8;
+}
+.refund-panel__supplemental-breakdown dt {
+  color: #8a6516;
+  font-size: 13px;
+}
+.refund-panel__supplemental-breakdown dd {
+  margin: 6px 0 0;
+  color: #7a4c00;
+  font-weight: 700;
 }
 .refund-panel__amounts {
   display: grid;

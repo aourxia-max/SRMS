@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SubmitRefundDto } from './dto/submit-refund.dto';
 import { ApproveRefundDto } from './dto/approve-refund.dto';
 import { calculateAdjustedBill } from './adjustment-calculator';
+import { reopenCheckoutSupplementalBalance } from './checkout-supplemental-balance';
 
 @Injectable()
 export class RefundsService {
@@ -271,6 +272,12 @@ export class RefundsService {
             : 'PARTIALLY_REFUNDED',
         },
       });
+      await reopenCheckoutSupplementalBalance(
+        tx,
+        refund.contractId,
+        refund.payment.paymentCategory,
+        refund.refundAmount,
+      );
       await tx.securityAuditLog.create({
         data: {
           eventType: 'PAYMENT_REFUND_APPROVED',
@@ -322,7 +329,7 @@ export class RefundsService {
     contractId: number,
   ) {
     const bills = await tx.rentBill.findMany({
-      where: { contractId },
+      where: { contractId, billCategory: 'RENT' },
       orderBy: { periodSeq: 'asc' },
     });
     let paidThroughDate: Date | null = null;

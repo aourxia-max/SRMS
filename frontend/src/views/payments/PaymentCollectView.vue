@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { createLatestRequestGuard } from '../../services/contracts'
 import { paymentApi } from '../../services/payments'
+import { checkoutApi } from '../../services/checkout'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
 import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillIdsThroughTarget, selectedBillsOutstandingAmount } from './payment-collection'
@@ -21,6 +22,9 @@ const proofFiles = ref<Array<{ id: number; originalName: string }>>([])
 const loading = ref(false)
 const submitting = ref(false)
 const autoSuggestedPaymentAmount = ref('')
+const supplementalSettlement = ref<{ contractId: number; supplementalOutstandingAmount?: string }>()
+const checkoutSettlementId = Number(route.query.checkoutSettlementId)
+const isCheckoutSupplemental = computed(() => Number.isInteger(checkoutSettlementId) && checkoutSettlementId > 0)
 const contractLoadRequests = createLatestRequestGuard()
 const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as PaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
 const adjustment = reactive({ enabled: false, rentBillId: undefined as number | undefined, adjustmentType: 'DISCOUNT' as 'DISCOUNT' | 'WAIVER', amount: '', reason: '' })
@@ -67,7 +71,17 @@ function applySelectedBillsAmount(ids: number[]) {
 async function loadContracts() {
   contracts.value = await paymentApi.contracts()
   const requested = Number(route.query.contractId)
-  if (requested > 0 && contracts.value.some((item) => item.id === requested)) { form.contractId = requested; await selectContract() }
+  if (requested > 0 && contracts.value.some((item) => item.id === requested)) {
+    form.contractId = requested
+    await selectContract()
+    if (isCheckoutSupplemental.value) {
+      supplementalSettlement.value = await checkoutApi.detail(checkoutSettlementId)
+      if (supplementalSettlement.value.contractId !== requested) throw new Error('退租补收单与合同不匹配')
+      const outstanding = supplementalSettlement.value.supplementalOutstandingAmount ?? '0.00'
+      form.amount = outstanding
+      autoSuggestedPaymentAmount.value = outstanding
+    }
+  }
 }
 function clearContractPaymentState() {
   bills.value = []
@@ -119,21 +133,23 @@ async function uploadProof(options: UploadRequestOptions) {
   } catch (error) { ElMessage.error('凭证上传失败'); throw error }
 }
 async function submit() {
-  if (!form.contractId || !form.amount || selectedBillIds.value.length === 0) return ElMessage.warning('请完整填写合同、金额并选择账期')
+  if (!form.contractId || !form.amount || (!isCheckoutSupplemental.value && selectedBillIds.value.length === 0)) return ElMessage.warning('请完整填写合同、金额并选择账期')
   if (Number(form.amount) <= 0) return ElMessage.warning('收款金额必须大于 0')
-  if (manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
-  if (adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')
+  if (!isCheckoutSupplemental.value && manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
+  if (!isCheckoutSupplemental.value && adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')
   if (adjustment.enabled && !eligibleAdjustmentBills.value.some((bill) => bill.id === adjustment.rentBillId)) return ElMessage.warning('优惠/减免金额需不大于归属账期在本次收款后的未收金额')
   submitting.value = true
   try {
-    const result = await paymentApi.record({
-      contractId: form.contractId, paymentDate: form.paymentDate, amount: form.amount, method: form.method,
-      selectedBillIds: selectedBillIds.value, externalReference: form.externalReference || undefined, remark: form.remark || undefined,
-      manualAllocationReason: manualAllocation.value ? form.manualAllocationReason : undefined,
-      proofFileIds: proofFiles.value.map((file) => file.id),
-      adjustments: adjustment.enabled ? [{ rentBillId: adjustment.rentBillId!, adjustmentType: adjustment.adjustmentType, amount: adjustment.amount, reason: adjustment.reason }] : undefined,
-    })
-    ElMessage.success(`收款登记成功，票据号 ${result.receiptNo}`)
+    const result = isCheckoutSupplemental.value
+      ? await paymentApi.recordCheckoutSupplemental({ checkoutSettlementId, paymentDate: form.paymentDate, amount: form.amount, method: form.method, externalReference: form.externalReference || undefined, remark: form.remark || undefined })
+      : await paymentApi.record({
+          contractId: form.contractId, paymentDate: form.paymentDate, amount: form.amount, method: form.method,
+          selectedBillIds: selectedBillIds.value, externalReference: form.externalReference || undefined, remark: form.remark || undefined,
+          manualAllocationReason: manualAllocation.value ? form.manualAllocationReason : undefined,
+          proofFileIds: proofFiles.value.map((file) => file.id),
+          adjustments: adjustment.enabled ? [{ rentBillId: adjustment.rentBillId!, adjustmentType: adjustment.adjustmentType, amount: adjustment.amount, reason: adjustment.reason }] : undefined,
+        })
+    ElMessage.success(`${isCheckoutSupplemental.value ? '退租补收登记成功' : '收款登记成功'}，票据号 ${result.receiptNo}`)
     await router.push(`/payments/detail/${result.id}`)
   } catch { ElMessage.error('收款登记失败，请核对账期、金额和凭证后重试') } finally { submitting.value = false }
 }
@@ -142,7 +158,7 @@ onMounted(() => void loadContracts())
 
 <template>
   <PaymentWorkspace title="收款登记" description="按账期核对应收、优惠和实收，登记完成后自动生成票据。">
-    <el-alert title="金额口径：先确认原始应收，再扣减已确认优惠；超过账期实欠的金额计入预收款。" type="info" :closable="false" show-icon />
+    <el-alert :title="isCheckoutSupplemental ? `退租补收：系统固定按原欠租优先、验房扣款随后分配；不得转入预收款或使用优惠减免。` : `金额口径：先确认原始应收，再扣减已确认优惠；超过账期实欠的金额计入预收款。`" type="info" :closable="false" show-icon />
     <div class="collect-layout">
       <div class="collect-main">
         <el-card shadow="never">
@@ -177,7 +193,7 @@ onMounted(() => void loadContracts())
 
         <el-card shadow="never">
           <template #header><div class="card-title"><span class="step">3</span><b>优惠、减免与凭证</b></div></template>
-          <el-switch v-model="adjustment.enabled" active-text="本次同时提交优惠/减免申请" />
+          <el-switch v-if="!isCheckoutSupplemental" v-model="adjustment.enabled" active-text="本次同时提交优惠/减免申请" />
           <el-row v-if="adjustment.enabled" :gutter="16" class="adjustment-form">
             <el-col :xs="24" :md="8"><el-select v-model="adjustment.rentBillId" style="width:100%" placeholder="归属账期"><el-option v-for="bill in eligibleAdjustmentBills" :key="bill.id" :value="bill.id" :label="`第 ${bill.periodSeq} 期`" /></el-select></el-col>
             <el-col :xs="24" :md="6"><el-select v-model="adjustment.adjustmentType" style="width:100%"><el-option label="优惠" value="DISCOUNT"/><el-option label="减免" value="WAIVER"/></el-select></el-col>

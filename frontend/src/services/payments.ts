@@ -13,6 +13,7 @@ export const paymentApi = {
     return data(await http.post<Envelope<{ id: number; originalName: string }>>('/payments/proof-files', form))
   },
   async record(payload: RecordPaymentPayload) { return data(await http.post<Envelope<{ id: number; receiptNo: string; receiptType: string }>>('/payments', payload)) },
+  async recordCheckoutSupplemental(payload: { checkoutSettlementId: number; paymentDate: string; amount: string; method: string; externalReference?: string; remark?: string }) { return data(await http.post<Envelope<{ id: number; receiptNo: string; receiptType: string }>>('/payments/checkout-supplemental', payload)) },
   async list(params: Record<string, unknown>) { return data(await http.get<Envelope<PaymentListPage>>('/payments', { params })) },
   async detail(id: number) { return data(await http.get<Envelope<PaymentDetail>>(`/payments/${id}`)) },
   async edit(id: number, payload: Record<string, unknown>) { return data(await http.patch<Envelope<{ id: number; receiptNo: string }>>(`/payments/${id}`, payload)) },

@@ -56,6 +56,7 @@ describe('RefundsService adjustment decisions', () => {
         id: 81,
         amount: new Prisma.Decimal('500.00'),
         status: 'CONFIRMED',
+        paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
         adjustments: [adjustment],
       },
     };
@@ -77,6 +78,15 @@ describe('RefundsService adjustment decisions', () => {
         findMany: jest.fn().mockResolvedValue([bill]),
       },
       payment: { update: jest.fn().mockResolvedValue({}) },
+      checkoutSettlement: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 901,
+          supplementalArrearsAmount: new Prisma.Decimal('300.00'),
+          supplementalInspectionAmount: new Prisma.Decimal('200.00'),
+          supplementalReceivedAmount: new Prisma.Decimal('500.00'),
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
       billAdjustment: {
         create: jest.fn().mockResolvedValue({ id: 502 }),
         update: jest.fn().mockResolvedValue({}),
@@ -193,5 +203,27 @@ describe('RefundsService adjustment decisions', () => {
 
     expect(tx.billAdjustment.create).not.toHaveBeenCalled();
     expect(tx.paymentRefundAdjustmentDecision.create).not.toHaveBeenCalled();
+  });
+
+  it('reopens the checkout supplemental balance after an approved refund', async () => {
+    const { tx, service } = fixture(502);
+
+    await service.approve(201, { adjustmentDecisions: [] }, user);
+
+    expect(tx.checkoutSettlement.update).toHaveBeenCalledWith({
+      where: { id: 901 },
+      data: {
+        supplementalReceivedAmount: expect.anything(),
+        supplementalOutstandingAmount: expect.anything(),
+        supplementalCollectedAt: null,
+      },
+    });
+    const data = tx.checkoutSettlement.update.mock.calls[0][0].data;
+    expect(data.supplementalReceivedAmount.toFixed(2)).toBe('400.00');
+    expect(data.supplementalOutstandingAmount.toFixed(2)).toBe('100.00');
+    expect(tx.rentBill.findMany).toHaveBeenCalledWith({
+      where: { contractId: 7, billCategory: 'RENT' },
+      orderBy: { periodSeq: 'asc' },
+    });
   });
 });

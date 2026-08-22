@@ -204,6 +204,98 @@ describe('PaymentsService.record', () => {
     expect(tx.payment.create).not.toHaveBeenCalled();
   });
 
+  it('records checkout supplemental payment against original arrears before inspection charge', async () => {
+    const { tx, service } = fixture();
+    const arrearsBill = {
+      id: 11,
+      contractId: 7,
+      periodSeq: 1,
+      dueDate: new Date('2026-08-01'),
+      periodEnd: new Date('2026-08-31'),
+      payableAmount: '100.00',
+      receivedAmount: '50.00',
+      outstandingAmount: '50.00',
+      status: 'PARTIAL',
+      billCategory: 'RENT',
+    };
+    const inspectionBill = {
+      id: 19,
+      contractId: 7,
+      periodSeq: 3,
+      dueDate: new Date('2026-08-31'),
+      periodEnd: new Date('2026-08-31'),
+      payableAmount: '100.00',
+      receivedAmount: '0.00',
+      outstandingAmount: '100.00',
+      status: 'PENDING',
+      billCategory: 'CHECKOUT_SUPPLEMENTAL',
+      checkoutSettlementId: 8,
+    };
+    tx.checkoutSettlement = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 8,
+        contractId: 7,
+        status: 'APPROVED',
+        supplementalRequired: true,
+        supplementalOutstandingAmount: '150.00',
+        supplementalReceivedAmount: '0.00',
+        contract: { status: 'PENDING_CHECKOUT' },
+        items: [{ itemType: 'RENT_ARREARS', rentBillId: 11 }],
+        supplementalBill: { id: 19 },
+      }),
+      update: jest.fn(),
+    };
+    tx.rentBill.findMany
+      .mockReset()
+      .mockResolvedValueOnce([arrearsBill, inspectionBill])
+      .mockResolvedValueOnce([arrearsBill, inspectionBill]);
+    tx.payment.create.mockResolvedValue({
+      id: 82,
+      receiptNo: 'SK-TEST-82',
+      contractId: 7,
+      amount: '120.00',
+    });
+
+    await service.recordCheckoutSupplemental(
+      {
+        checkoutSettlementId: 8,
+        paymentDate: '2026-08-04',
+        amount: '120.00',
+        method: PaymentMethod.CASH,
+      },
+      user,
+    );
+
+    expect(tx.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+        }),
+      }),
+    );
+    expect(tx.paymentAllocation.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          rentBillId: 11,
+          allocatedAmount: expect.anything(),
+          allocationOrder: 1,
+        }),
+        expect.objectContaining({
+          rentBillId: 19,
+          allocatedAmount: expect.anything(),
+          allocationOrder: 2,
+        }),
+      ],
+    });
+    expect(tx.checkoutSettlement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          supplementalReceivedAmount: expect.anything(),
+          supplementalOutstandingAmount: expect.anything(),
+        }),
+      }),
+    );
+  });
   it('rejects visitor payment registration in the service layer', async () => {
     const { service } = fixture();
 

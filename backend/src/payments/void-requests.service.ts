@@ -9,6 +9,7 @@ import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubmitVoidRequestDto } from './dto/submit-void-request.dto';
 import { calculateAdjustedBill } from './adjustment-calculator';
+import { reopenCheckoutSupplementalBalance } from './checkout-supplemental-balance';
 
 @Injectable()
 export class VoidRequestsService {
@@ -98,6 +99,7 @@ export class VoidRequestsService {
           ];
         }),
       );
+      let reversedPaymentAmount = new Prisma.Decimal(0);
       for (const adjustment of request.payment.adjustments.filter(
         (item) =>
           ['PENDING', 'APPROVED'].includes(item.approvalStatus) &&
@@ -148,6 +150,7 @@ export class VoidRequestsService {
           allocation.reversedAmount,
         );
         if (amount.lte(0)) continue;
+        reversedPaymentAmount = reversedPaymentAmount.plus(amount);
         await tx.paymentAllocation.update({
           where: { id: allocation.id },
           data: {
@@ -212,6 +215,12 @@ export class VoidRequestsService {
           voidedAt: new Date(),
         },
       });
+      await reopenCheckoutSupplementalBalance(
+        tx,
+        request.payment.contractId,
+        request.payment.paymentCategory,
+        reversedPaymentAmount,
+      );
       await tx.securityAuditLog.create({
         data: {
           eventType: 'PAYMENT_VOID_APPROVED',
@@ -259,7 +268,7 @@ export class VoidRequestsService {
     contractId: number,
   ) {
     const bills = await tx.rentBill.findMany({
-      where: { contractId },
+      where: { contractId, billCategory: 'RENT' },
       orderBy: { periodSeq: 'asc' },
     });
     let paidThroughDate: Date | null = null;

@@ -23,6 +23,7 @@ import { RolesGuard } from '../authorization/roles.guard';
 import { FilesService } from '../files/files.service';
 import type { UploadedFile as StoredFile } from '../files/files.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { RecordCheckoutSupplementalPaymentDto } from './dto/record-checkout-supplemental-payment.dto';
 import { PaymentListQueryDto } from './dto/payment-list-query.dto';
 import { EditPaymentDto } from './dto/edit-payment.dto';
 import { PaymentsService } from './payments.service';
@@ -61,6 +62,19 @@ export class PaymentsController {
       data: await this.payments.prepayments(Number(contractId)),
     };
   }
+  @Post('checkout-supplemental')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async recordCheckoutSupplemental(
+    @Body() dto: RecordCheckoutSupplementalPaymentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.payments.recordCheckoutSupplemental(dto, user),
+    };
+  }
+
   @Post()
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async record(@Body() dto: RecordPaymentDto, @CurrentUser() user: AuthUser) {

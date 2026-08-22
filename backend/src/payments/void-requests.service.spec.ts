@@ -28,6 +28,7 @@ describe('VoidRequestsService adjustment reversal', () => {
         receiptNo: 'SK-TEST-81',
         contractId: 7,
         status: 'CONFIRMED',
+        paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
         allocations: [
           {
             id: 101,
@@ -74,6 +75,15 @@ describe('VoidRequestsService adjustment reversal', () => {
         create: jest.fn().mockResolvedValue({}),
       },
       payment: { update: jest.fn().mockResolvedValue({}) },
+      checkoutSettlement: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 901,
+          supplementalArrearsAmount: new Prisma.Decimal('300.00'),
+          supplementalInspectionAmount: new Prisma.Decimal('200.00'),
+          supplementalReceivedAmount: new Prisma.Decimal('500.00'),
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
       contract: { update: jest.fn().mockResolvedValue({}) },
       securityAuditLog: { create: jest.fn().mockResolvedValue({}) },
     };
@@ -123,6 +133,16 @@ describe('VoidRequestsService adjustment reversal', () => {
     const reversal = tx.prepaymentTransaction.create.mock.calls[0][0].data;
     expect(reversal.amount.toFixed(2)).toBe('40.00');
     expect(reversal.balanceAfter.toFixed(2)).toBe('0.00');
+    const settlementData = tx.checkoutSettlement.update.mock.calls[0][0].data;
+    expect(settlementData.supplementalReceivedAmount.toFixed(2)).toBe('0.00');
+    expect(settlementData.supplementalOutstandingAmount.toFixed(2)).toBe(
+      '500.00',
+    );
+    expect(settlementData.supplementalCollectedAt).toBeNull();
+    expect(tx.rentBill.findMany).toHaveBeenCalledWith({
+      where: { contractId: 7, billCategory: 'RENT' },
+      orderBy: { periodSeq: 'asc' },
+    });
   });
 
   it('enforces super admin approval in the service layer', async () => {

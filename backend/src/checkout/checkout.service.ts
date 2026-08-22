@@ -234,6 +234,20 @@ export class CheckoutService {
         settlement.prepaymentRefundableAmount,
       ),
       finalReceivable: this.money(settlement.finalReceivable),
+      supplementalRequired: settlement.supplementalRequired,
+      supplementalArrearsAmount: this.money(
+        settlement.supplementalArrearsAmount,
+      ),
+      supplementalInspectionAmount: this.money(
+        settlement.supplementalInspectionAmount,
+      ),
+      supplementalReceivedAmount: this.money(
+        settlement.supplementalReceivedAmount,
+      ),
+      supplementalOutstandingAmount: this.money(
+        settlement.supplementalOutstandingAmount,
+      ),
+      supplementalCollectedAt: settlement.supplementalCollectedAt,
       items: settlement.items.map((item) => ({
         ...item,
         amount: this.money(item.amount),
@@ -455,10 +469,43 @@ export class CheckoutService {
           },
         });
       }
-      const finalReceivable = Prisma.Decimal.max(
+      const supplementalArrearsAmount = Prisma.Decimal.max(
         new Prisma.Decimal(0),
-        outstanding.plus(otherCharges).minus(initialDepositBalance),
+        outstanding.minus(depositOffsetAmount),
       ).toDecimalPlaces(2);
+      const supplementalInspectionAmount = Prisma.Decimal.max(
+        new Prisma.Decimal(0),
+        otherCharges.minus(otherDeductionAmount),
+      ).toDecimalPlaces(2);
+      const supplementalOutstandingAmount = supplementalArrearsAmount
+        .plus(supplementalInspectionAmount)
+        .toDecimalPlaces(2);
+      if (supplementalInspectionAmount.gt(0)) {
+        const supplementalPeriodSeq =
+          Math.max(
+            0,
+            ...settlement.contract.bills.map((bill) => bill.periodSeq),
+          ) + 1;
+        await tx.rentBill.create({
+          data: {
+            billNo: `TZBS${settlement.settlementNo}`,
+            contractId: settlement.contractId,
+            periodSeq: supplementalPeriodSeq,
+            periodStart: settlement.actualCheckoutDate,
+            periodEnd: settlement.actualCheckoutDate,
+            dueDate: settlement.actualCheckoutDate,
+            unitMonthlyRent: new Prisma.Decimal(0),
+            baseRentAmount: new Prisma.Decimal(0),
+            payableAmount: supplementalInspectionAmount,
+            receivedAmount: new Prisma.Decimal(0),
+            outstandingAmount: supplementalInspectionAmount,
+            status: 'PENDING',
+            billCategory: 'CHECKOUT_SUPPLEMENTAL',
+            checkoutSettlementId: settlement.id,
+          },
+        });
+      }
+      const finalReceivable = supplementalOutstandingAmount;
       const prepayment = await tx.prepaymentTransaction.findFirst({
         where: { contractId: settlement.contractId },
         orderBy: { id: 'desc' },
@@ -479,11 +526,14 @@ export class CheckoutService {
             (sum, bill) => sum.plus(bill.payableAmount),
             new Prisma.Decimal(0),
           ),
-          rentReceived: eligibleBills.reduce(
-            (sum, bill) => sum.plus(bill.receivedAmount),
-            new Prisma.Decimal(0),
-          ),
-          rentOutstanding: outstanding,
+          rentReceived: eligibleBills
+            .reduce(
+              (sum, bill) => sum.plus(bill.payableAmount),
+              new Prisma.Decimal(0),
+            )
+            .minus(supplementalArrearsAmount)
+            .toDecimalPlaces(2),
+          rentOutstanding: supplementalArrearsAmount,
           prepaymentBalance: new Prisma.Decimal(prepayment?.balanceAfter ?? 0),
           depositBalance: initialDepositBalance,
           depositOffsetAmount,
@@ -493,6 +543,12 @@ export class CheckoutService {
             prepayment?.balanceAfter ?? 0,
           ),
           finalReceivable,
+          supplementalRequired: supplementalOutstandingAmount.gt(0),
+          supplementalArrearsAmount,
+          supplementalInspectionAmount,
+          supplementalReceivedAmount: new Prisma.Decimal(0),
+          supplementalOutstandingAmount,
+          supplementalCollectedAt: null,
           status: 'APPROVED',
           approvedBy: user.id,
           approvedAt: new Date(),
@@ -507,10 +563,13 @@ export class CheckoutService {
         where: { id },
         include: { contract: true },
       });
+      const supplementalOutstandingAmount = settlement.supplementalRequired
+        ? settlement.supplementalOutstandingAmount
+        : settlement.finalReceivable;
       const isZero = [
         settlement.depositRefundableAmount,
         settlement.prepaymentRefundableAmount,
-        settlement.finalReceivable,
+        supplementalOutstandingAmount,
       ].every((amount) => new Prisma.Decimal(amount).isZero());
       if (
         settlement.status !== 'APPROVED' ||

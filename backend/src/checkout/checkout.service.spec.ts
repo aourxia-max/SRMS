@@ -380,6 +380,91 @@ describe('CheckoutService', () => {
     expect(contractUpdate).not.toHaveBeenCalled();
     expect(roomUpdate).not.toHaveBeenCalled();
   });
+  it('locks post-offset arrears separately and creates an inspection-only supplemental bill', async () => {
+    const settlementUpdate = jest
+      .fn()
+      .mockResolvedValue({ id: 1, status: 'APPROVED' });
+    const supplementalCreate = jest.fn();
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'PENDING',
+          actualCheckoutDate: new Date('2026-08-01'),
+          items: [
+            {
+              itemType: 'RENT_ARREARS',
+              amount: new Prisma.Decimal('100.00'),
+              rentBillId: 11,
+            },
+            { itemType: 'REPAIR', amount: new Prisma.Decimal('100.00') },
+          ],
+          contract: {
+            bills: [
+              {
+                id: 11,
+                billNo: 'ZB2026080001',
+                periodSeq: 1,
+                periodStart: new Date('2026-08-01'),
+                payableAmount: new Prisma.Decimal('100.00'),
+                receivedAmount: new Prisma.Decimal('0.00'),
+                outstandingAmount: new Prisma.Decimal('100.00'),
+                status: 'PENDING',
+              },
+            ],
+          },
+        }),
+        update: settlementUpdate,
+      },
+      rentBill: {
+        create: supplementalCreate,
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+      depositTransaction: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ balanceAfter: new Prisma.Decimal('50.00') }),
+        create: jest.fn(),
+      },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.approve(1, { ...user, role: 'SUPER_ADMIN' });
+
+    expect(settlementUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          supplementalArrearsAmount: expect.objectContaining({}),
+          supplementalInspectionAmount: expect.objectContaining({}),
+          supplementalOutstandingAmount: expect.objectContaining({}),
+        }),
+      }),
+    );
+    const settlementData = settlementUpdate.mock.calls[0][0].data;
+    expect(settlementData.supplementalArrearsAmount.toString()).toBe('50');
+    expect(settlementData.supplementalInspectionAmount.toString()).toBe('100');
+    expect(settlementData.supplementalOutstandingAmount.toString()).toBe('150');
+    expect(supplementalCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          billCategory: 'CHECKOUT_SUPPLEMENTAL',
+          payableAmount: expect.objectContaining({}),
+        }),
+      }),
+    );
+    expect(
+      supplementalCreate.mock.calls[0][0].data.payableAmount.toString(),
+    ).toBe('100');
+  });
   it('completes an approved zero-refund settlement only after final confirmation', async () => {
     const settlementUpdate = jest.fn().mockResolvedValue({
       id: 1,
@@ -435,6 +520,43 @@ describe('CheckoutService', () => {
     );
   });
 
+  it('allows final confirmation after a required supplemental receivable is fully collected', async () => {
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'APPROVED',
+          targetRoomStatus: 'EMPTY',
+          depositRefundableAmount: '0.00',
+          prepaymentRefundableAmount: '0.00',
+          finalReceivable: '150.00',
+          supplementalRequired: true,
+          supplementalOutstandingAmount: '0.00',
+          contract: { id: 3, status: 'PENDING_CHECKOUT', roomId: 7 },
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({ id: 1, status: 'COMPLETED' }),
+      },
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        update: jest.fn(),
+      },
+      room: { update: jest.fn() },
+      roomStatusHistory: { create: jest.fn() },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.completeZeroRefund(1, { ...user, role: 'SUPER_ADMIN' }),
+    ).resolves.toMatchObject({ status: 'COMPLETED' });
+  });
   it('rejects zero final confirmation when a locked amount is non-zero', async () => {
     const tx = {
       checkoutSettlement: {
@@ -476,6 +598,12 @@ describe('CheckoutService', () => {
             depositRefundableAmount: new Prisma.Decimal('800.00'),
             prepaymentRefundableAmount: new Prisma.Decimal('500.00'),
             finalReceivable: new Prisma.Decimal('0.00'),
+            supplementalRequired: true,
+            supplementalArrearsAmount: new Prisma.Decimal('50.00'),
+            supplementalInspectionAmount: new Prisma.Decimal('100.00'),
+            supplementalReceivedAmount: new Prisma.Decimal('75.00'),
+            supplementalOutstandingAmount: new Prisma.Decimal('75.00'),
+            supplementalCollectedAt: null,
             contract: { id: 3, room: { id: 7, roomNo: '301' } },
             items: [{ id: 1, amount: new Prisma.Decimal('120.00') }],
             depositRefunds: [
@@ -491,6 +619,11 @@ describe('CheckoutService', () => {
       depositRefundableAmount: '800.00',
       prepaymentRefundableAmount: '500.00',
       finalReceivable: '0.00',
+      supplementalRequired: true,
+      supplementalArrearsAmount: '50.00',
+      supplementalInspectionAmount: '100.00',
+      supplementalReceivedAmount: '75.00',
+      supplementalOutstandingAmount: '75.00',
       contract: { room: { roomNo: '301' } },
       items: [{ amount: '120.00' }],
       depositRefunds: [{ refundAmount: '1300.00' }],

@@ -122,6 +122,11 @@ enum RentBillStatus {
   REFUNDED
 }
 
+enum RentBillCategory {
+  RENT
+  CHECKOUT_SUPPLEMENTAL
+}
+
 enum ConcessionType {
   RENT_FREE
   FIXED_AMOUNT
@@ -151,6 +156,7 @@ enum PaymentCategory {
   RENT
   PREPAYMENT
   DEPOSIT
+  CHECKOUT_SUPPLEMENTAL
 }
 
 enum PaymentMethod {
@@ -764,6 +770,8 @@ model RentBill {
   receivedAmount          Decimal                  @default(0) @map("received_amount") @db.Decimal(14, 2)
   outstandingAmount       Decimal                  @map("outstanding_amount") @db.Decimal(14, 2)
   status                  RentBillStatus           @default(PENDING)
+  billCategory            RentBillCategory         @default(RENT) @map("bill_category")
+  checkoutSettlementId    Int?                     @unique @map("checkout_settlement_id") @db.UnsignedInt
   contract                Contract                 @relation(fields: [contractId], references: [id], onDelete: Restrict)
   pricingTier             ContractPricingTier?     @relation(fields: [contractPricingTierId], references: [id], onDelete: Restrict)
   allocations             PaymentAllocation[]
@@ -772,6 +780,7 @@ model RentBill {
   pricingRebates          PricingRebate[]
   depositTransactions     DepositTransaction[]
   checkoutSettlementItems CheckoutSettlementItem[]
+  checkoutSettlement      CheckoutSettlement?      @relation("CheckoutSupplementalRentBill", fields: [checkoutSettlementId], references: [id], onDelete: Restrict)
 
   @@unique([contractId, periodSeq])
   @@index([dueDate, status])
@@ -1007,7 +1016,13 @@ model CheckoutSettlement {
   otherDeductionAmount       Decimal                  @default(0) @map("other_deduction_amount") @db.Decimal(14, 2)
   depositRefundableAmount    Decimal                  @default(0) @map("deposit_refundable_amount") @db.Decimal(14, 2)
   prepaymentRefundableAmount Decimal                  @default(0) @map("prepayment_refundable_amount") @db.Decimal(14, 2)
-  finalReceivable            Decimal                  @default(0) @map("final_receivable") @db.Decimal(14, 2)
+  finalReceivable              Decimal                  @default(0) @map("final_receivable") @db.Decimal(14, 2)
+  supplementalRequired         Boolean                  @default(false) @map("supplemental_required")
+  supplementalArrearsAmount    Decimal                  @default(0) @map("supplemental_arrears_amount") @db.Decimal(14, 2)
+  supplementalInspectionAmount Decimal                  @default(0) @map("supplemental_inspection_amount") @db.Decimal(14, 2)
+  supplementalReceivedAmount   Decimal                  @default(0) @map("supplemental_received_amount") @db.Decimal(14, 2)
+  supplementalOutstandingAmount Decimal                 @default(0) @map("supplemental_outstanding_amount") @db.Decimal(14, 2)
+  supplementalCollectedAt      DateTime?                @map("supplemental_collected_at") @db.DateTime(3)
   targetRoomStatus           RoomStatus               @map("target_room_status")
   status                     CheckoutSettlementStatus @default(DRAFT)
   submittedBy                Int                      @map("submitted_by") @db.UnsignedInt
@@ -1020,6 +1035,7 @@ model CheckoutSettlement {
   items                      CheckoutSettlementItem[]
   depositTransactions        DepositTransaction[]
   depositRefunds             DepositRefund[]
+  supplementalBill           RentBill?                @relation("CheckoutSupplementalRentBill")
 
   @@index([contractId, status])
   @@map("checkout_settlements")

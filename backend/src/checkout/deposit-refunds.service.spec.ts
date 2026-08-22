@@ -66,6 +66,42 @@ describe('DepositRefundsService', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it('allows refund registration after a required supplemental receivable is fully collected', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 9 });
+    const service = new DepositRefundsService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 1,
+            contractId: 3,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '150.00',
+            supplementalRequired: true,
+            supplementalOutstandingAmount: '0.00',
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '0.00',
+            contract: { status: 'PENDING_CHECKOUT' },
+          }),
+        },
+        fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
+        depositRefund: { create },
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          checkoutSettlementId: 1,
+          refundAmount: '800.00',
+          refundDate: '2026-08-02',
+          refundMethod: 'CASH',
+          proofFileIds: [4],
+        } as never,
+        { id: 2, username: 'admin', role: 'ADMIN' },
+      ),
+    ).resolves.toEqual({ id: 9 });
+  });
   it('writes deposit and prepayment refund transactions when a combined refund is approved', async () => {
     const depositTransactionCreate = jest.fn();
     const prepaymentTransactionCreate = jest.fn();

@@ -7,6 +7,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { paymentApi } from '../../services/payments'
+import { checkoutApi } from '../../services/checkout'
 import type { RentBill } from '../../types/payments'
 import PaymentCollectView from './PaymentCollectView.vue'
 
@@ -265,6 +266,33 @@ describe('收款登记合同切换', () => {
     expect(amountValue(wrapper)).toBe('')
     expect(wrapper.text()).not.toContain('¥99.00')
     expect(messageError).toHaveBeenCalledWith('合同账单加载失败，请稍后重试')
+    wrapper.unmount()
+  })
+  it('从退租补收入口自动带入合同和实时未收金额', async () => {
+    vi.spyOn(paymentApi, 'bills').mockResolvedValue([bill(101, '999.00')])
+    vi.spyOn(paymentApi, 'prepayments').mockResolvedValue({ balance: '0.00', items: [] })
+    vi.spyOn(checkoutApi, 'detail').mockResolvedValue({
+      id: 8,
+      settlementNo: 'TZ202608220008',
+      status: 'APPROVED',
+      contractId: 1,
+      depositRefundableAmount: '0.00',
+      prepaymentRefundableAmount: '0.00',
+      finalReceivable: '150.00',
+      supplementalRequired: true,
+      supplementalArrearsAmount: '50.00',
+      supplementalInspectionAmount: '100.00',
+      supplementalReceivedAmount: '75.00',
+      supplementalOutstandingAmount: '75.00',
+    })
+
+    const { wrapper, contractSelect } = await mountView('/payments/collect?contractId=1&checkoutSettlementId=8')
+    await flushPromises()
+
+    expect(contractSelect.props('modelValue')).toBe(1)
+    expect(amountValue(wrapper)).toBe('75.00')
+    expect(wrapper.text()).toContain('退租补收')
+    expect(wrapper.text()).not.toContain('本次同时提交优惠/减免申请')
     wrapper.unmount()
   })
 })

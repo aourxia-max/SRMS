@@ -4,7 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, RentBillStatus, UserRole } from '@prisma/client';
+import {
+  PaymentMethod,
+  Prisma,
+  RentBillStatus,
+  UserRole,
+} from '@prisma/client';
 import { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordPaymentDto } from './dto/record-payment.dto';
@@ -535,6 +540,181 @@ export class PaymentsService {
     return { balance: items[0]?.balanceAfter ?? new Prisma.Decimal(0), items };
   }
 
+  async recordCheckoutSupplemental(
+    dto: {
+      checkoutSettlementId: number;
+      paymentDate: string;
+      amount: string;
+      method: PaymentMethod;
+      externalReference?: string;
+      remark?: string;
+    },
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('当前角色不能登记收款');
+    const amount = new Prisma.Decimal(dto.amount);
+    if (!amount.isFinite() || amount.lte(0))
+      throw new BadRequestException('收款金额必须大于零');
+    return this.prisma.db.$transaction(async (tx) => {
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id: dto.checkoutSettlementId },
+        include: { contract: true, items: true, supplementalBill: true },
+      });
+      if (
+        settlement.status !== 'APPROVED' ||
+        settlement.contract.status !== 'PENDING_CHECKOUT' ||
+        !settlement.supplementalRequired
+      )
+        throw new BadRequestException('当前退租结算不允许登记补收款');
+      const contract = await tx.contract.findUniqueOrThrow({
+        where: { id: settlement.contractId },
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${contract.id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${settlement.id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contract.id} ORDER BY id FOR UPDATE`,
+      );
+      const arrearsBillIds = settlement.items
+        .filter((item) => item.itemType === 'RENT_ARREARS' && item.rentBillId)
+        .map((item) => item.rentBillId!);
+      const bills = await tx.rentBill.findMany({
+        where: {
+          contractId: contract.id,
+          status: { notIn: ['VOIDED', 'REFUNDED'] },
+          outstandingAmount: { gt: 0 },
+          OR: [
+            ...(arrearsBillIds.length ? [{ id: { in: arrearsBillIds } }] : []),
+            { checkoutSettlementId: settlement.id },
+          ],
+        },
+        orderBy: [{ dueDate: 'asc' }, { periodSeq: 'asc' }],
+      });
+      const arrearsBills = bills.filter((bill) =>
+        arrearsBillIds.includes(bill.id),
+      );
+      const inspectionBill = bills.find(
+        (bill) => bill.checkoutSettlementId === settlement.id,
+      );
+      const orderedBills = inspectionBill
+        ? [...arrearsBills, inspectionBill]
+        : arrearsBills;
+      const outstandingAmount = orderedBills
+        .reduce(
+          (sum, bill) => sum.plus(bill.outstandingAmount),
+          new Prisma.Decimal(0),
+        )
+        .toDecimalPlaces(2);
+      if (outstandingAmount.lte(0))
+        throw new BadRequestException('退租补收款已收清，请勿重复登记');
+      if (amount.gt(outstandingAmount))
+        throw new BadRequestException('本次补收金额不得超过未收余额');
+      const payment = await tx.payment.create({
+        data: {
+          receiptNo: await this.receiptNo(tx),
+          contractId: contract.id,
+          paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+          paymentDate: new Date(dto.paymentDate),
+          amount,
+          method: dto.method,
+          externalReference: dto.externalReference,
+          remark: dto.remark,
+          operatorId: user.id,
+        },
+      });
+      let remaining = amount;
+      const allocations: Array<{
+        rentBillId: number;
+        amount: Prisma.Decimal;
+        allocationOrder: number;
+      }> = [];
+      for (const bill of orderedBills) {
+        if (remaining.lte(0)) break;
+        const allocatedAmount = Prisma.Decimal.min(
+          remaining,
+          bill.outstandingAmount,
+        ).toDecimalPlaces(2);
+        allocations.push({
+          rentBillId: bill.id,
+          amount: allocatedAmount,
+          allocationOrder: allocations.length + 1,
+        });
+        remaining = remaining.minus(allocatedAmount).toDecimalPlaces(2);
+      }
+      await tx.paymentAllocation.createMany({
+        data: allocations.map((item) => ({
+          paymentId: payment.id,
+          rentBillId: item.rentBillId,
+          allocatedAmount: item.amount,
+          allocationOrder: item.allocationOrder,
+          allocationType: 'AUTO_OLDEST_FIRST',
+        })),
+      });
+      for (const allocation of allocations) {
+        const bill = orderedBills.find(
+          (item) => item.id === allocation.rentBillId,
+        )!;
+        const receivedAmount = new Prisma.Decimal(bill.receivedAmount)
+          .plus(allocation.amount)
+          .toDecimalPlaces(2);
+        const billOutstandingAmount = new Prisma.Decimal(bill.payableAmount)
+          .minus(receivedAmount)
+          .toDecimalPlaces(2);
+        await tx.rentBill.update({
+          where: { id: bill.id },
+          data: {
+            receivedAmount,
+            outstandingAmount: billOutstandingAmount,
+            status: billOutstandingAmount.isZero() ? 'PAID' : 'PARTIAL',
+          },
+        });
+      }
+      const supplementalOutstandingAmount = outstandingAmount
+        .minus(amount)
+        .toDecimalPlaces(2);
+      await tx.checkoutSettlement.update({
+        where: { id: settlement.id },
+        data: {
+          supplementalReceivedAmount: new Prisma.Decimal(
+            settlement.supplementalReceivedAmount,
+          )
+            .plus(amount)
+            .toDecimalPlaces(2),
+          supplementalOutstandingAmount,
+          supplementalCollectedAt: supplementalOutstandingAmount.isZero()
+            ? new Date()
+            : null,
+        },
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'PAYMENTS',
+          action: 'CHECKOUT_SUPPLEMENTAL_PAYMENT_RECORDED',
+          entityType: 'PAYMENT',
+          entityId: payment.id,
+          entityNo: payment.receiptNo,
+          summary: `登记退租补收 ${payment.receiptNo}`,
+          afterData: {
+            checkoutSettlementId: settlement.id,
+            amount: amount.toFixed(2),
+            billIds: allocations.map((item) => item.rentBillId),
+          },
+          operatorId: user.id,
+          operatorRole: user.role,
+        },
+      });
+      await this.refreshContractPaymentSnapshot(tx, contract.id);
+      return {
+        id: payment.id,
+        receiptNo: payment.receiptNo,
+        receiptType: 'FORMAL' as const,
+      };
+    });
+  }
   async record(dto: RecordPaymentDto, user: AuthUser) {
     if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
       throw new ForbiddenException('当前角色不能登记收款');
@@ -562,6 +742,7 @@ export class PaymentsService {
       const eligibleBills = await tx.rentBill.findMany({
         where: {
           contractId: dto.contractId,
+          billCategory: 'RENT',
           status: { notIn: ['VOIDED', 'REFUNDED'] },
           outstandingAmount: { gt: 0 },
         },
@@ -774,7 +955,7 @@ export class PaymentsService {
     contractId: number,
   ) {
     const bills = await tx.rentBill.findMany({
-      where: { contractId },
+      where: { contractId, billCategory: 'RENT' },
       orderBy: { periodSeq: 'asc' },
     });
     let paidThroughDate: Date | null = null;
