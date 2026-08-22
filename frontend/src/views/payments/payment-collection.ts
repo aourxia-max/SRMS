@@ -1,5 +1,14 @@
 import type { RentBill } from '../../types/payments'
 
+export function selectedBillIdsThroughTarget(
+  bills: Pick<RentBill, 'id' | 'periodSeq'>[],
+  targetId: number,
+) {
+  const ordered = [...bills].sort((a, b) => a.periodSeq - b.periodSeq)
+  if (!ordered.length) return []
+  const targetIndex = ordered.findIndex((bill) => bill.id === targetId)
+  return ordered.slice(0, targetIndex >= 0 ? targetIndex + 1 : 1).map((bill) => bill.id)
+}
 export function isPrefixSelection(bills: Pick<RentBill, 'id' | 'periodSeq'>[], selectedIds: number[]) {
   const ordered = [...bills].sort((a, b) => a.periodSeq - b.periodSeq)
   const selected = new Set(selectedIds)

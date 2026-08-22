@@ -49,4 +49,30 @@ describe('房态历史状态展示', () => {
     expect(wrapper.text()).not.toContain('PENDING_MOVE_IN')
     wrapper.unmount()
   })
+
+  it('将房源列表中的住宅和商铺类型显示为中文', async () => {
+    vi.mocked(http.get).mockImplementation(async (url) => {
+      if (url === '/properties/buildings') return { data: { data: [] } }
+      if (url === '/properties/rooms') {
+        return {
+          data: {
+            data: [
+              { id: 7, fullHouseNo: '1栋101', floorNo: 1, roomType: 'RESIDENTIAL', roomStatus: 'EMPTY', building: { buildingNo: '1栋' } },
+              { id: 8, fullHouseNo: '1栋102', floorNo: 1, roomType: 'SHOP', roomStatus: 'EMPTY', building: { buildingNo: '1栋' } },
+            ],
+          },
+        }
+      }
+      throw new Error('unexpected request: ' + String(url))
+    })
+
+    const wrapper = mount(PropertiesView, { global: { plugins: [sessionForAdmin(), ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('住宅')
+    expect(wrapper.text()).toContain('商铺')
+    expect(wrapper.text()).not.toContain('RESIDENTIAL')
+    expect(wrapper.text()).not.toContain('SHOP')
+    wrapper.unmount()
+  })
 })

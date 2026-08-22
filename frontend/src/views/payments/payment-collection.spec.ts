@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillsOutstandingAmount } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillsOutstandingAmount, selectedBillIdsThroughTarget } from './payment-collection'
 
 const bills = [
   { id: 11, periodSeq: 1, outstandingAmount: '1000.00' },
@@ -41,6 +41,12 @@ describe('收款账期选择规则', () => {
     expect(selectedBillsOutstandingAmount(bills, [11, 12])).toBe('1800.00')
     expect(selectedBillsOutstandingAmount(bills, [12, 13])).toBe('1700.00')
     expect(selectedBillsOutstandingAmount(bills, [])).toBe('')
+  })
+
+  it('从最早未结账期连续选择到路由指定账单', () => {
+    expect(selectedBillIdsThroughTarget(bills, 12)).toEqual([11, 12])
+    expect(selectedBillIdsThroughTarget(bills, 11)).toEqual([11])
+    expect(selectedBillIdsThroughTarget(bills, 999)).toEqual([11])
   })
 
   it('忽略不存在的账单并避免字符串拼接', () => {

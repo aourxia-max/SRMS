@@ -41,7 +41,7 @@ async function openDetail(row: RentBillListItem) {
   drawer.value = true; detailLoading.value = true; detail.value = null
   try { detail.value = await fetchRentBill(row.id) } catch { ElMessage.error('账单详情加载失败') } finally { detailLoading.value = false }
 }
-function goCollect() { if (detail.value) router.push({ path: '/payments', query: { rentBillId: detail.value.id } }) }
+function goCollect() { if (detail.value) router.push({ path: '/payments/collect', query: { contractId: detail.value.contract.id, rentBillId: detail.value.id } }) }
 function goContract() { if (detail.value) router.push(`/contracts?contractId=${detail.value.contract.id}`) }
 function resetFilters() { filters.keyword = ''; filters.buildingId = undefined; filters.status = undefined; filters.month = currentRentBillMonth(); search() }
 

@@ -8,7 +8,7 @@ import { createLatestRequestGuard } from '../../services/contracts'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
-import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillsOutstandingAmount } from './payment-collection'
+import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillIdsThroughTarget, selectedBillsOutstandingAmount } from './payment-collection'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,7 +95,7 @@ async function selectContract(contractId = form.contractId) {
     if (!contractLoadRequests.isCurrent(request)) return
     bills.value = billRows.filter((bill) => !['VOIDED', 'REFUNDED'].includes(bill.status ?? '') && Number(bill.outstandingAmount) > 0).sort((a, b) => a.periodSeq - b.periodSeq)
     prepayments.value = prep
-    selectedBillIds.value = bills.value[0] ? [bills.value[0].id] : []
+    selectedBillIds.value = selectedBillIdsThroughTarget(bills.value, Number(route.query.rentBillId))
     adjustment.rentBillId = bills.value[0]?.id
     applySelectedBillsAmount(selectedBillIds.value)
   } catch {

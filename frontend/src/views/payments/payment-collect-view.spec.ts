@@ -31,11 +31,11 @@ const contracts = [
   { id: 2, contractNo: 'HT-002', room: { id: 12, fullHouseNo: '1栋102' } },
 ]
 
-function bill(id: number, outstandingAmount: string): RentBill {
+function bill(id: number, outstandingAmount: string, periodSeq = 1): RentBill {
   return {
     id,
     billNo: `ZD-${id}`,
-    periodSeq: 1,
+    periodSeq,
     periodStart: '2026-08-01',
     periodEnd: '2026-08-31',
     dueDate: '2026-08-01',
@@ -46,7 +46,7 @@ function bill(id: number, outstandingAmount: string): RentBill {
   }
 }
 
-async function mountView() {
+async function mountView(path = '/payments/collect') {
   vi.spyOn(paymentApi, 'contracts').mockResolvedValue(contracts)
   const router = createRouter({
     history: createMemoryHistory(),
@@ -56,7 +56,7 @@ async function mountView() {
       { path: '/payments/reviews', component: { template: '<div />' } },
     ],
   })
-  await router.push('/payments/collect')
+  await router.push(path)
   await router.isReady()
   const wrapper = mount(PaymentCollectView, {
     global: { plugins: [createPinia(), router, ElementPlus] },
@@ -217,6 +217,22 @@ describe('收款登记合同切换', () => {
     expect(amountValue(wrapper)).toBe('222.00')
     expect(wrapper.text()).toContain('¥22.00')
     expect(wrapper.text()).not.toContain('¥11.00')
+    wrapper.unmount()
+  })
+
+  it('从租金账单入口自动带入合同并连续选择到目标账期', async () => {
+    vi.spyOn(paymentApi, 'bills').mockResolvedValue([
+      bill(101, '100.00', 1),
+      bill(102, '200.00', 2),
+      bill(103, '300.00', 3),
+    ])
+    vi.spyOn(paymentApi, 'prepayments').mockResolvedValue({ balance: '0.00', items: [] })
+
+    const { wrapper, contractSelect } = await mountView('/payments/collect?contractId=1&rentBillId=102')
+    await flushPromises()
+
+    expect(contractSelect.props('modelValue')).toBe(1)
+    expect(amountValue(wrapper)).toBe('300.00')
     wrapper.unmount()
   })
 

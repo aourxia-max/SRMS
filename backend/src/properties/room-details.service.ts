@@ -37,9 +37,61 @@ export class RoomDetailsService {
       ) ??
       room.contracts[0] ??
       null;
+    const contractIds = room.contracts.map((contract) => contract.id);
+    const [
+      pendingContractChanges,
+      pendingBillAdjustments,
+      pendingPaymentRefunds,
+      pendingPaymentVoids,
+      pendingPricingRebates,
+      pendingDepositRefunds,
+      pendingCheckoutSettlements,
+    ] = await Promise.all([
+      this.prisma.db.contractChange.count({
+        where: { contractId: { in: contractIds }, approvalStatus: 'PENDING' },
+      }),
+      this.prisma.db.billAdjustment.count({
+        where: {
+          rentBill: { contractId: { in: contractIds } },
+          approvalStatus: 'PENDING',
+        },
+      }),
+      this.prisma.db.paymentRefund.count({
+        where: { contractId: { in: contractIds }, approvalStatus: 'PENDING' },
+      }),
+      this.prisma.db.paymentVoidRequest.count({
+        where: {
+          payment: { contractId: { in: contractIds } },
+          approvalStatus: 'PENDING',
+        },
+      }),
+      this.prisma.db.pricingRebate.count({
+        where: { contractId: { in: contractIds }, approvalStatus: 'PENDING' },
+      }),
+      this.prisma.db.depositRefund.count({
+        where: { contractId: { in: contractIds }, approvalStatus: 'PENDING' },
+      }),
+      this.prisma.db.checkoutSettlement.count({
+        where: {
+          contractId: { in: contractIds },
+          status: { in: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED'] },
+        },
+      }),
+    ]);
     const now = new Date();
     const riskLabels: string[] = [];
     if (room.roomStatus === 'MAINTENANCE') riskLabels.push('维修中');
+    const addPendingLabel = (count: number, label: string) => {
+      if (count > 0)
+        riskLabels.push(count > 1 ? label + '（' + count + '）' : label);
+    };
+    addPendingLabel(pendingContractChanges, '合同变更待审批');
+    addPendingLabel(pendingBillAdjustments, '账单调整待审批');
+    addPendingLabel(pendingPaymentRefunds, '收款退款待审批');
+    addPendingLabel(pendingPaymentVoids, '收款作废待审批');
+    addPendingLabel(pendingPricingRebates, '固定月租退差待审批');
+    addPendingLabel(pendingDepositRefunds, '押金退款待审批');
+    addPendingLabel(pendingCheckoutSettlements, '退租结算待处理');
     if (
       focus?.bills.some(
         (bill) =>
