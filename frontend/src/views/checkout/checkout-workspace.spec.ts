@@ -95,6 +95,7 @@ vi.mock("../../services/checkout", () => ({
         "content-disposition": "attachment; filename*=UTF-8''refund.webp",
       },
     }),
+    submit: vi.fn(),
     approve: vi.fn(),
     cancel: vi.fn(),
   },
@@ -568,6 +569,28 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.emitted("approve")).toEqual([[9]]);
   });
 
+  it("omits a blank optional remark when submitting a deposit refund", async () => {
+    const wrapper = mount(CheckoutRefundPanel, {
+      props: {
+        role: "ADMIN",
+        settlement: {
+          id: 2,
+          settlementNo: "TZ202608010002",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "800.00",
+          prepaymentRefundableAmount: "500.00",
+          finalReceivable: "0.00",
+        },
+      },
+    });
+    (wrapper.vm as unknown as { addProof: (id: number) => void }).addProof(77);
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-test="refund-submit"]').trigger("click");
+
+    expect(wrapper.emitted("submit")?.[0]?.[0]).not.toHaveProperty("remark");
+  });
+
   it("submits a clean zero-item settlement so a zero-refund checkout can continue", async () => {
     const wrapper = mount(CheckoutSettlementPanel, {
       props: {
@@ -587,6 +610,63 @@ describe("CheckoutTopNav", () => {
     await wrapper.get('[data-test="settlement-submit"]').trigger("click");
     expect(wrapper.emitted("submit")?.[0]?.[0]).toBe(10);
     expect(wrapper.emitted("submit")?.[0]?.[1]).toMatchObject({ items: [] });
+  });
+
+  it("omits a blank optional remark when submitting a settlement", async () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [
+          {
+            id: 10,
+            settlementNo: "TZ202608010010",
+            status: "DRAFT",
+            contractId: 3,
+            depositRefundableAmount: "0.00",
+            prepaymentRefundableAmount: "0.00",
+            finalReceivable: "0.00",
+          },
+        ],
+      },
+    });
+
+    await wrapper.get('[data-test="settlement-submit"]').trigger("click");
+
+    expect(wrapper.emitted("submit")?.[0]?.[1]).not.toHaveProperty("remark");
+  });
+
+  it("replaces backend validator English with a Chinese settlement error", async () => {
+    const api = checkoutApi as unknown as {
+      settlements: ReturnType<typeof vi.fn>;
+      submit: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 10,
+        settlementNo: "TZ202608010010",
+        status: "DRAFT",
+        contractId: 3,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.submit.mockRejectedValueOnce({
+      response: {
+        data: { message: ["remark must be longer than or equal to 1 characters"] },
+      },
+    });
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    await wrapper.get('[data-test="settlement-submit"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[role="alert"]').text()).toContain(
+      "提交结算失败，请检查填写内容后重试",
+    );
+    expect(wrapper.get('[role="alert"]').text()).not.toContain("remark");
   });
 });
 

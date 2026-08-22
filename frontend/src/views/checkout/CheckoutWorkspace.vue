@@ -45,10 +45,18 @@ applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
 
 function message(error: unknown, fallback: string) {
-  return (
-    (error as { response?: { data?: { message?: string } } })?.response?.data
-      ?.message || fallback
+  const backendMessage = (
+    error as { response?: { data?: { message?: string | string[] } } }
+  )?.response?.data?.message;
+  const messages = Array.isArray(backendMessage)
+    ? backendMessage
+    : backendMessage
+      ? [backendMessage]
+      : [];
+  const chineseMessages = messages.filter((item) =>
+    /[\u3400-\u9fff]/u.test(item),
   );
+  return chineseMessages.length ? chineseMessages.join("；") : fallback;
 }
 function applyRouteState() {
   const requestedTab = String(route.query.tab || "");
@@ -187,7 +195,7 @@ async function submitSettlement(id: number, payload: Record<string, unknown>) {
     await checkoutApi.submit(id, payload);
     await loadData();
   } catch (error) {
-    actionError.value = message(error, "提交结算失败，请稍后重试");
+    actionError.value = message(error, "提交结算失败，请检查填写内容后重试");
   }
 }
 async function returnToDraft(id: number) {

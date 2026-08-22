@@ -57,10 +57,12 @@ function submit() {
   if (!form.refundMethod) errors.value.push("请选择退款方式");
   if (!proofFileIds.value.length) errors.value.push("请上传退款凭证");
   if (errors.value.length || !props.settlement) return;
+  const { remark, ...requiredFields } = form;
   emit("submit", {
     checkoutSettlementId: props.settlement.id,
     refundAmount: total.value.toFixed(2),
-    ...form,
+    ...requiredFields,
+    ...(remark.trim() ? { remark: remark.trim() } : {}),
     proofFileIds: proofFileIds.value,
   });
 }

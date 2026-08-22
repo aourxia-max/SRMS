@@ -83,8 +83,10 @@ function submit() {
       errors.value.push(`请填写第 ${index + 1} 项验房记录编号`);
   });
   if (errors.value.length) return;
+  const { remark, ...requiredFields } = form;
   emit("submit", selected.value.id, {
-    ...form,
+    ...requiredFields,
+    ...(remark.trim() ? { remark: remark.trim() } : {}),
     items: items.value.map((item) => ({
       ...item,
       amount: Number(item.amount).toFixed(2),
