@@ -26,10 +26,14 @@ const statusLabels: Record<string, { label: string; type: 'success' | 'warning' 
   RUNNING: { label: '处理中', type: 'primary' },
   SUCCESS: { label: '成功', type: 'success' },
   FAILED: { label: '失败', type: 'danger' },
-  PAID: { label: '已结清', type: 'success' },
-  PARTIALLY_PAID: { label: '部分收款', type: 'warning' },
-  UNPAID: { label: '未收款', type: 'danger' },
+}
+const billStatusLabels: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
+  PENDING: { label: '待支付', type: 'info' },
+  PARTIAL: { label: '部分支付', type: 'warning' },
+  PAID: { label: '已支付', type: 'success' },
+  OVERDUE: { label: '已逾期', type: 'danger' },
   VOIDED: { label: '已作废', type: 'info' },
+  REFUNDED: { label: '已退款', type: 'info' },
 }
 const cashSummary = computed(() => [
   { label: '外部流入', value: cash.value.inflow, tone: 'green' },
@@ -59,7 +63,7 @@ function exportStatus(task: any) {
   return statusLabels[task.status] ?? { label: task.status, type: 'info' as const }
 }
 function billStatus(status: string) {
-  return statusLabels[status] ?? { label: status, type: 'info' as const }
+  return billStatusLabels[status] ?? { label: '未知状态', type: 'info' as const }
 }
 function flowDirection(row: any) {
   if (row.direction === 'IN') return { label: '流入', type: 'success' as const }
