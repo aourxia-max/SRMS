@@ -34,6 +34,7 @@ import {
   buildTemporaryContractNumber,
 } from './contract-number';
 import { contractBusinessDay } from './contract-business-day';
+import { ContractDepositService } from './contract-deposit.service';
 
 type FixedContractInput = {
   externalContractNo?: string;
@@ -67,7 +68,10 @@ type FixedContractPreview = {
 
 @Injectable()
 export class ContractsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly contractDeposit = new ContractDepositService(),
+  ) {}
 
   async list(user: AuthUser) {
     return this.prisma.db.contract.findMany({
@@ -721,6 +725,13 @@ export class ContractsService {
         where: { id: contract.id },
         data: { contractNo },
       });
+      await this.contractDeposit.recordInitialDeposit(tx, {
+        contractId: finalizedContract.id,
+        amount: input.depositRequired,
+        operatorId: user.id,
+        occurredAt: confirmedAt,
+      });
+
       const bills = this.calculateFixedBills(input).map((bill) => ({
         billNo: buildBillNumber(contractNo, bill.period.sequence),
         contractId: contract.id,

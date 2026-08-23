@@ -199,6 +199,48 @@ describe('VoidRequestsService adjustment reversal', () => {
     ).rejects.toThrow('该收款已用于退租补收锁定的欠租，不能修改、退款或作废');
     expect(create).not.toHaveBeenCalled();
   });
+
+  it('rejects voiding a contract automatic deposit payment', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'DEPOSIT',
+          autoSourceKey: 'CONTRACT_INITIAL_DEPOSIT:7',
+          status: 'CONFIRMED',
+        }),
+      },
+      paymentVoidRequest: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create,
+      },
+    };
+    const service = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        { paymentId: 81, reason: '不应允许' },
+        {
+          id: 1,
+          username: 'admin',
+          displayName: '超级管理员',
+          role: UserRole.SUPER_ADMIN,
+        },
+      ),
+    ).rejects.toThrow(
+      '合同自动入账押金不能通过通用收款修改、退款或作废，请使用押金专用流程',
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
   it('locks the contract and rejects a void request after checkout completed', async () => {
     const create = jest.fn();
     const tx = {

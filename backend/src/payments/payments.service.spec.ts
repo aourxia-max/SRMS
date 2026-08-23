@@ -679,6 +679,7 @@ describe('PaymentsService.edit', () => {
     refunds: Array<{ approvalStatus: string }> = [],
     paymentCategory = 'RENT',
     protectedAllocation: { id: number } | null = null,
+    autoSourceKey: string | null = null,
   ) {
     const payment = {
       id: 81,
@@ -692,6 +693,7 @@ describe('PaymentsService.edit', () => {
       editReason: null,
       status: 'CONFIRMED',
       paymentCategory,
+      autoSourceKey,
       allocations: [
         {
           id: 101,
@@ -784,6 +786,26 @@ describe('PaymentsService.edit', () => {
         superAdmin,
       ),
     ).rejects.toThrow('退租补收款不能通过通用收款修改');
+    expect(tx.paymentAllocation.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks editing a contract automatic deposit payment', async () => {
+    const { tx, service } = editFixture(
+      [],
+      'DEPOSIT',
+      null,
+      'CONTRACT_INITIAL_DEPOSIT:7',
+    );
+
+    await expect(
+      service.edit(
+        81,
+        { amount: '600.00', editReason: '不应修改合同自动押金' },
+        superAdmin,
+      ),
+    ).rejects.toThrow(
+      '合同自动入账押金不能通过通用收款修改、退款或作废，请使用押金专用流程',
+    );
     expect(tx.paymentAllocation.update).not.toHaveBeenCalled();
   });
 

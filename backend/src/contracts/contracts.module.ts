@@ -3,6 +3,7 @@ import { ContractsController } from './contracts.controller';
 import { ContractsService } from './contracts.service';
 import { ContractLifecycleService } from './contract-lifecycle.service';
 import { ContractDraftsService } from './contract-drafts.service';
+import { ContractDepositService } from './contract-deposit.service';
 import { FilesModule } from '../files/files.module';
 
 @Module({
@@ -11,6 +12,7 @@ import { FilesModule } from '../files/files.module';
   providers: [
     ContractsService,
     ContractLifecycleService,
+    ContractDepositService,
     ContractDraftsService,
   ],
   exports: [ContractLifecycleService],

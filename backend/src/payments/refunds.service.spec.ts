@@ -274,6 +274,54 @@ describe('RefundsService adjustment decisions', () => {
     ).rejects.toThrow('该收款已用于退租补收锁定的欠租，不能修改、退款或作废');
     expect(create).not.toHaveBeenCalled();
   });
+
+  it('rejects refunding a contract automatic deposit payment', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'DEPOSIT',
+          autoSourceKey: 'CONTRACT_INITIAL_DEPOSIT:7',
+          status: 'CONFIRMED',
+          allocations: [
+            {
+              id: 101,
+              allocatedAmount: new Prisma.Decimal('100.00'),
+              reversedAmount: new Prisma.Decimal('0.00'),
+            },
+          ],
+        }),
+      },
+      paymentRefund: { create },
+    };
+    const service = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          paymentId: 81,
+          refundAmount: '100.00',
+          refundDate: '2026-08-22',
+          refundMethod: 'BANK_TRANSFER',
+          reason: '不应允许',
+          allocations: [{ paymentAllocationId: 101, amount: '100.00' }],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow(
+      '合同自动入账押金不能通过通用收款修改、退款或作废，请使用押金专用流程',
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
   it('locks the contract and rejects a refund request after checkout completed', async () => {
     const create = jest.fn();
     const tx = {

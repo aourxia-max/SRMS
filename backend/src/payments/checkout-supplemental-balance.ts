@@ -13,6 +13,20 @@ const protectedCheckoutArrears = {
   },
 };
 
+export function assertPaymentIsNotContractAutomaticDeposit(payment: {
+  paymentCategory: string;
+  autoSourceKey?: string | null;
+}) {
+  if (
+    payment.paymentCategory === 'DEPOSIT' &&
+    payment.autoSourceKey?.startsWith('CONTRACT_INITIAL_DEPOSIT:')
+  ) {
+    throw new BadRequestException(
+      '合同自动入账押金不能通过通用收款修改、退款或作废，请使用押金专用流程',
+    );
+  }
+}
+
 export async function assertRentBillNotProtectedByCheckout(
   tx: Prisma.TransactionClient,
   rentBillId: number,
@@ -50,8 +64,10 @@ export async function assertPaymentReversalRequestAllowed(
     id: number;
     contractId: number;
     paymentCategory: string;
+    autoSourceKey?: string | null;
   },
 ) {
+  assertPaymentIsNotContractAutomaticDeposit(payment);
   if (payment.paymentCategory !== 'CHECKOUT_SUPPLEMENTAL') {
     await assertPaymentDoesNotTouchProtectedCheckoutArrears(tx, payment.id);
     return;

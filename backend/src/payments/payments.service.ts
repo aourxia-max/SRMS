@@ -17,7 +17,10 @@ import { PaymentListQueryDto } from './dto/payment-list-query.dto';
 import { EditPaymentDto } from './dto/edit-payment.dto';
 import { chineseUppercaseMoney, receiptTypeFor } from './payment-presenter';
 import { resolveAllocationPlan } from './payment-policy';
-import { assertPaymentDoesNotTouchProtectedCheckoutArrears } from './checkout-supplemental-balance';
+import {
+  assertPaymentDoesNotTouchProtectedCheckoutArrears,
+  assertPaymentIsNotContractAutomaticDeposit,
+} from './checkout-supplemental-balance';
 
 @Injectable()
 export class PaymentsService {
@@ -313,6 +316,7 @@ export class PaymentsService {
           voidRequests: true,
         },
       });
+      assertPaymentIsNotContractAutomaticDeposit(payment);
       if (payment.paymentCategory === 'CHECKOUT_SUPPLEMENTAL')
         throw new BadRequestException('退租补收款不能通过通用收款修改');
       await assertPaymentDoesNotTouchProtectedCheckoutArrears(tx, payment.id);
