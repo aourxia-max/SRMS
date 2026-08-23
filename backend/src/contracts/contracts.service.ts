@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   GoneException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -70,6 +71,7 @@ type FixedContractPreview = {
 export class ContractsService {
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(ContractDepositService)
     private readonly contractDeposit = new ContractDepositService(),
   ) {}
 
