@@ -1,9 +1,8 @@
-import { PaymentMethod } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsArray,
   IsDateString,
-  IsEnum,
+  IsIn,
   IsInt,
   IsNumberString,
   IsOptional,
@@ -11,6 +10,10 @@ import {
   Length,
   Min,
 } from 'class-validator';
+import {
+  MANUAL_PAYMENT_METHODS,
+  type ManualPaymentMethod,
+} from '../payment-methods';
 
 export class EditPaymentDto {
   @IsOptional()
@@ -18,8 +21,8 @@ export class EditPaymentDto {
   paymentDate?: string;
 
   @IsOptional()
-  @IsEnum(PaymentMethod)
-  method?: PaymentMethod;
+  @IsIn(MANUAL_PAYMENT_METHODS)
+  method?: ManualPaymentMethod;
 
   @IsOptional()
   @IsString()

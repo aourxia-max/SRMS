@@ -1,5 +1,4 @@
 import {
-  PaymentMethod,
   PricingRebateSettlementMethod,
   PricingRebateSourceType,
   PricingRebateType,
@@ -17,6 +16,10 @@ import {
   Length,
   Min,
 } from 'class-validator';
+import {
+  MANUAL_PAYMENT_METHODS,
+  type ManualPaymentMethod,
+} from '../../payments/payment-methods';
 
 export class SubmitPricingRebateDto {
   @Type(() => Number) @IsInt() @Min(1) contractId!: number;
@@ -31,7 +34,9 @@ export class SubmitPricingRebateDto {
   @IsEnum(PricingRebateSettlementMethod)
   settlementMethod!: PricingRebateSettlementMethod;
   @IsOptional() @IsDateString() refundDate?: string;
-  @IsOptional() @IsEnum(PaymentMethod) refundMethod?: PaymentMethod;
+  @IsOptional()
+  @IsIn(MANUAL_PAYMENT_METHODS)
+  refundMethod?: ManualPaymentMethod;
   @IsOptional() @IsString() @Length(1, 500) differenceReason?: string;
   @IsOptional() @IsString() @Length(1, 1000) remark?: string;
   @IsOptional()

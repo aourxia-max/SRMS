@@ -166,6 +166,7 @@ enum PaymentMethod {
   CASH
   POS
   OTHER
+  SYSTEM_AUTO
 }
 
 enum PaymentStatus {
@@ -796,6 +797,7 @@ model Payment {
   amount                 Decimal                 @db.Decimal(14, 2)
   method                 PaymentMethod
   externalReference      String?                 @map("external_reference") @db.VarChar(100)
+  autoSourceKey          String?                 @unique @map("auto_source_key") @db.VarChar(100)
   operatorId             Int                     @map("operator_id") @db.UnsignedInt
   status                 PaymentStatus           @default(CONFIRMED)
   voidReason             String?                 @map("void_reason") @db.VarChar(500)

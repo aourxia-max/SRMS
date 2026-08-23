@@ -1,5 +1,6 @@
 import {
   PaymentAllocationType,
+  PaymentMethod,
   Prisma,
   RefundAdjustmentDecision,
 } from '@prisma/client';
@@ -9,6 +10,17 @@ import { resolve } from 'path';
 describe('payment workflow Prisma model', () => {
   const model = (name: string) =>
     Prisma.dmmf.datamodel.models.find((item) => item.name === name);
+
+  it('provides an internal automatic payment method and unique source field', () => {
+    expect(
+      (PaymentMethod as unknown as Record<string, string>).SYSTEM_AUTO,
+    ).toBe('SYSTEM_AUTO');
+
+    const paymentModel = model('Payment');
+    expect(
+      paymentModel?.fields.some((field) => field.name === 'autoSourceKey'),
+    ).toBe(true);
+  });
 
   it('exposes payment proof and refund adjustment decision relations', () => {
     expect(model('PaymentFile')).toBeDefined();

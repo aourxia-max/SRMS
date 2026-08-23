@@ -1,9 +1,8 @@
-import { PaymentMethod } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsArray,
   IsDateString,
-  IsEnum,
+  IsIn,
   IsInt,
   IsNumberString,
   IsString,
@@ -11,6 +10,10 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import {
+  MANUAL_PAYMENT_METHODS,
+  type ManualPaymentMethod,
+} from '../payment-methods';
 
 export class RefundAllocationDto {
   @Type(() => Number) @IsInt() @Min(1) paymentAllocationId!: number;
@@ -20,7 +23,7 @@ export class SubmitRefundDto {
   @Type(() => Number) @IsInt() @Min(1) paymentId!: number;
   @IsNumberString() refundAmount!: string;
   @IsDateString() refundDate!: string;
-  @IsEnum(PaymentMethod) refundMethod!: PaymentMethod;
+  @IsIn(MANUAL_PAYMENT_METHODS) refundMethod!: ManualPaymentMethod;
   @IsString() @Length(1, 500) reason!: string;
   @IsArray()
   @ValidateNested({ each: true })
