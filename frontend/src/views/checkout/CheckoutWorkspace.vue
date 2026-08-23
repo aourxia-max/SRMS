@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { checkoutApi } from "../../services/checkout";
 import { useSessionStore } from "../../stores/session";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
@@ -16,6 +16,7 @@ import type {
 } from "./checkout-types";
 
 const route = useRoute() || { query: {} };
+const router = useRouter();
 const session = useSessionStore();
 const activeTab = ref<CheckoutTab>("initiate");
 const contracts = ref<CheckoutContract[]>([]);
@@ -253,6 +254,17 @@ async function approveRefund(id: number) {
     actionError.value = message(error, "确认退款失败，请稍后重试");
   }
 }
+async function collectSupplemental(id: number) {
+  const contractId = approvedSettlement.value?.contractId;
+  if (!contractId) {
+    actionError.value = "退租补收单缺少合同信息，请刷新后重试";
+    return;
+  }
+  await router.push({
+    path: "/payments/collect",
+    query: { contractId: String(contractId), checkoutSettlementId: String(id) },
+  });
+}
 async function completeZeroRefund(id: number) {
   actionError.value = "";
   try {
@@ -297,6 +309,7 @@ onMounted(loadData);
       @upload="uploadRefundProof"
       @submit="submitRefund"
       @approve="approveRefund"
+      @collect-supplemental="collectSupplemental"
       @complete-zero="completeZeroRefund"
     />
     <template v-else>

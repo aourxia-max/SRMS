@@ -7,6 +7,7 @@ import {
   Patch,
   ParseIntPipe,
   Post,
+  Query,
   Res,
   UploadedFile,
   UseGuards,
@@ -234,11 +235,14 @@ export class ContractsController {
   }
 
   @Get(':id/bills')
-  async bills(@Param('id', ParseIntPipe) id: number) {
+  async bills(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('collectible') collectible?: string,
+  ) {
     return {
       code: 200,
       message: 'success',
-      data: await this.contracts.bills(id),
+      data: await this.contracts.bills(id, collectible === 'true'),
     };
   }
 

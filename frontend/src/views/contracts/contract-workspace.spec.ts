@@ -254,7 +254,7 @@ describe('合同工作区复审边界', () => {
 
   it('合同详情将合同、账单和收款状态显示为中文', async () => {
     const payments: PaymentListItem[] = [{
-      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentDate: '2026-08-02', amount: '2200.00',
+      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentCategory: 'RENT', paymentDate: '2026-08-02', amount: '2200.00',
       method: 'WECHAT', status: 'CONFIRMED', contract: { id: 12, contractNo: activeContract().contractNo }, tenant: { id: 19, name: '张三' },
     }]
     const wrapper = mount(ContractDetailPanel, {
@@ -434,7 +434,7 @@ describe('合同工作区复审边界', () => {
 
   it('合同详情展示仅属于当前合同的收款记录', async () => {
     const payments: PaymentListItem[] = [{
-      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentDate: '2026-08-02', amount: '2200.00',
+      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentCategory: 'RENT', paymentDate: '2026-08-02', amount: '2200.00',
       method: 'WECHAT', status: 'CONFIRMED', contract: { id: 12, contractNo: activeContract().contractNo }, tenant: { id: 19, name: '张三' },
     }]
     const wrapper = mount(ContractDetailPanel, {
@@ -500,6 +500,11 @@ describe('??????????', () => {
     expect(button.exists()).toBe(true)
     await button.trigger('click')
     expect(wrapper.emitted('payment')).toEqual([[12]])
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_CHECKOUT' } })
+    expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
+
+    await wrapper.setProps({ contract: { ...activeContract(), status: 'ENDED' } })
+    expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
   })
 })
 

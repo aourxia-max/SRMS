@@ -47,6 +47,12 @@ export type CheckoutSettlement = {
   depositRefundableAmount: string;
   prepaymentRefundableAmount: string;
   finalReceivable: string;
+  supplementalRequired?: boolean;
+  supplementalArrearsAmount?: string;
+  supplementalInspectionAmount?: string;
+  supplementalReceivedAmount?: string;
+  supplementalOutstandingAmount?: string;
+  supplementalCollectedAt?: string | null;
   contract?: CheckoutContract;
   items?: CheckoutSettlementItem[];
   depositRefunds?: DepositRefund[];

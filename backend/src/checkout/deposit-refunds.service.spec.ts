@@ -66,10 +66,47 @@ describe('DepositRefundsService', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it('allows refund registration after a required supplemental receivable is fully collected', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 9 });
+    const service = new DepositRefundsService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 1,
+            contractId: 3,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '150.00',
+            supplementalRequired: true,
+            supplementalOutstandingAmount: '0.00',
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '0.00',
+            contract: { status: 'PENDING_CHECKOUT' },
+          }),
+        },
+        fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
+        depositRefund: { create },
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          checkoutSettlementId: 1,
+          refundAmount: '800.00',
+          refundDate: '2026-08-02',
+          refundMethod: 'CASH',
+          proofFileIds: [4],
+        } as never,
+        { id: 2, username: 'admin', role: 'ADMIN' },
+      ),
+    ).resolves.toEqual({ id: 9 });
+  });
   it('writes deposit and prepayment refund transactions when a combined refund is approved', async () => {
     const depositTransactionCreate = jest.fn();
     const prepaymentTransactionCreate = jest.fn();
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       depositRefund: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
@@ -130,6 +167,10 @@ describe('DepositRefundsService', () => {
     expect(
       depositTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('800');
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
+    expect(tx.$queryRaw.mock.invocationCallOrder[3]).toBeLessThan(
+      tx.depositRefund.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
     expect(prepaymentTransactionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ transactionType: 'REFUND' }),
@@ -143,6 +184,7 @@ describe('DepositRefundsService', () => {
   it('rejects duplicate refund approval before creating any ledger transaction', async () => {
     const ledgerCreate = jest.fn();
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       depositRefund: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,

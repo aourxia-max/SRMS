@@ -101,6 +101,7 @@ export type ContractPreview = {
 
 export type RentBill = {
   id: number
+  billCategory?: 'RENT' | 'CHECKOUT_SUPPLEMENTAL'
   billNo?: string
   periodSeq: number
   periodStart: string

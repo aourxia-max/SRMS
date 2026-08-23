@@ -153,6 +153,21 @@ describe('PaymentsService.record', () => {
     expect(tx.paymentFile.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ paymentId: 81, fileAssetId: 31 })],
     });
+    expect(tx.rentBill.findMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({
+        NOT: {
+          checkoutSettlementItems: {
+            some: {
+              itemType: 'RENT_ARREARS',
+              settlement: {
+                supplementalRequired: true,
+                status: { in: ['APPROVED', 'COMPLETED'] },
+              },
+            },
+          },
+        },
+      }),
+    );
   });
 
   it('audits a super administrator manual allocation with its reason', async () => {
@@ -202,6 +217,216 @@ describe('PaymentsService.record', () => {
       ),
     ).rejects.toThrow('收款凭证不存在、已被使用或不属于当前操作人');
     expect(tx.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('records checkout supplemental payment against original arrears before inspection charge', async () => {
+    const { tx, service } = fixture();
+    const arrearsBill = {
+      id: 11,
+      contractId: 7,
+      periodSeq: 1,
+      dueDate: new Date('2026-08-01'),
+      periodEnd: new Date('2026-08-31'),
+      payableAmount: '100.00',
+      receivedAmount: '50.00',
+      outstandingAmount: '50.00',
+      status: 'PARTIAL',
+      billCategory: 'RENT',
+    };
+    const inspectionBill = {
+      id: 19,
+      contractId: 7,
+      periodSeq: 3,
+      dueDate: new Date('2026-08-31'),
+      periodEnd: new Date('2026-08-31'),
+      payableAmount: '100.00',
+      receivedAmount: '0.00',
+      outstandingAmount: '100.00',
+      status: 'PENDING',
+      billCategory: 'CHECKOUT_SUPPLEMENTAL',
+      checkoutSettlementId: 8,
+    };
+    tx.checkoutSettlement = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 8,
+        contractId: 7,
+        status: 'APPROVED',
+        supplementalRequired: true,
+        supplementalOutstandingAmount: '150.00',
+        supplementalReceivedAmount: '0.00',
+        contract: { status: 'PENDING_CHECKOUT' },
+        items: [{ itemType: 'RENT_ARREARS', rentBillId: 11 }],
+        supplementalBill: { id: 19 },
+      }),
+      update: jest.fn(),
+    };
+    tx.rentBill.findMany
+      .mockReset()
+      .mockResolvedValueOnce([arrearsBill, inspectionBill])
+      .mockResolvedValueOnce([arrearsBill, inspectionBill]);
+    tx.payment.create.mockResolvedValue({
+      id: 82,
+      receiptNo: 'SK-TEST-82',
+      contractId: 7,
+      amount: '120.00',
+    });
+
+    await service.recordCheckoutSupplemental(
+      {
+        checkoutSettlementId: 8,
+        paymentDate: '2026-08-04',
+        amount: '120.00',
+        method: PaymentMethod.CASH,
+        proofFileIds: [31],
+      },
+      user,
+    );
+
+    expect(tx.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+        }),
+      }),
+    );
+    expect(tx.paymentAllocation.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          rentBillId: 11,
+          allocatedAmount: expect.anything(),
+          allocationOrder: 1,
+        }),
+        expect.objectContaining({
+          rentBillId: 19,
+          allocatedAmount: expect.anything(),
+          allocationOrder: 2,
+        }),
+      ],
+    });
+    expect(tx.paymentFile.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ paymentId: 82, fileAssetId: 31 })],
+    });
+    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [31] }, lockedAt: null },
+      data: { lockedAt: expect.any(Date) },
+    });
+    expect(tx.checkoutSettlement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          supplementalReceivedAmount: expect.anything(),
+          supplementalOutstandingAmount: expect.anything(),
+        }),
+      }),
+    );
+  });
+  it('rejects a checkout proof claimed concurrently before binding it to the payment', async () => {
+    const { tx, service } = fixture();
+    const settlement = {
+      id: 8,
+      contractId: 7,
+      status: 'APPROVED',
+      supplementalRequired: true,
+      supplementalOutstandingAmount: '100.00',
+      supplementalReceivedAmount: '0.00',
+      contract: { status: 'PENDING_CHECKOUT' },
+      items: [{ itemType: 'RENT_ARREARS', rentBillId: 11 }],
+      supplementalBill: null,
+    };
+    tx.checkoutSettlement = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
+      update: jest.fn(),
+    };
+    tx.rentBill.findMany.mockReset().mockResolvedValue([
+      {
+        id: 11,
+        contractId: 7,
+        periodSeq: 1,
+        dueDate: new Date('2026-08-01'),
+        periodEnd: new Date('2026-08-31'),
+        payableAmount: '100.00',
+        receivedAmount: '0.00',
+        outstandingAmount: '100.00',
+        status: 'PENDING',
+        billCategory: 'RENT',
+      },
+    ]);
+    tx.payment.create.mockResolvedValue({
+      id: 82,
+      receiptNo: 'SK-TEST-82',
+      contractId: 7,
+      amount: '100.00',
+    });
+    tx.fileAsset.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.recordCheckoutSupplemental(
+        {
+          checkoutSettlementId: 8,
+          paymentDate: '2026-08-22',
+          amount: '100.00',
+          method: PaymentMethod.BANK_TRANSFER,
+          proofFileIds: [31],
+        },
+        user,
+      ),
+    ).rejects.toThrow('收款凭证已被其他收款占用，请重新选择');
+    expect(tx.paymentFile.createMany).not.toHaveBeenCalled();
+  });
+  it('re-reads the locked settlement before accumulating a concurrent supplemental payment', async () => {
+    const { tx, service } = fixture();
+    const baseSettlement = {
+      id: 8,
+      contractId: 7,
+      status: 'APPROVED',
+      supplementalRequired: true,
+      supplementalOutstandingAmount: '100.00',
+      supplementalReceivedAmount: '0.00',
+      contract: { status: 'PENDING_CHECKOUT' },
+      items: [{ itemType: 'RENT_ARREARS', rentBillId: 11 }],
+      supplementalBill: null,
+    };
+    tx.checkoutSettlement = {
+      findUniqueOrThrow: jest
+        .fn()
+        .mockResolvedValueOnce(baseSettlement)
+        .mockResolvedValueOnce({
+          ...baseSettlement,
+          supplementalOutstandingAmount: '50.00',
+          supplementalReceivedAmount: '50.00',
+        }),
+      update: jest.fn(),
+    };
+    const arrearsBill = {
+      id: 11,
+      contractId: 7,
+      periodSeq: 1,
+      dueDate: new Date('2026-08-01'),
+      periodEnd: new Date('2026-08-31'),
+      payableAmount: '100.00',
+      receivedAmount: '50.00',
+      outstandingAmount: '50.00',
+      status: 'PARTIAL',
+      billCategory: 'RENT',
+      checkoutSettlementId: null,
+    };
+    tx.rentBill.findMany
+      .mockReset()
+      .mockResolvedValueOnce([arrearsBill])
+      .mockResolvedValueOnce([arrearsBill]);
+
+    await service.recordCheckoutSupplemental(
+      {
+        checkoutSettlementId: 8,
+        paymentDate: '2026-08-04',
+        amount: '50.00',
+        method: PaymentMethod.CASH,
+      },
+      user,
+    );
+
+    const data = tx.checkoutSettlement.update.mock.calls[0][0].data;
+    expect(data.supplementalReceivedAmount.toFixed(2)).toBe('100.00');
+    expect(data.supplementalOutstandingAmount.toFixed(2)).toBe('0.00');
   });
 
   it('rejects visitor payment registration in the service layer', async () => {
@@ -266,6 +491,7 @@ describe('PaymentsService payment views', () => {
         reversedAmount: '0.00',
         rentBill: {
           id: 11,
+          billCategory: 'RENT',
           billNo: 'ZD-001',
           periodSeq: 1,
           periodStart: new Date('2026-08-01'),
@@ -436,7 +662,7 @@ describe('PaymentsService payment views', () => {
       page: 3,
       pageSize: 10,
       total: 26,
-      items: [expect.objectContaining({ id: 81 })],
+      items: [expect.objectContaining({ id: 81, paymentCategory: 'RENT' })],
     });
   });
 });
@@ -449,7 +675,11 @@ describe('PaymentsService.edit', () => {
     role: UserRole.SUPER_ADMIN,
   };
 
-  function editFixture(refunds: Array<{ approvalStatus: string }> = []) {
+  function editFixture(
+    refunds: Array<{ approvalStatus: string }> = [],
+    paymentCategory = 'RENT',
+    protectedAllocation: { id: number } | null = null,
+  ) {
     const payment = {
       id: 81,
       receiptNo: 'SK-TEST-81',
@@ -461,6 +691,7 @@ describe('PaymentsService.edit', () => {
       remark: '原备注',
       editReason: null,
       status: 'CONFIRMED',
+      paymentCategory,
       allocations: [
         {
           id: 101,
@@ -501,6 +732,7 @@ describe('PaymentsService.edit', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       paymentAllocation: {
+        findFirst: jest.fn().mockResolvedValue(protectedAllocation),
         update: jest.fn().mockResolvedValue({}),
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -542,6 +774,31 @@ describe('PaymentsService.edit', () => {
     expect(prisma.db.$transaction).not.toHaveBeenCalled();
   });
 
+  it('blocks editing a checkout supplemental payment', async () => {
+    const { tx, service } = editFixture([], 'CHECKOUT_SUPPLEMENTAL');
+
+    await expect(
+      service.edit(
+        81,
+        { amount: '600.00', editReason: '不应允许修改专用补收' },
+        superAdmin,
+      ),
+    ).rejects.toThrow('退租补收款不能通过通用收款修改');
+    expect(tx.paymentAllocation.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks editing a normal payment allocated to protected checkout arrears', async () => {
+    const { tx, service } = editFixture([], 'RENT', { id: 101 });
+
+    await expect(
+      service.edit(
+        81,
+        { amount: '600.00', editReason: '不应改写已锁定欠租' },
+        superAdmin,
+      ),
+    ).rejects.toThrow('该收款已用于退租补收锁定的欠租，不能修改、退款或作废');
+    expect(tx.paymentAllocation.update).not.toHaveBeenCalled();
+  });
   it('blocks editing while a confirmed or pending refund exists', async () => {
     const { service } = editFixture([{ approvalStatus: 'PENDING' }]);
 

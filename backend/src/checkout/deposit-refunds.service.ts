@@ -6,6 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { SubmitDepositRefundDto } from './dto/submit-deposit-refund.dto';
 @Injectable()
 export class DepositRefundsService {
@@ -39,7 +40,7 @@ export class DepositRefundsService {
       settlement.status !== 'APPROVED' ||
       settlement.contract.status !== 'PENDING_CHECKOUT' ||
       !settlement.handoverDate ||
-      !new Prisma.Decimal(settlement.finalReceivable).isZero()
+      !this.isSupplementalCleared(settlement)
     )
       throw new BadRequestException('当前不满足登记押金退款的条件');
     const expectedRefund = new Prisma.Decimal(
@@ -72,6 +73,18 @@ export class DepositRefundsService {
   }
   async approve(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM deposit_refunds WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = (SELECT checkout_settlement_id FROM deposit_refunds WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM deposit_refunds WHERE id = ${id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM deposit_refunds WHERE id = ${id}) ORDER BY id FOR UPDATE`,
+      );
       const refund = await tx.depositRefund.findUniqueOrThrow({
         where: { id },
         include: {
@@ -87,7 +100,7 @@ export class DepositRefundsService {
         settlement.status !== 'APPROVED' ||
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
         !settlement.handoverDate ||
-        !new Prisma.Decimal(settlement.finalReceivable).isZero() ||
+        !this.isSupplementalCleared(settlement) ||
         !new Prisma.Decimal(refund.refundAmount).equals(
           new Prisma.Decimal(settlement.depositRefundableAmount).plus(
             settlement.prepaymentRefundableAmount,
@@ -119,6 +132,11 @@ export class DepositRefundsService {
         )
       )
         throw new BadRequestException('当前资金余额与结算单锁定退款金额不一致');
+      if (settlement.supplementalRequired)
+        await assertNoPendingCheckoutSupplementalReversal(
+          tx,
+          settlement.contractId,
+        );
       const claimedRefund = await tx.depositRefund.updateMany({
         where: { id, approvalStatus: 'PENDING' },
         data: {
@@ -190,6 +208,17 @@ export class DepositRefundsService {
       return refund;
     });
   }
+  private isSupplementalCleared(settlement: {
+    finalReceivable: Prisma.Decimal.Value;
+    supplementalRequired?: boolean;
+    supplementalOutstandingAmount?: Prisma.Decimal.Value;
+  }) {
+    const outstanding = settlement.supplementalRequired
+      ? (settlement.supplementalOutstandingAmount ?? settlement.finalReceivable)
+      : settlement.finalReceivable;
+    return new Prisma.Decimal(outstanding).isZero();
+  }
+
   private serializeFiles<
     T extends { files: Array<{ fileAsset: { sizeBytes: bigint } }> },
   >(refund: T) {

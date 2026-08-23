@@ -56,6 +56,7 @@ describe('RefundsService adjustment decisions', () => {
         id: 81,
         amount: new Prisma.Decimal('500.00'),
         status: 'CONFIRMED',
+        paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
         adjustments: [adjustment],
       },
     };
@@ -77,6 +78,15 @@ describe('RefundsService adjustment decisions', () => {
         findMany: jest.fn().mockResolvedValue([bill]),
       },
       payment: { update: jest.fn().mockResolvedValue({}) },
+      checkoutSettlement: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 901,
+          supplementalArrearsAmount: new Prisma.Decimal('300.00'),
+          supplementalInspectionAmount: new Prisma.Decimal('200.00'),
+          supplementalReceivedAmount: new Prisma.Decimal('500.00'),
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
       billAdjustment: {
         create: jest.fn().mockResolvedValue({ id: 502 }),
         update: jest.fn().mockResolvedValue({}),
@@ -193,5 +203,126 @@ describe('RefundsService adjustment decisions', () => {
 
     expect(tx.billAdjustment.create).not.toHaveBeenCalled();
     expect(tx.paymentRefundAdjustmentDecision.create).not.toHaveBeenCalled();
+  });
+
+  it('reopens the checkout supplemental balance after an approved refund', async () => {
+    const { tx, service } = fixture(502);
+
+    await service.approve(201, { adjustmentDecisions: [] }, user);
+
+    expect(tx.checkoutSettlement.update).toHaveBeenCalledWith({
+      where: { id: 901 },
+      data: {
+        supplementalReceivedAmount: expect.anything(),
+        supplementalOutstandingAmount: expect.anything(),
+        supplementalCollectedAt: null,
+      },
+    });
+    const data = tx.checkoutSettlement.update.mock.calls[0][0].data;
+    expect(data.supplementalReceivedAmount.toFixed(2)).toBe('400.00');
+    expect(data.supplementalOutstandingAmount.toFixed(2)).toBe('100.00');
+    expect(tx.rentBill.findMany).toHaveBeenCalledWith({
+      where: { contractId: 7, billCategory: 'RENT' },
+      orderBy: { periodSeq: 'asc' },
+    });
+  });
+
+  it('rejects refunding a normal payment allocated to protected checkout arrears', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'RENT',
+          status: 'CONFIRMED',
+          allocations: [
+            {
+              id: 101,
+              allocatedAmount: new Prisma.Decimal('100.00'),
+              reversedAmount: new Prisma.Decimal('0.00'),
+            },
+          ],
+        }),
+      },
+      paymentAllocation: {
+        findFirst: jest.fn().mockResolvedValue({ id: 101 }),
+      },
+      paymentRefund: { create },
+    };
+    const service = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          paymentId: 81,
+          refundAmount: '100.00',
+          refundDate: '2026-08-22',
+          refundMethod: 'BANK_TRANSFER',
+          reason: '不应允许',
+          allocations: [{ paymentAllocationId: 101, amount: '100.00' }],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('该收款已用于退租补收锁定的欠租，不能修改、退款或作废');
+    expect(create).not.toHaveBeenCalled();
+  });
+  it('locks the contract and rejects a refund request after checkout completed', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+          status: 'CONFIRMED',
+          allocations: [
+            {
+              id: 101,
+              allocatedAmount: new Prisma.Decimal('100.00'),
+              reversedAmount: new Prisma.Decimal('0.00'),
+            },
+          ],
+        }),
+      },
+      checkoutSettlement: {
+        findFirst: jest.fn().mockResolvedValue({ status: 'COMPLETED' }),
+      },
+      paymentRefund: { create },
+    };
+    const service = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          paymentId: 81,
+          refundAmount: '100.00',
+          refundDate: '2026-08-22',
+          refundMethod: 'BANK_TRANSFER',
+          reason: '结算完成后不应允许',
+          allocations: [{ paymentAllocationId: 101, amount: '100.00' }],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('退租已完成，不能再退款或作废退租补收款');
+    expect(create).not.toHaveBeenCalled();
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
   });
 });

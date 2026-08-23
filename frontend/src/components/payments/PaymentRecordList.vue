@@ -37,7 +37,7 @@ function date(value: unknown) {
       @click="emit('select', row.id)"
     >
       <span>
-        <b>{{ row.receiptNo }}</b>
+        <b class="receipt-title">{{ row.receiptNo }} <el-tag v-if="row.paymentCategory === 'CHECKOUT_SUPPLEMENTAL'" size="small" type="warning">退租补收</el-tag></b>
         <small>{{ row.contract.room?.fullHouseNo }} &#183; {{ row.tenant?.name ?? '\u672a\u767b\u8bb0\u79df\u6237' }}</small>
       </span>
       <span>
@@ -65,7 +65,7 @@ function date(value: unknown) {
 .payment-record-list :deep(.el-card__body){padding:0}
 .record-item{display:flex;width:100%;justify-content:space-between;gap:10px;padding:14px 16px;border:0;border-bottom:1px solid #edf0f4;background:#fff;color:#344258;text-align:left;cursor:pointer}
 .record-item:hover,.record-item.active{background:#edf4ff}
-.record-item span{display:grid;gap:5px}
+.record-item span{display:grid;gap:5px}.receipt-title{display:flex;align-items:center;gap:6px}
 .record-item span:last-child{text-align:right}
 .record-item small{color:#8b98aa}
 .record-pagination{display:flex;justify-content:center;padding:14px 8px;border-top:1px solid #edf0f4;background:#fff}

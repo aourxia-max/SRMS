@@ -458,6 +458,46 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.find('[data-test="zero-complete"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("上传退款凭证");
   });
+  it("shows supplemental collection instead of zero-refund completion when receivable remains", () => {
+    const wrapper = mount(CheckoutRefundPanel, {
+      props: {
+        role: "SUPER_ADMIN",
+        settlement: {
+          id: 1,
+          settlementNo: "TZ202608010001",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "0.00",
+          prepaymentRefundableAmount: "0.00",
+          finalReceivable: "120.00",
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain("待补收");
+    expect(wrapper.find('[data-test="zero-complete"]').exists()).toBe(false);
+  });
+  it("allows final confirmation after the realtime supplemental balance is collected", () => {
+    const wrapper = mount(CheckoutRefundPanel, {
+      props: {
+        role: "SUPER_ADMIN",
+        settlement: {
+          id: 1,
+          settlementNo: "TZ202608010001",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "0.00",
+          prepaymentRefundableAmount: "0.00",
+          finalReceivable: "120.00",
+          supplementalRequired: true,
+          supplementalOutstandingAmount: "0.00",
+        },
+      },
+    });
+
+    expect(wrapper.find('[data-test="supplemental-collect"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="zero-complete"]').exists()).toBe(true);
+  });
   it("shows the approved zero-refund settlement in the final confirmation tab", async () => {
     const wrapper = mount(CheckoutWorkspace, {
       global: { plugins: [createPinia()] },

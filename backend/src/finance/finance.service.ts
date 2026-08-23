@@ -8,6 +8,7 @@ export class FinanceService {
   async rentCollection(from?: string, to?: string) {
     const bills = await this.prisma.db.rentBill.findMany({
       where: {
+        billCategory: 'RENT',
         status: { not: 'VOIDED' },
         ...(from || to
           ? {
@@ -121,9 +122,11 @@ export class FinanceService {
         type:
           item.paymentCategory === 'RENT'
             ? '租金收款'
-            : item.paymentCategory === 'DEPOSIT'
-              ? '押金收取'
-              : '预收款收取',
+            : item.paymentCategory === 'CHECKOUT_SUPPLEMENTAL'
+              ? '退租补收'
+              : item.paymentCategory === 'DEPOSIT'
+                ? '押金收取'
+                : '预收款收取',
         amount: item.amount,
         direction: 'IN',
         external: true,

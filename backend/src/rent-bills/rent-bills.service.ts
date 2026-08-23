@@ -67,6 +67,7 @@ export class RentBillsService {
   private where(dto: ListRentBillsDto): Prisma.RentBillWhereInput {
     const keyword = dto.keyword?.trim();
     const where: Prisma.RentBillWhereInput = {
+      billCategory: 'RENT',
       ...(dto.status ? { status: dto.status } : {}),
       ...(dto.buildingId
         ? { contract: { room: { buildingId: dto.buildingId } } }

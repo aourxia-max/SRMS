@@ -47,4 +47,39 @@ describe('PaymentsController', () => {
       data: { id: 9, status: 'ACTIVE' },
     });
   });
+  it('delegates checkout supplemental collection to the restricted service method', async () => {
+    const lifecycle = { run: jest.fn().mockResolvedValue({}) };
+    const payments = {
+      recordCheckoutSupplemental: jest.fn().mockResolvedValue({
+        id: 12,
+        receiptNo: 'SK-12',
+        receiptType: 'FORMAL',
+      }),
+    };
+    const controller = Reflect.construct(PaymentsController, [
+      payments,
+      {},
+      lifecycle,
+    ]) as PaymentsController;
+
+    await expect(
+      controller.recordCheckoutSupplemental(
+        {
+          checkoutSettlementId: 8,
+          amount: '150.00',
+          paymentDate: '2026-08-22',
+          method: 'CASH',
+        },
+        admin,
+      ),
+    ).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: { id: 12, receiptNo: 'SK-12', receiptType: 'FORMAL' },
+    });
+    expect(payments.recordCheckoutSupplemental).toHaveBeenCalledWith(
+      expect.objectContaining({ checkoutSettlementId: 8 }),
+      admin,
+    );
+  });
 });

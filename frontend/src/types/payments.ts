@@ -3,6 +3,7 @@ export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
 
 export interface RentBill {
   id: number
+  billCategory: 'RENT' | 'CHECKOUT_SUPPLEMENTAL'
   billNo?: string
   periodSeq: number
   periodStart?: string
@@ -25,6 +26,7 @@ export interface PaymentListItem {
   id: number
   receiptNo: string
   receiptType: string
+  paymentCategory: 'RENT' | 'CHECKOUT_SUPPLEMENTAL'
   paymentDate: string
   amount: string
   method: PaymentMethod

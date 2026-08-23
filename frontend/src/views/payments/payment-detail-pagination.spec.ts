@@ -28,6 +28,7 @@ const row = (id: number) => ({
   id,
   receiptNo: `SK-${id}`,
   receiptType: 'FORMAL',
+  paymentCategory: 'RENT',
   paymentDate: '2026-08-04',
   amount: '570.00',
   method: 'BANK_TRANSFER',
@@ -111,4 +112,29 @@ describe('PaymentDetailView pagination', () => {
     expect(mocks.list).toHaveBeenNthCalledWith(3, { page: 1, pageSize: 10 })
     expect(mocks.detail).toHaveBeenCalledTimes(1)
   })
-})
+
+  it('shows checkout supplemental category and inspection deduction in Chinese', async () => {
+    const special = {
+      ...detail,
+      paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+      allocations: [{
+        id: 201,
+        allocationOrder: 1,
+        allocationType: 'AUTO_OLDEST_FIRST',
+        allocatedAmount: '100.00',
+        reversedAmount: '0.00',
+        effectiveAmount: '100.00',
+        bill: { id: 91, billCategory: 'CHECKOUT_SUPPLEMENTAL', periodSeq: 0, outstandingAmount: '0.00' },
+      }],
+    }
+    mocks.list.mockReset()
+    mocks.detail.mockReset()
+    mocks.list.mockResolvedValue({ items: [{ ...row(81), paymentCategory: 'CHECKOUT_SUPPLEMENTAL' }], page: 1, pageSize: 10, total: 1 })
+    mocks.detail.mockResolvedValue(special)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('退租补收')
+    expect(wrapper.text()).toContain('验房扣款')
+    expect(wrapper.text()).not.toContain('第 0 期')
+  })})

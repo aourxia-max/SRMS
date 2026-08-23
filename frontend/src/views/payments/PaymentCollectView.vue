@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import axios from 'axios'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
@@ -6,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { createLatestRequestGuard } from '../../services/contracts'
 import { paymentApi } from '../../services/payments'
+import { checkoutApi } from '../../services/checkout'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
 import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillIdsThroughTarget, selectedBillsOutstandingAmount } from './payment-collection'
@@ -21,6 +23,9 @@ const proofFiles = ref<Array<{ id: number; originalName: string }>>([])
 const loading = ref(false)
 const submitting = ref(false)
 const autoSuggestedPaymentAmount = ref('')
+const supplementalSettlement = ref<{ contractId: number; supplementalArrearsAmount?: string; supplementalInspectionAmount?: string; supplementalReceivedAmount?: string; supplementalOutstandingAmount?: string }>()
+const checkoutSettlementId = Number(route.query.checkoutSettlementId)
+const isCheckoutSupplemental = computed(() => Number.isInteger(checkoutSettlementId) && checkoutSettlementId > 0)
 const contractLoadRequests = createLatestRequestGuard()
 const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as PaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
 const adjustment = reactive({ enabled: false, rentBillId: undefined as number | undefined, adjustmentType: 'DISCOUNT' as 'DISCOUNT' | 'WAIVER', amount: '', reason: '' })
@@ -67,7 +72,20 @@ function applySelectedBillsAmount(ids: number[]) {
 async function loadContracts() {
   contracts.value = await paymentApi.contracts()
   const requested = Number(route.query.contractId)
-  if (requested > 0 && contracts.value.some((item) => item.id === requested)) { form.contractId = requested; await selectContract() }
+  if (requested > 0 && contracts.value.some((item) => item.id === requested)) {
+    form.contractId = requested
+    if (isCheckoutSupplemental.value) {
+      clearContractPaymentState()
+      form.contractId = requested
+      supplementalSettlement.value = await checkoutApi.detail(checkoutSettlementId)
+      if (supplementalSettlement.value.contractId !== requested) throw new Error('退租补收单与合同不匹配')
+      const outstanding = supplementalSettlement.value.supplementalOutstandingAmount ?? '0.00'
+      form.amount = outstanding
+      autoSuggestedPaymentAmount.value = outstanding
+    } else {
+      await selectContract()
+    }
+  }
 }
 function clearContractPaymentState() {
   bills.value = []
@@ -93,7 +111,7 @@ async function selectContract(contractId = form.contractId) {
   try {
     const [billRows, prep] = await Promise.all([paymentApi.bills(contractId), paymentApi.prepayments(contractId)])
     if (!contractLoadRequests.isCurrent(request)) return
-    bills.value = billRows.filter((bill) => !['VOIDED', 'REFUNDED'].includes(bill.status ?? '') && Number(bill.outstandingAmount) > 0).sort((a, b) => a.periodSeq - b.periodSeq)
+    bills.value = billRows.filter((bill) => bill.billCategory === 'RENT' && !['VOIDED', 'REFUNDED'].includes(bill.status ?? '') && Number(bill.outstandingAmount) > 0).sort((a, b) => a.periodSeq - b.periodSeq)
     prepayments.value = prep
     selectedBillIds.value = selectedBillIdsThroughTarget(bills.value, Number(route.query.rentBillId))
     adjustment.rentBillId = bills.value[0]?.id
@@ -119,37 +137,42 @@ async function uploadProof(options: UploadRequestOptions) {
   } catch (error) { ElMessage.error('凭证上传失败'); throw error }
 }
 async function submit() {
-  if (!form.contractId || !form.amount || selectedBillIds.value.length === 0) return ElMessage.warning('请完整填写合同、金额并选择账期')
+  if (!form.contractId || !form.amount || (!isCheckoutSupplemental.value && selectedBillIds.value.length === 0)) return ElMessage.warning('请完整填写合同、金额并选择账期')
   if (Number(form.amount) <= 0) return ElMessage.warning('收款金额必须大于 0')
-  if (manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
-  if (adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')
+  if (!isCheckoutSupplemental.value && manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
+  if (!isCheckoutSupplemental.value && adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')
   if (adjustment.enabled && !eligibleAdjustmentBills.value.some((bill) => bill.id === adjustment.rentBillId)) return ElMessage.warning('优惠/减免金额需不大于归属账期在本次收款后的未收金额')
   submitting.value = true
   try {
-    const result = await paymentApi.record({
-      contractId: form.contractId, paymentDate: form.paymentDate, amount: form.amount, method: form.method,
-      selectedBillIds: selectedBillIds.value, externalReference: form.externalReference || undefined, remark: form.remark || undefined,
-      manualAllocationReason: manualAllocation.value ? form.manualAllocationReason : undefined,
-      proofFileIds: proofFiles.value.map((file) => file.id),
-      adjustments: adjustment.enabled ? [{ rentBillId: adjustment.rentBillId!, adjustmentType: adjustment.adjustmentType, amount: adjustment.amount, reason: adjustment.reason }] : undefined,
-    })
-    ElMessage.success(`收款登记成功，票据号 ${result.receiptNo}`)
+    const result = isCheckoutSupplemental.value
+      ? await paymentApi.recordCheckoutSupplemental({ checkoutSettlementId, paymentDate: form.paymentDate, amount: form.amount, method: form.method, externalReference: form.externalReference || undefined, remark: form.remark || undefined, proofFileIds: proofFiles.value.map((file) => file.id) })
+      : await paymentApi.record({
+          contractId: form.contractId, paymentDate: form.paymentDate, amount: form.amount, method: form.method,
+          selectedBillIds: selectedBillIds.value, externalReference: form.externalReference || undefined, remark: form.remark || undefined,
+          manualAllocationReason: manualAllocation.value ? form.manualAllocationReason : undefined,
+          proofFileIds: proofFiles.value.map((file) => file.id),
+          adjustments: adjustment.enabled ? [{ rentBillId: adjustment.rentBillId!, adjustmentType: adjustment.adjustmentType, amount: adjustment.amount, reason: adjustment.reason }] : undefined,
+        })
+    ElMessage.success(`${isCheckoutSupplemental.value ? '退租补收登记成功' : '收款登记成功'}，票据号 ${result.receiptNo}`)
     await router.push(`/payments/detail/${result.id}`)
-  } catch { ElMessage.error('收款登记失败，请核对账期、金额和凭证后重试') } finally { submitting.value = false }
+  } catch (error) {
+    const message = axios.isAxiosError(error) ? error.response?.data?.message : undefined
+    ElMessage.error(typeof message === 'string' ? message : '收款登记失败，请核对账期、金额和凭证后重试')
+  } finally { submitting.value = false }
 }
 onMounted(() => void loadContracts())
 </script>
 
 <template>
   <PaymentWorkspace title="收款登记" description="按账期核对应收、优惠和实收，登记完成后自动生成票据。">
-    <el-alert title="金额口径：先确认原始应收，再扣减已确认优惠；超过账期实欠的金额计入预收款。" type="info" :closable="false" show-icon />
+    <el-alert :title="isCheckoutSupplemental ? `退租补收：系统固定按原欠租优先、验房扣款随后分配；不得转入预收款或使用优惠减免。` : `金额口径：先确认原始应收，再扣减已确认优惠；超过账期实欠的金额计入预收款。`" type="info" :closable="false" show-icon />
     <div class="collect-layout">
       <div class="collect-main">
         <el-card shadow="never">
           <template #header><div class="card-title"><span class="step">1</span><b>选择合同与收款信息</b></div></template>
           <el-form label-position="top">
             <el-row :gutter="16">
-              <el-col :xs="24" :md="12"><el-form-item label="合同"><el-select v-model="form.contractId" filterable placeholder="合同编号 / 房号" style="width:100%" @change="selectContract"><el-option v-for="contract in contracts" :key="contract.id" :value="contract.id" :label="roomLabel(contract)" /></el-select></el-form-item></el-col>
+              <el-col :xs="24" :md="12"><el-form-item label="合同"><el-select v-model="form.contractId" :disabled="isCheckoutSupplemental" filterable placeholder="合同编号 / 房号" style="width:100%" @change="selectContract"><el-option v-for="contract in contracts" :key="contract.id" :value="contract.id" :label="roomLabel(contract)" /></el-select></el-form-item></el-col>
               <el-col :xs="24" :md="12"><el-form-item label="收款日期"><el-date-picker v-model="form.paymentDate" type="date" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" style="width:100%" /></el-form-item></el-col>
               <el-col :xs="24" :md="8"><el-form-item label="收款金额（元）"><el-input v-model="form.amount" inputmode="decimal" placeholder="0.00" /></el-form-item></el-col>
               <el-col :xs="24" :md="8"><el-form-item label="收款方式"><el-select v-model="form.method" style="width:100%"><el-option label="微信" value="WECHAT"/><el-option label="支付宝" value="ALIPAY"/><el-option label="银行转账" value="BANK_TRANSFER"/><el-option label="现金" value="CASH"/><el-option label="POS" value="POS"/><el-option label="其他" value="OTHER"/></el-select></el-form-item></el-col>
@@ -160,7 +183,14 @@ onMounted(() => void loadContracts())
         </el-card>
 
         <el-card v-loading="loading" shadow="never">
-          <template #header><div class="card-title"><span class="step">2</span><b>分配收款账期</b><small>普通管理员必须从最早未结账期连续选择</small></div></template>
+          <template #header><div class="card-title"><span class="step">2</span><b>{{ isCheckoutSupplemental ? '退租补收构成' : '分配收款账期' }}</b><small v-if="!isCheckoutSupplemental">普通管理员必须从最早未结账期连续选择</small></div></template>
+          <div v-if="isCheckoutSupplemental" class="supplemental-breakdown">
+            <div><span>欠租补收</span><b>{{ money(supplementalSettlement?.supplementalArrearsAmount) }}</b></div>
+            <div><span>验房扣款</span><b>{{ money(supplementalSettlement?.supplementalInspectionAmount) }}</b></div>
+            <div><span>已收金额</span><b>{{ money(supplementalSettlement?.supplementalReceivedAmount) }}</b></div>
+            <div><span>当前未收</span><b class="danger">{{ money(supplementalSettlement?.supplementalOutstandingAmount) }}</b></div>
+          </div>
+          <template v-else>
           <el-empty v-if="!form.contractId" description="请先选择合同" />
           <el-empty v-else-if="!bills.length" description="该合同暂无未结账单" />
           <el-table v-else :data="bills" size="small">
@@ -173,11 +203,12 @@ onMounted(() => void loadContracts())
             <el-table-column label="未收" align="right"><template #default="{ row }"><b class="danger">{{ money(row.outstandingAmount) }}</b></template></el-table-column>
           </el-table>
           <el-form v-if="isSuperAdmin && manualAllocation" label-position="top" class="manual-reason"><el-form-item label="人工分配原因（必填）"><el-input v-model="form.manualAllocationReason" maxlength="500" placeholder="说明为何跳过更早账期" /></el-form-item></el-form>
+          </template>
         </el-card>
 
         <el-card shadow="never">
           <template #header><div class="card-title"><span class="step">3</span><b>优惠、减免与凭证</b></div></template>
-          <el-switch v-model="adjustment.enabled" active-text="本次同时提交优惠/减免申请" />
+          <el-switch v-if="!isCheckoutSupplemental" v-model="adjustment.enabled" active-text="本次同时提交优惠/减免申请" />
           <el-row v-if="adjustment.enabled" :gutter="16" class="adjustment-form">
             <el-col :xs="24" :md="8"><el-select v-model="adjustment.rentBillId" style="width:100%" placeholder="归属账期"><el-option v-for="bill in eligibleAdjustmentBills" :key="bill.id" :value="bill.id" :label="`第 ${bill.periodSeq} 期`" /></el-select></el-col>
             <el-col :xs="24" :md="6"><el-select v-model="adjustment.adjustmentType" style="width:100%"><el-option label="优惠" value="DISCOUNT"/><el-option label="减免" value="WAIVER"/></el-select></el-col>
@@ -192,7 +223,7 @@ onMounted(() => void loadContracts())
 
       <aside class="summary-card">
         <div class="summary-contract"><small>当前合同</small><b>{{ selectedContract?.contractNo ?? '尚未选择' }}</b><span>{{ selectedContract?.room?.fullHouseNo ?? '—' }}</span></div>
-        <dl><div><dt>所选账期原始未收</dt><dd>{{ money(summary.originalOutstanding) }}</dd></div><div><dt>本次优惠/减免</dt><dd class="discount">- {{ money(summary.adjustmentAmount) }}</dd></div><div><dt>有效应收</dt><dd>{{ money(summary.effectiveOutstanding) }}</dd></div><div class="primary"><dt>本次实收</dt><dd>{{ money(summary.paymentAmount) }}</dd></div><div><dt>预计转入预收款</dt><dd>{{ money(summary.prepaymentAmount) }}</dd></div><div><dt>现有预收款余额</dt><dd>{{ money(prepayments.balance) }}</dd></div></dl>
+        <dl v-if="!isCheckoutSupplemental"><div><dt>所选账期原始未收</dt><dd>{{ money(summary.originalOutstanding) }}</dd></div><div><dt>本次优惠/减免</dt><dd class="discount">- {{ money(summary.adjustmentAmount) }}</dd></div><div><dt>有效应收</dt><dd>{{ money(summary.effectiveOutstanding) }}</dd></div><div class="primary"><dt>本次实收</dt><dd>{{ money(summary.paymentAmount) }}</dd></div><div><dt>预计转入预收款</dt><dd>{{ money(summary.prepaymentAmount) }}</dd></div><div><dt>现有预收款余额</dt><dd>{{ money(prepayments.balance) }}</dd></div></dl><dl v-else><div class="primary"><dt>本次退租补收</dt><dd>{{ money(form.amount) }}</dd></div><div><dt>分配顺序</dt><dd>欠租优先，验房扣款随后</dd></div></dl>
         <el-button type="primary" size="large" :loading="submitting" :disabled="session.user?.role === 'VISITOR'" style="width:100%" @click="submit">确认收款并生成票据</el-button>
         <p v-if="session.user?.role === 'VISITOR'" class="permission-tip">访客仅可查看，不可登记收款。</p>
       </aside>
@@ -201,7 +232,8 @@ onMounted(() => void loadContracts())
 </template>
 
 <style scoped>
+.supplemental-breakdown { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }.supplemental-breakdown div { display:grid; gap:6px; padding:14px; border-radius:8px; background:#f7f9fc; }.supplemental-breakdown span { color:#8491a5; font-size:13px; }
 .collect-layout { display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:18px; align-items:start; }.collect-main { display:grid; gap:16px; }.card-title { display:flex; align-items:center; gap:9px; color:#27364c; }.card-title small { margin-left:auto; color:#8a97a9; font-weight:400; }.step { display:grid; width:23px; height:23px; place-items:center; border-radius:7px; background:#e8f0ff; color:#246bfd; font-size:12px; font-weight:700; }.danger { color:#e05252; }.manual-reason,.adjustment-form { margin-top:16px; }.proof-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }.summary-card { position:sticky; top:88px; padding:22px; border:1px solid #e2e7ef; border-radius:12px; background:#fff; box-shadow:0 8px 25px rgba(34,51,84,.07); }.summary-contract { display:grid; gap:4px; padding-bottom:17px; border-bottom:1px solid #edf0f5; }.summary-contract small,dt { color:#8491a5; }.summary-contract b { margin-top:4px; color:#1f2d42; }.summary-contract span { color:#5b6980; font-size:13px; }dl { margin:10px 0 20px; }dl div { display:flex; justify-content:space-between; padding:10px 0; }dt { font-size:13px; }dd { margin:0; color:#314058; font-weight:600; }.discount { color:#2f9e65; }.primary { margin:4px -10px; padding:13px 10px!important; border-radius:8px; background:#eef4ff; }.primary dd { color:#246bfd; font-size:20px; }.permission-tip { color:#d46b4c; font-size:12px; text-align:center; }
 .adjustment-tip { margin:10px 0 0; color:#4f6380; font-size:12px; }
-@media (max-width:1050px) { .collect-layout { grid-template-columns:1fr; }.summary-card { position:static; } }
+@media (max-width:1050px) { .supplemental-breakdown { grid-template-columns:repeat(2,minmax(0,1fr)); }.collect-layout { grid-template-columns:1fr; }.summary-card { position:static; } }
 </style>
