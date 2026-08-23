@@ -5,6 +5,20 @@ import { PrismaService } from '../prisma/prisma.service';
 @Injectable()
 export class FinanceService {
   constructor(private readonly prisma: PrismaService) {}
+  async overview() {
+    const latestBalances = await this.prisma.db.depositTransaction.findMany({
+      distinct: ['contractId'],
+      orderBy: [{ contractId: 'asc' }, { id: 'desc' }],
+      select: { contractId: true, balanceAfter: true },
+    });
+    return {
+      depositBalanceTotal: latestBalances.reduce(
+        (sum, item) => sum.plus(item.balanceAfter),
+        new Prisma.Decimal(0),
+      ),
+    };
+  }
+
   async rentCollection(from?: string, to?: string) {
     const bills = await this.prisma.db.rentBill.findMany({
       where: {

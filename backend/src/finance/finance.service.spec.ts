@@ -1,4 +1,5 @@
 import { FinanceService } from './finance.service';
+import { Prisma } from '@prisma/client';
 
 describe('FinanceService rent collection category isolation', () => {
   it('queries only rental bills when calculating rent collection', async () => {
@@ -41,6 +42,38 @@ describe('FinanceService rent collection category isolation', () => {
           countsAsRentReceipt: false,
         }),
       ],
+    });
+  });
+
+  it('sums only the latest deposit balance of each contract', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { contractId: 1, balanceAfter: new Prisma.Decimal('7000.00') },
+      { contractId: 2, balanceAfter: new Prisma.Decimal('3000.00') },
+      { contractId: 3, balanceAfter: new Prisma.Decimal('0.00') },
+    ]);
+    const service = new FinanceService({
+      db: { depositTransaction: { findMany } },
+    } as never);
+
+    await expect(service.overview()).resolves.toEqual({
+      depositBalanceTotal: new Prisma.Decimal('10000.00'),
+    });
+    expect(findMany).toHaveBeenCalledWith({
+      distinct: ['contractId'],
+      orderBy: [{ contractId: 'asc' }, { id: 'desc' }],
+      select: { contractId: true, balanceAfter: true },
+    });
+  });
+
+  it('returns a zero deposit balance when no ledger exists', async () => {
+    const service = new FinanceService({
+      db: {
+        depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    await expect(service.overview()).resolves.toEqual({
+      depositBalanceTotal: new Prisma.Decimal('0.00'),
     });
   });
 });

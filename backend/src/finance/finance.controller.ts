@@ -64,6 +64,15 @@ export class FinanceController {
     );
     response.send(content);
   }
+  @Get('overview')
+  async overview() {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.finance.overview(),
+    };
+  }
+
   @Get('rent-collection') async rentCollection(
     @Query('from') from?: string,
     @Query('to') to?: string,
