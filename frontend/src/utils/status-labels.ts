@@ -105,6 +105,7 @@ export const paymentMethodLabels: StatusMap = {
   CASH: "\u73b0\u91d1",
   POS: "POS",
   OTHER: "\u5176\u4ed6",
+  SYSTEM_AUTO: "系统自动入账",
 };
 
 export const approvalStatusLabel = (value?: string | null) => fallback(approvalStatusLabels, value);

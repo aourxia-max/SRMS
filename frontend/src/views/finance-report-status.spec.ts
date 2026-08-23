@@ -18,6 +18,7 @@ const billStatuses = ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE', 'VOIDED', 'REFUND
 
 function mockFinanceResponses() {
   vi.mocked(http.get).mockImplementation(async (url) => {
+    if (url === '/finance/overview') return { data: { data: { depositBalanceTotal: '10000.00' } } }
     if (url === '/finance/rent-collection') {
       return {
         data: {
@@ -74,6 +75,19 @@ describe('财务报表账单状态中文显示', () => {
     expect(text).toContain('已作废')
     expect(text).toContain('已退款')
     for (const status of billStatuses) expect(text).not.toContain(status)
+    wrapper.unmount()
+  })
+
+  it('displays the current deposit balance total from the protected overview API', async () => {
+    const wrapper = mount(FinanceView, {
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(http.get).toHaveBeenCalledWith('/finance/overview')
+    expect(wrapper.text()).toContain('押金余额总额')
+    expect(wrapper.text()).toContain('￥10,000.00')
+    expect(wrapper.text()).toContain('当前实际保管押金')
     wrapper.unmount()
   })
 })

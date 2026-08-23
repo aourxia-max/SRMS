@@ -9,7 +9,7 @@ import { createLatestRequestGuard } from '../../services/contracts'
 import { paymentApi } from '../../services/payments'
 import { checkoutApi } from '../../services/checkout'
 import { useSessionStore } from '../../stores/session'
-import type { ContractSummary, PaymentMethod, RentBill } from '../../types/payments'
+import type { ContractSummary, ManualPaymentMethod, RentBill } from '../../types/payments'
 import { allocationSummary, eligibleAdjustmentBillIds, isPrefixSelection, nextSuggestedPaymentAmount, selectedBillIdsThroughTarget, selectedBillsOutstandingAmount } from './payment-collection'
 
 const route = useRoute()
@@ -27,7 +27,7 @@ const supplementalSettlement = ref<{ contractId: number; supplementalArrearsAmou
 const checkoutSettlementId = Number(route.query.checkoutSettlementId)
 const isCheckoutSupplemental = computed(() => Number.isInteger(checkoutSettlementId) && checkoutSettlementId > 0)
 const contractLoadRequests = createLatestRequestGuard()
-const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as PaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
+const form = reactive({ contractId: undefined as number | undefined, paymentDate: new Date().toISOString().slice(0, 10), amount: '', method: 'WECHAT' as ManualPaymentMethod, externalReference: '', remark: '', manualAllocationReason: '' })
 const adjustment = reactive({ enabled: false, rentBillId: undefined as number | undefined, adjustmentType: 'DISCOUNT' as 'DISCOUNT' | 'WAIVER', amount: '', reason: '' })
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
 const selectedContract = computed(() => contracts.value.find((item) => item.id === form.contractId))

@@ -1,4 +1,5 @@
-export type PaymentMethod = 'WECHAT' | 'ALIPAY' | 'BANK_TRANSFER' | 'CASH' | 'POS' | 'OTHER'
+export type PaymentMethod = 'WECHAT' | 'ALIPAY' | 'BANK_TRANSFER' | 'CASH' | 'POS' | 'OTHER' | 'SYSTEM_AUTO'
+export type ManualPaymentMethod = Exclude<PaymentMethod, 'SYSTEM_AUTO'>
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
 
 export interface RentBill {
@@ -26,7 +27,7 @@ export interface PaymentListItem {
   id: number
   receiptNo: string
   receiptType: string
-  paymentCategory: 'RENT' | 'CHECKOUT_SUPPLEMENTAL'
+  paymentCategory: 'RENT' | 'CHECKOUT_SUPPLEMENTAL' | 'DEPOSIT' | 'PREPAYMENT'
   paymentDate: string
   amount: string
   method: PaymentMethod
@@ -75,7 +76,7 @@ export interface RecordPaymentPayload {
   contractId: number
   paymentDate: string
   amount: string
-  method: PaymentMethod
+  method: ManualPaymentMethod
   selectedBillIds: number[]
   externalReference?: string
   remark?: string

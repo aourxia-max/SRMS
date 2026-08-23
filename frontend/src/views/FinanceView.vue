@@ -7,6 +7,7 @@ type ReportType = 'overview' | 'rent-collection' | 'cash-flows' | 'commissions'
 type ExportFormat = 'XLSX' | 'PDF'
 
 const collection = ref<any>({ rows: [], total: {} })
+const overview = ref({ depositBalanceTotal: '0.00' })
 const cash = ref<any>({ flows: [] })
 const commissions = ref<any[]>([])
 const contracts = ref<any[]>([])
@@ -41,6 +42,7 @@ const cashSummary = computed(() => [
   { label: '净资金流', value: cash.value.netCashFlow, tone: 'blue' },
 ])
 const kpis = computed(() => [
+  { label: '押金余额总额', value: overview.value.depositBalanceTotal, hint: '当前实际保管押金', tone: 'green' },
   { label: '原应收', value: collection.value.total?.originalReceivable, hint: '账期口径', tone: 'blue' },
   { label: '优惠减免', value: collection.value.total?.concessionAmount, hint: '免租和折扣', tone: 'orange' },
   { label: '净应收', value: collection.value.total?.netReceivable, hint: '优惠后应收', tone: 'blue' },
@@ -75,12 +77,14 @@ async function loadExportTasks() {
 }
 async function load() {
   const params = { ...(filters.from ? { from: filters.from } : {}), ...(filters.to ? { to: filters.to } : {}) }
-  const [a, b, c, d] = await Promise.all([
+  const [overviewResponse, a, b, c, d] = await Promise.all([
+    http.get('/finance/overview'),
     http.get('/finance/rent-collection', { params }),
     http.get('/finance/cash-flows', { params }),
     http.get('/commissions'),
     http.get('/contracts'),
   ])
+  overview.value = overviewResponse.data.data
   collection.value = a.data.data
   cash.value = b.data.data
   commissions.value = c.data.data

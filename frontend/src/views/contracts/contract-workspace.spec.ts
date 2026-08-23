@@ -133,6 +133,21 @@ describe('固定合同工作区', () => {
     expect(wrapper.text()).toContain('固定月租')
   })
 
+  it('明确提示合同押金填写后即视为已经收到', () => {
+    const wrapper = mount(ContractFormPanel, {
+      props: {
+        role: 'SUPER_ADMIN',
+        modelValue: completeForm(),
+        rooms: [],
+        tenants: [],
+      },
+      global: { plugins: [ElementPlus] },
+    })
+
+    expect(wrapper.text()).toContain('押金（填写即视为已收）')
+    wrapper.unmount()
+  })
+
   it('合同附件文件选择器允许选择 GIF 文件', () => {
     const wrapper = mount(ContractFormPanel, {
       props: {
@@ -412,7 +427,8 @@ describe('合同工作区复审边界', () => {
     await flushPromises()
     labels = search!.findAllComponents(ElOption).map((option) => option.props('label'))
     expect(labels).toHaveLength(2)
-  })
+    wrapper.unmount()
+  }, 10_000)
 
   it('仅为履行中的固定月租合同展示并生成退差载荷', () => {
     const inactive = { ...activeContract(), status: 'PENDING_START' }

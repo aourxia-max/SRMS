@@ -5,7 +5,7 @@ import { isFixedRentRebateEligible, isPreviewableContractImage } from '../../ser
 import { http } from '../../services/http'
 import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
-import { contractStatusLabel, contractStatusTagClass, contractStatusTagType, paymentStatusLabel, rentBillStatusLabel } from '../../utils/status-labels'
+import { contractStatusLabel, contractStatusTagClass, contractStatusTagType, paymentMethodLabel, paymentStatusLabel, rentBillStatusLabel } from '../../utils/status-labels'
 
 const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
@@ -135,7 +135,7 @@ async function removeCommission() {
                 <el-descriptions-item label="合同开始日期">{{ date(contract.startDate) }}</el-descriptions-item>
                 <el-descriptions-item label="合同结束日期">{{ date(contract.endDate) }}</el-descriptions-item>
                 <el-descriptions-item label="计划入住日期">{{ date(contract.plannedMoveInDate) }}</el-descriptions-item>
-                <el-descriptions-item label="押金">{{ money(contract.depositRequired) }}</el-descriptions-item>
+                <el-descriptions-item label="已收押金">{{ money(contract.depositRequired) }}</el-descriptions-item>
                 <el-descriptions-item label="合同备注" :span="2">{{ contract.remark || '—' }}</el-descriptions-item>
               </el-descriptions>
             </el-tab-pane>
@@ -153,7 +153,7 @@ async function removeCommission() {
                 <el-table-column prop="receiptNo" label="收款单号" min-width="170" />
                 <el-table-column label="收款日期" width="130"><template #default="{ row }">{{ date(row.paymentDate) }}</template></el-table-column>
                 <el-table-column label="金额" width="130"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
-                <el-table-column prop="method" label="支付方式" width="120" />
+                <el-table-column label="支付方式" width="120"><template #default="{ row }">{{ paymentMethodLabel(row.method) }}</template></el-table-column>
                 <el-table-column label="状态" width="120"><template #default="{ row }">{{ paymentStatusLabel(row.status) }}</template></el-table-column>
               </el-table>
             </el-tab-pane>
@@ -177,7 +177,7 @@ async function removeCommission() {
             <div class="summary-list">
               <div><span>计价方式</span><b>固定月租</b></div>
               <div><span>固定月租</span><b class="money-blue">{{ money(contract.monthlyRent) }}</b></div>
-              <div><span>押金</span><b>{{ money(contract.depositRequired) }}</b></div>
+              <div><span>已收押金</span><b>{{ money(contract.depositRequired) }}</b></div>
               <div v-if="role === 'SUPER_ADMIN'" class="commission-row"><span>租房提成</span><div><b v-if="activeCommission" class="commission">{{ activeCommission.recipientName }} · {{ money(activeCommission.amount) }}</b><b v-else>未登记</b><el-button link type="primary" data-test="maintain-commission" @click="openCommission">{{ activeCommission ? '编辑提成' : '登记提成' }}</el-button></div></div>
             </div>
           </section>

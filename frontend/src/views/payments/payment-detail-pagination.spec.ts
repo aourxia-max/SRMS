@@ -137,4 +137,28 @@ describe('PaymentDetailView pagination', () => {
     expect(wrapper.text()).toContain('退租补收')
     expect(wrapper.text()).toContain('验房扣款')
     expect(wrapper.text()).not.toContain('第 0 期')
-  })})
+  })
+
+
+  it('shows the automatic contract deposit method in Chinese', async () => {
+    const automaticDeposit = {
+      ...detail,
+      paymentCategory: 'DEPOSIT',
+      method: 'SYSTEM_AUTO',
+    }
+    mocks.list.mockReset()
+    mocks.detail.mockReset()
+    mocks.list.mockResolvedValue({
+      items: [{ ...row(81), paymentCategory: 'DEPOSIT', method: 'SYSTEM_AUTO' }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    })
+    mocks.detail.mockResolvedValue(automaticDeposit)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('系统自动入账')
+    expect(wrapper.text()).not.toContain('SYSTEM_AUTO')
+  })
+})

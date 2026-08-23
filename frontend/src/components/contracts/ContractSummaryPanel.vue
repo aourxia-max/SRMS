@@ -36,7 +36,7 @@ const money = (value?: string) => value ? `¥${Number(value).toLocaleString('zh-
         <div><span>合同租期</span><b>{{ duration }}</b></div>
         <div><span>计价方式</span><b>固定月租</b></div>
         <div><span>固定月租</span><b class="primary-money">{{ money(form.monthlyRent) }}</b></div>
-        <div><span>押金</span><b>{{ money(form.depositRequired) }}</b></div>
+        <div><span>已收押金</span><b>{{ money(form.depositRequired) }}</b></div>
         <div><span>租缴周期</span><b>{{ form.paymentCycleMonths }}个月</b></div>
         <div v-if="role === 'SUPER_ADMIN' && form.commission?.recipientName">
           <span>租房提成</span>

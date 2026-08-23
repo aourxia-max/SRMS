@@ -6,6 +6,7 @@ import {
   contractStatusTagClass,
   contractStatusTagType,
   paymentStatusLabel,
+  paymentMethodLabel,
   pricingRebateSourceLabel,
   rentBillStatusLabel,
   roomStatusLabel,
@@ -58,5 +59,9 @@ describe("status label helpers", () => {
   });
   it("keeps unknown codes visible for diagnostics", () => {
     expect(approvalStatusLabel("UNKNOWN_STATUS")).toBe("UNKNOWN_STATUS");
+  });
+
+  it("shows automatic contract deposit receipts in Chinese", () => {
+    expect(paymentMethodLabel("SYSTEM_AUTO")).toBe("系统自动入账");
   });
 });

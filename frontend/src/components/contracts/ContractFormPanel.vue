@@ -177,7 +177,7 @@ function handleUpload(file: UploadFile) {
           <el-form-item label="计划入住日期" prop="plannedMoveInDate">
             <el-date-picker v-model="form.plannedMoveInDate" type="date" format="YYYY年MM月DD日" value-format="YYYY-MM-DD" placeholder="选填" />
           </el-form-item>
-          <el-form-item label="押金（元）" prop="depositRequired">
+          <el-form-item label="押金（填写即视为已收）" prop="depositRequired">
             <el-input v-model="form.depositRequired" inputmode="decimal" placeholder="0.00" />
           </el-form-item>
           <el-form-item label="租缴周期（月）" prop="paymentCycleMonths">
