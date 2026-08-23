@@ -43,10 +43,10 @@
 | `npm run build` | 前端与后端构建通过；仅保留既有的前端大体积 chunk 提示 |
 | `npm --prefix backend test -- --runInBand` | 57 个测试套件、297 项测试全部通过 |
 | `npm --prefix frontend run test:unit` | 25 个测试文件、138 项测试全部通过 |
-| `npm --prefix backend run test:e2e -- --runInBand` | 3 个测试套件、14 项接口测试全部通过 |
+| `npm --prefix backend run test:e2e -- --runInBand` | 4 个测试套件、15 项接口测试全部通过；包含真实 HTTP 创建合同并核对押金收款与押金流水 |
 | `npm run db:validate` | Prisma schema 有效 |
 
-首次运行完整 E2E 时，`app.e2e-spec.ts` 暴露 `ContractsService` 的第二个依赖无法由 Nest 在运行时解析。根因是带默认值的构造参数被 TypeScript 记录为 `Object` 元数据，直接实例化的单元测试没有覆盖完整模块装配。现已为 `ContractDepositService` 增加显式 Nest 注入令牌；原失败套件复测 7/7 通过，完整 E2E 再测 14/14 通过，后端构建、Lint 和合同专项 23 项测试也通过。
+首次运行完整 E2E 时，`app.e2e-spec.ts` 暴露 `ContractsService` 的第二个依赖无法由 Nest 在运行时解析。根因是带默认值的构造参数被 TypeScript 记录为 `Object` 元数据，直接实例化的单元测试没有覆盖完整模块装配。现已为 `ContractDepositService` 增加显式 Nest 注入令牌；原失败套件复测 7/7 通过。随后补充真实 HTTP 创建合同并查询押金流水的持久化 E2E，完整 E2E 再测 15/15 通过，后端构建、Lint 和合同专项 23 项测试也通过。
 
 ## 真实数据库验收
 
