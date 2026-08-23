@@ -4,7 +4,7 @@
 > 数据库：MySQL 8.0  
 > ORM：Prisma  
 > 文档状态：第一版冻结设计基线（变更后）
-> 需求基线：`SRMS-RB-1.0`（2026-07-20），适用变更 `SRMS-RB-1.0-CR-20260805-01`
+> 需求基线：`SRMS-RB-1.0`（2026-07-20），适用变更 `SRMS-RB-1.0-CR-20260805-01`、`SRMS-RB-1.0-CR-20260823-01`
 
 ## 1. 设计目标
 
@@ -16,7 +16,8 @@
 - 新建合同仅支持固定月租；保留人工协商退差，但不提供基于档位或达标期的退差。
 - 支持一次缴纳多个月、部分付款和预收款。
 - 普通管理员只能作废错误收款后重录；超级管理员可以修改已确认收款，但必须留下前后值和原因。
-- 押金独立管理，退还必须上传凭证，由管理员登记、超级管理员确认。
+- 功能上线后新合同填写的押金表示已实际收到，并在合同创建事务内自动生成已确认押金收款和押金收取流水；上线前已有合同不补账。
+- 押金余额独立采用不可覆盖流水管理，退还必须上传凭证，由管理员登记、超级管理员确认。
 - 退租结算完成且押金、欠租、预收款全部处理后，合同才可结束。
 - `已出售`房源只保留房源状态和业主展示，不提供合同、收款或代管出租功能。
 - `待出售`、`已出售`、`停用`不计入可经营房源。
@@ -282,7 +283,7 @@ erDiagram
 | pricing_mode | ENUM | 是 | 仅允许 `FIXED` 固定月租 |
 | payment_cycle_months | TINYINT UNSIGNED | 是 | 合同约定租缴周期，允许1至12，默认1 |
 | rent_due_day_rule | ENUM | 是 | `CONTRACT_START_DAY`，按开始日每满一个月 |
-| deposit_required | DECIMAL(14,2) | 是 | 应收押金，可为0 |
+| deposit_required | DECIMAL(14,2) | 是 | 新合同创建时确认已收的初始押金，可为0；不是当前押金余额 |
 | billing_generated_at | DATETIME(3) | 否 | 全租期账单生成时间 |
 | paid_through_date | DATE | 否 | 已缴至日期，系统计算快照 |
 | next_due_date | DATE | 否 | 下次应缴日期，系统计算快照 |
@@ -502,8 +503,9 @@ outstanding_amount = payable_amount - received_amount
 | payment_category | ENUM | `RENT`、`PREPAYMENT`、`DEPOSIT` |
 | payment_date | DATE | 收款日期 |
 | amount | DECIMAL(14,2) | 收款总额 |
-| method | ENUM | `WECHAT`、`ALIPAY`、`BANK_TRANSFER`、`CASH`、`POS`、`OTHER` |
+| method | ENUM | 手工方式：`WECHAT`、`ALIPAY`、`BANK_TRANSFER`、`CASH`、`POS`、`OTHER`；内部自动方式：`SYSTEM_AUTO` |
 | external_reference | VARCHAR(100) NULL | 普通收款可选交易号 |
+| auto_source_key | VARCHAR(100) NULL | 系统自动收款的确定性来源键，唯一；手工收款为空 |
 | operator_id | INT UNSIGNED | 实际登记人/现金收款人 |
 | status | ENUM | `CONFIRMED`、`VOIDED`、`PARTIALLY_REFUNDED`、`FULLY_REFUNDED` |
 | void_reason | VARCHAR(500) NULL | 作废原因 |
@@ -519,6 +521,9 @@ outstanding_amount = payable_amount - received_amount
 - 超级管理员确认作废申请后才执行逆转；超级管理员直接发起作废时也必须填写原因并生成审批记录。
 - 作废后收据编号不可重复使用。
 - 收款作废时必须同时逆转账单分配、预收款或押金流水。
+- `SYSTEM_AUTO` 仅允许后端在受控业务事务中写入，所有用户可提交的收款、退款、退差和押金 DTO 必须拒绝该值。
+- 新合同初始押金使用唯一来源键 `CONTRACT_INITIAL_DEPOSIT:<contract_id>`；同一合同不得生成第二笔初始押金收款。
+- 自动初始押金收款不得通过通用收款编辑、退款或作废入口修改；后续押金增加、抵扣、退款和更正必须走押金专用受控流程并新增流水。
 
 ### 10.2 payment_allocations
 
@@ -594,7 +599,9 @@ outstanding_amount = payable_amount - received_amount
 
 ### 12.1 deposit_transactions
 
-押金采用不可覆盖的余额流水。
+押金采用不可覆盖的余额流水。每份合同当前押金余额以按 `id` 排序的最新一笔 `balance_after` 为唯一依据；不得直接读取 `contracts.deposit_required` 作为当前余额，也不得累加同一合同的历史余额快照。
+
+功能上线后新合同的正数初始押金在合同创建事务内写入一笔 `DEPOSIT + CONFIRMED + SYSTEM_AUTO` 收款，并以其 `payment_id` 关联一笔 `RECEIPT` 流水。押金为 0 或仅保存草稿时不写财务记录。结构 migration 只增加枚举值和唯一来源字段，不为已有合同补记任何收款或流水。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -838,6 +845,12 @@ outstanding_amount = payable_amount - received_amount
 
 净应收为0的账单不进入收租率分母。预收款未分配前不计入租金实收；押金余额不计入租金收入。待审批或被驳回的账单调整不进入任何正式财务统计。
 
+
+```text
+押金余额总额 = 每份存在押金流水的合同最新一笔 balance_after 之和
+```
+
+押金余额总额不按合同状态排除；已结束合同若异常保留非零余额仍必须计入，以便财务发现问题。没有押金流水时返回 0.00。
 资金流水采用实际发生日期：
 
 ```text
@@ -854,7 +867,7 @@ outstanding_amount = payable_amount - received_amount
 
 以下操作必须使用数据库事务：
 
-1. 合同确认：锁定房源 → 校验租期 → 保存成员与优惠 → 生成全租期账单 → 更新房源状态。
+1. 合同确认：锁定房源 → 校验租期 → 保存合同、成员与优惠 → 生成最终合同编号 → 正数押金创建唯一的已确认 `DEPOSIT` 收款及 `RECEIPT` 流水 → 生成全租期账单 → 更新房源状态；任一步失败时合同和押金财务记录整体回滚。
 2. 登记收款：创建收款 → 按最早账单分配 → 多余金额进入预收款 → 可同时创建待审批优惠／减免 → 更新账单状态和合同快照；待审批减免不得计入本事务的有效应收调整。
 3. 收款作废确认：锁定待审批申请和原收款 → 校验超级管理员权限 → 逆转分配/余额流水 → 更新收款、收据和账单 → 写安全审计。
 4. 退款确认：锁定原收款和账单 → 写退款 → 回退分配 → 重算账单 → 写安全审计。
@@ -878,6 +891,8 @@ outstanding_amount = payable_amount - received_amount
 - 已确认押金退款凭证不能删除或替换。
 - 非0元押金退款没有有效凭证时不能确认；0元退款不得伪造退款记录或要求上传凭证。
 - 结算扣款项目没有欠租账单、验收记录或证明材料时不能确认。
+- 系统自动初始押金来源键必须唯一；重复或并发提交不得生成第二笔押金收款或流水。
+- 押金结构 migration 不得插入、更新或删除历史合同、收款及押金流水。
 - 普通管理员不能直接修改已确认收款。
 - 普通管理员不能直接作废已确认收款；未经超级管理员确认的作废申请不得影响原收款和账单。
 - 待审批或被驳回的优惠／减免不得改变账单应收、欠租或驾驶舱统计。
