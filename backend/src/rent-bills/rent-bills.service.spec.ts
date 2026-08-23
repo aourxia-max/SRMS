@@ -64,6 +64,7 @@ describe('RentBillsService', () => {
     expect(prisma.db.rentBill.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
+          billCategory: 'RENT',
           status: 'PARTIAL',
           periodStart: { gte: expect.any(Date), lt: expect.any(Date) },
           OR: expect.any(Array),

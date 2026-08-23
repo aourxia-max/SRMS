@@ -8,6 +8,7 @@ const row: PaymentListItem = {
   id: 81,
   receiptNo: 'SK-TEST-81',
   receiptType: 'FORMAL',
+  paymentCategory: 'RENT',
   paymentDate: '2026-08-04',
   amount: '570.00',
   method: 'BANK_TRANSFER',
@@ -44,6 +45,20 @@ describe('PaymentRecordList', () => {
     expect(wrapper.emitted('page-change')).toEqual([[2]])
   })
 
+  it('labels checkout supplemental receipts in Chinese', () => {
+    const wrapper = mount(PaymentRecordList, {
+      props: {
+        rows: [{ ...row, paymentCategory: 'CHECKOUT_SUPPLEMENTAL' }],
+        total: 1,
+        currentPage: 1,
+        pageSize: 10,
+        selectedId: 81,
+      },
+      global: { plugins: [ElementPlus] },
+    })
+
+    expect(wrapper.text()).toContain('退租补收')
+  })
   it('emits the selected payment id without changing the page', async () => {
     const wrapper = mount(PaymentRecordList, {
       props: {

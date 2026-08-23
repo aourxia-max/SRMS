@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateAdjustedBill } from './adjustment-calculator';
+import { assertRentBillNotProtectedByCheckout } from './checkout-supplemental-balance';
 import { SubmitAdjustmentDto } from './dto/submit-adjustment.dto';
 
 @Injectable()
@@ -24,6 +25,9 @@ export class AdjustmentsService {
     const bill = await this.prisma.db.rentBill.findUniqueOrThrow({
       where: { id: dto.rentBillId },
     });
+    if (bill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
+      throw new BadRequestException('退租补收账单不能优惠、减免或调整');
+    await assertRentBillNotProtectedByCheckout(this.prisma.db, bill.id);
     if (bill.status === 'VOIDED')
       throw new BadRequestException('已作废账单不能提交调整');
     const preview = calculateAdjustedBill({
@@ -50,10 +54,22 @@ export class AdjustmentsService {
 
   async approve(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT rb.contract_id FROM rent_bills rb JOIN bill_adjustments ba ON ba.rent_bill_id = rb.id WHERE ba.id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE id = (SELECT rent_bill_id FROM bill_adjustments WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM bill_adjustments WHERE id = ${id} FOR UPDATE`,
+      );
       const adjustment = await tx.billAdjustment.findUniqueOrThrow({
         where: { id },
         include: { rentBill: true },
       });
+      if (adjustment.rentBill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
+        throw new BadRequestException('退租补收账单不能优惠、减免或调整');
+      await assertRentBillNotProtectedByCheckout(tx, adjustment.rentBillId);
       if (adjustment.approvalStatus !== 'PENDING')
         throw new BadRequestException('只有待审批调整可以确认');
       if (adjustment.rentBill.status === 'VOIDED')
@@ -108,12 +124,14 @@ export class AdjustmentsService {
     contractId: number,
   ) {
     const bills = await tx.rentBill.findMany({
-      where: { contractId },
+      where: { contractId, billCategory: 'RENT' },
       orderBy: { periodSeq: 'asc' },
     });
     let paidThroughDate: Date | null = null;
     let nextDueDate: Date | null = null;
     for (const bill of bills) {
+      if (bill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
+        throw new BadRequestException('退租补收账单不能优惠、减免或调整');
       if (bill.status === 'VOIDED') continue;
       if (new Prisma.Decimal(bill.outstandingAmount).isZero())
         paidThroughDate = bill.periodEnd;

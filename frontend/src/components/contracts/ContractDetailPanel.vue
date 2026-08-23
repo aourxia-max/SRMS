@@ -24,6 +24,7 @@ const money = (value?: string | null) => value ? `¥${Number(value).toLocaleStri
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
 const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
+const canRegisterPayment = computed(() => props.contract?.status === 'ACTIVE')
 const activeCommission = computed(() => props.contract?.commissions?.[0] ?? null)
 const commissionDialog = ref(false)
 const commissionSaving = ref(false)
@@ -91,6 +92,7 @@ async function removeCommission() {
         <div class="actions">
           <el-button @click="emit('back')">返回列表</el-button>
           <el-button
+            v-if="canRegisterPayment"
             data-test="open-payment-collect"
             type="primary"
             plain

@@ -9,7 +9,11 @@ import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubmitVoidRequestDto } from './dto/submit-void-request.dto';
 import { calculateAdjustedBill } from './adjustment-calculator';
-import { reopenCheckoutSupplementalBalance } from './checkout-supplemental-balance';
+import {
+  assertPaymentReversalRequestAllowed,
+  assertPaymentDoesNotTouchProtectedCheckoutArrears,
+  reopenCheckoutSupplementalBalance,
+} from './checkout-supplemental-balance';
 
 @Injectable()
 export class VoidRequestsService {
@@ -23,22 +27,31 @@ export class VoidRequestsService {
   async submit(dto: SubmitVoidRequestDto, user: AuthUser) {
     if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
       throw new ForbiddenException('当前角色不能提交作废申请');
-    const payment = await this.prisma.db.payment.findUniqueOrThrow({
-      where: { id: dto.paymentId },
-    });
-    if (payment.status !== 'CONFIRMED')
-      throw new BadRequestException('只有未退款的已确认收款可以申请作废');
-    const pending = await this.prisma.db.paymentVoidRequest.findFirst({
-      where: { paymentId: dto.paymentId, approvalStatus: 'PENDING' },
-    });
-    if (pending) throw new ConflictException('该收款已有待审批作废申请');
-    return this.prisma.db.paymentVoidRequest.create({
-      data: {
-        requestNo: `ZF${Date.now()}${payment.id}`,
-        paymentId: payment.id,
-        reason: dto.reason,
-        submittedBy: user.id,
-      },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM payments WHERE id = ${dto.paymentId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payments WHERE id = ${dto.paymentId} FOR UPDATE`,
+      );
+      const payment = await tx.payment.findUniqueOrThrow({
+        where: { id: dto.paymentId },
+      });
+      if (payment.status !== 'CONFIRMED')
+        throw new BadRequestException('只有未退款的已确认收款可以申请作废');
+      await assertPaymentReversalRequestAllowed(tx, payment);
+      const pending = await tx.paymentVoidRequest.findFirst({
+        where: { paymentId: dto.paymentId, approvalStatus: 'PENDING' },
+      });
+      if (pending) throw new ConflictException('该收款已有待审批作废申请');
+      return tx.paymentVoidRequest.create({
+        data: {
+          requestNo: `ZF${Date.now()}${payment.id}`,
+          paymentId: payment.id,
+          reason: dto.reason,
+          submittedBy: user.id,
+        },
+      });
     });
   }
   async approve(id: number, user: AuthUser) {
@@ -83,6 +96,11 @@ export class VoidRequestsService {
         throw new BadRequestException('只有待审批作废申请可以确认');
       if (request.payment.status !== 'CONFIRMED')
         throw new BadRequestException('原收款当前不能作废');
+      if (request.payment.paymentCategory !== 'CHECKOUT_SUPPLEMENTAL')
+        await assertPaymentDoesNotTouchProtectedCheckoutArrears(
+          tx,
+          request.paymentId,
+        );
 
       const billStates = new Map(
         request.payment.allocations.map((allocation) => {

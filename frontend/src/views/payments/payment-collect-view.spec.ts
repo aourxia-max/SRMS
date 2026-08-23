@@ -35,6 +35,7 @@ const contracts = [
 function bill(id: number, outstandingAmount: string, periodSeq = 1): RentBill {
   return {
     id,
+    billCategory: 'RENT',
     billNo: `ZD-${id}`,
     periodSeq,
     periodStart: '2026-08-01',
@@ -293,6 +294,11 @@ describe('收款登记合同切换', () => {
     expect(amountValue(wrapper)).toBe('75.00')
     expect(wrapper.text()).toContain('退租补收')
     expect(wrapper.text()).not.toContain('本次同时提交优惠/减免申请')
+    expect(contractSelect.props('disabled')).toBe(true)
+    expect(wrapper.text()).not.toContain('预计转入预收款')
+    expect(wrapper.text()).not.toContain('普通管理员必须从最早未结账期连续选择')
+    expect(wrapper.text()).toContain('欠租补收')
+    expect(wrapper.text()).toContain('验房扣款')
     wrapper.unmount()
   })
 })

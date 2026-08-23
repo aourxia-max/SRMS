@@ -6,6 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { SubmitCheckoutSettlementDto } from './dto/submit-checkout-settlement.dto';
 
@@ -182,7 +183,9 @@ export class CheckoutService {
       }),
     ]);
     const validBills = contract.bills.filter(
-      (bill) => !['VOIDED', 'REFUNDED'].includes(bill.status),
+      (bill) =>
+        bill.billCategory === 'RENT' &&
+        !['VOIDED', 'REFUNDED'].includes(bill.status),
     );
     const currentBills = validBills.filter((bill) => bill.periodStart <= at);
     return {
@@ -320,6 +323,11 @@ export class CheckoutService {
         throw new BadRequestException('合同当前不处于待退房状态');
       if (actual < settlement.contract.startDate)
         throw new BadRequestException('实际退房日期不能早于合同开始日期');
+      const arrearsBillIds = dto.items
+        .filter((item) => item.itemType === 'RENT_ARREARS')
+        .map((item) => item.rentBillId);
+      if (new Set(arrearsBillIds).size !== arrearsBillIds.length)
+        throw new BadRequestException('同一欠租账单不能重复添加');
       for (const item of dto.items) {
         const amount = new Prisma.Decimal(item.amount);
         if (!amount.isFinite() || amount.lte(0))
@@ -367,6 +375,25 @@ export class CheckoutService {
   }
   async approve(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        select: { contractId: true },
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM deposit_transactions WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM prepayment_transactions WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
+      );
       const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
         include: {
@@ -559,6 +586,15 @@ export class CheckoutService {
   }
   async completeZeroRefund(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) ORDER BY id FOR UPDATE`,
+      );
       const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
         include: { contract: true },
@@ -578,6 +614,11 @@ export class CheckoutService {
       )
         throw new BadRequestException('零额最终确认条件不满足');
 
+      if (settlement.supplementalRequired)
+        await assertNoPendingCheckoutSupplementalReversal(
+          tx,
+          settlement.contractId,
+        );
       const claimed = await tx.checkoutSettlement.updateMany({
         where: { id, status: 'APPROVED' },
         data: { status: 'COMPLETED' },
@@ -634,6 +675,11 @@ export class CheckoutService {
         throw new ConflictException('缺少发起退租的房态历史，无法安全恢复房态');
       const restoreStatus = initialHistory.fromStatus;
 
+      if (settlement.supplementalRequired)
+        await assertNoPendingCheckoutSupplementalReversal(
+          tx,
+          settlement.contractId,
+        );
       const claimed = await tx.checkoutSettlement.updateMany({
         where: { id, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
         data: { status: 'CANCELLED' },

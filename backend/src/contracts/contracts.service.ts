@@ -84,9 +84,27 @@ export class ContractsService {
       orderBy: { id: 'desc' },
     });
   }
-  async bills(contractId: number) {
+  async bills(contractId: number, collectible = false) {
     return this.prisma.db.rentBill.findMany({
-      where: { contractId },
+      where: {
+        contractId,
+        billCategory: 'RENT',
+        ...(collectible
+          ? {
+              NOT: {
+                checkoutSettlementItems: {
+                  some: {
+                    itemType: 'RENT_ARREARS',
+                    settlement: {
+                      status: { in: ['APPROVED', 'COMPLETED'] },
+                      supplementalRequired: true,
+                    },
+                  },
+                },
+              },
+            }
+          : {}),
+      },
       orderBy: { periodSeq: 'asc' },
     });
   }

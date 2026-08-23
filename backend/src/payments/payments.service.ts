@@ -17,6 +17,7 @@ import { PaymentListQueryDto } from './dto/payment-list-query.dto';
 import { EditPaymentDto } from './dto/edit-payment.dto';
 import { chineseUppercaseMoney, receiptTypeFor } from './payment-presenter';
 import { resolveAllocationPlan } from './payment-policy';
+import { assertPaymentDoesNotTouchProtectedCheckoutArrears } from './checkout-supplemental-balance';
 
 @Injectable()
 export class PaymentsService {
@@ -86,6 +87,7 @@ export class PaymentsService {
       return {
         id: row.id,
         receiptNo: row.receiptNo,
+        paymentCategory: row.paymentCategory,
         paymentDate: row.paymentDate,
         amount: this.money(row.amount),
         method: row.method,
@@ -311,6 +313,9 @@ export class PaymentsService {
           voidRequests: true,
         },
       });
+      if (payment.paymentCategory === 'CHECKOUT_SUPPLEMENTAL')
+        throw new BadRequestException('退租补收款不能通过通用收款修改');
+      await assertPaymentDoesNotTouchProtectedCheckoutArrears(tx, payment.id);
       if (['VOIDED', 'FULLY_REFUNDED'].includes(payment.status))
         throw new BadRequestException('已作废或已全额退款的收款不能修改');
       if (
@@ -333,7 +338,19 @@ export class PaymentsService {
       const bills = await tx.rentBill.findMany({
         where: {
           contractId: payment.contractId,
+          billCategory: 'RENT',
           status: { notIn: ['VOIDED', 'REFUNDED'] },
+          NOT: {
+            checkoutSettlementItems: {
+              some: {
+                itemType: 'RENT_ARREARS',
+                settlement: {
+                  status: { in: ['APPROVED', 'COMPLETED'] },
+                  supplementalRequired: true,
+                },
+              },
+            },
+          },
         },
         orderBy: [{ dueDate: 'asc' }, { periodSeq: 'asc' }],
       });
@@ -548,6 +565,7 @@ export class PaymentsService {
       method: PaymentMethod;
       externalReference?: string;
       remark?: string;
+      proofFileIds?: number[];
     },
     user: AuthUser,
   ) {
@@ -556,6 +574,11 @@ export class PaymentsService {
     const amount = new Prisma.Decimal(dto.amount);
     if (!amount.isFinite() || amount.lte(0))
       throw new BadRequestException('收款金额必须大于零');
+    if (
+      dto.proofFileIds &&
+      new Set(dto.proofFileIds).size !== dto.proofFileIds.length
+    )
+      throw new BadRequestException('收款凭证不能重复');
     return this.prisma.db.$transaction(async (tx) => {
       const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id: dto.checkoutSettlementId },
@@ -579,7 +602,17 @@ export class PaymentsService {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contract.id} ORDER BY id FOR UPDATE`,
       );
-      const arrearsBillIds = settlement.items
+      const lockedSettlement = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id: dto.checkoutSettlementId },
+        include: { contract: true, items: true, supplementalBill: true },
+      });
+      if (
+        lockedSettlement.status !== 'APPROVED' ||
+        lockedSettlement.contract.status !== 'PENDING_CHECKOUT' ||
+        !lockedSettlement.supplementalRequired
+      )
+        throw new BadRequestException('当前退租结算不允许登记补收款');
+      const arrearsBillIds = lockedSettlement.items
         .filter((item) => item.itemType === 'RENT_ARREARS' && item.rentBillId)
         .map((item) => item.rentBillId!);
       const bills = await tx.rentBill.findMany({
@@ -589,7 +622,7 @@ export class PaymentsService {
           outstandingAmount: { gt: 0 },
           OR: [
             ...(arrearsBillIds.length ? [{ id: { in: arrearsBillIds } }] : []),
-            { checkoutSettlementId: settlement.id },
+            { checkoutSettlementId: lockedSettlement.id },
           ],
         },
         orderBy: [{ dueDate: 'asc' }, { periodSeq: 'asc' }],
@@ -598,7 +631,7 @@ export class PaymentsService {
         arrearsBillIds.includes(bill.id),
       );
       const inspectionBill = bills.find(
-        (bill) => bill.checkoutSettlementId === settlement.id,
+        (bill) => bill.checkoutSettlementId === lockedSettlement.id,
       );
       const orderedBills = inspectionBill
         ? [...arrearsBills, inspectionBill]
@@ -613,6 +646,21 @@ export class PaymentsService {
         throw new BadRequestException('退租补收款已收清，请勿重复登记');
       if (amount.gt(outstandingAmount))
         throw new BadRequestException('本次补收金额不得超过未收余额');
+      const proofFileIds = dto.proofFileIds ?? [];
+      if (proofFileIds.length) {
+        const proofFiles = await tx.fileAsset.findMany({
+          where: {
+            id: { in: proofFileIds },
+            category: 'PAYMENT_PROOF',
+            uploadedBy: user.id,
+            lockedAt: null,
+          },
+        });
+        if (proofFiles.length !== proofFileIds.length)
+          throw new BadRequestException(
+            '收款凭证不存在、已被使用或不属于当前操作人',
+          );
+      }
       const payment = await tx.payment.create({
         data: {
           receiptNo: await this.receiptNo(tx),
@@ -677,10 +725,10 @@ export class PaymentsService {
         .minus(amount)
         .toDecimalPlaces(2);
       await tx.checkoutSettlement.update({
-        where: { id: settlement.id },
+        where: { id: lockedSettlement.id },
         data: {
           supplementalReceivedAmount: new Prisma.Decimal(
-            settlement.supplementalReceivedAmount,
+            lockedSettlement.supplementalReceivedAmount,
           )
             .plus(amount)
             .toDecimalPlaces(2),
@@ -690,6 +738,24 @@ export class PaymentsService {
             : null,
         },
       });
+      if (proofFileIds.length) {
+        const lockedAt = new Date();
+        const claimedFiles = await tx.fileAsset.updateMany({
+          where: { id: { in: proofFileIds }, lockedAt: null },
+          data: { lockedAt },
+        });
+        if (claimedFiles.count !== proofFileIds.length)
+          throw new BadRequestException('收款凭证已被其他收款占用，请重新选择');
+        await tx.paymentFile.createMany({
+          data: proofFileIds.map((fileAssetId) => ({
+            paymentId: payment.id,
+            fileAssetId,
+            purpose: 'PAYMENT_PROOF',
+            uploadedBy: user.id,
+            lockedAt,
+          })),
+        });
+      }
       await tx.operationLog.create({
         data: {
           module: 'PAYMENTS',
@@ -699,7 +765,7 @@ export class PaymentsService {
           entityNo: payment.receiptNo,
           summary: `登记退租补收 ${payment.receiptNo}`,
           afterData: {
-            checkoutSettlementId: settlement.id,
+            checkoutSettlementId: lockedSettlement.id,
             amount: amount.toFixed(2),
             billIds: allocations.map((item) => item.rentBillId),
           },
@@ -745,6 +811,17 @@ export class PaymentsService {
           billCategory: 'RENT',
           status: { notIn: ['VOIDED', 'REFUNDED'] },
           outstandingAmount: { gt: 0 },
+          NOT: {
+            checkoutSettlementItems: {
+              some: {
+                itemType: 'RENT_ARREARS',
+                settlement: {
+                  supplementalRequired: true,
+                  status: { in: ['APPROVED', 'COMPLETED'] },
+                },
+              },
+            },
+          },
         },
         orderBy: [{ dueDate: 'asc' }, { periodSeq: 'asc' }],
       });
@@ -889,6 +966,12 @@ export class PaymentsService {
 
       if (proofFileIds.length) {
         const lockedAt = new Date();
+        const claimedFiles = await tx.fileAsset.updateMany({
+          where: { id: { in: proofFileIds }, lockedAt: null },
+          data: { lockedAt },
+        });
+        if (claimedFiles.count !== proofFileIds.length)
+          throw new BadRequestException('收款凭证已被其他收款占用，请重新选择');
         await tx.paymentFile.createMany({
           data: proofFileIds.map((fileAssetId) => ({
             paymentId: payment.id,
@@ -897,10 +980,6 @@ export class PaymentsService {
             uploadedBy: user.id,
             lockedAt,
           })),
-        });
-        await tx.fileAsset.updateMany({
-          where: { id: { in: proofFileIds }, lockedAt: null },
-          data: { lockedAt },
         });
       }
 

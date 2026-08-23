@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PaymentListItem, PaymentListPage } from '../types/payments'
 import { listAllPayments, paymentApi } from './payments'
+import { http } from './http'
 
 function page(ids: number[], pageNumber: number, total: number): PaymentListPage {
   return {
@@ -26,4 +27,15 @@ describe('listAllPayments', () => {
     expect(list).toHaveBeenNthCalledWith(1, { contractId: 7, page: 1, pageSize: 100 })
     expect(list).toHaveBeenNthCalledWith(2, { contractId: 7, page: 2, pageSize: 100 })
   })
-})
+
+  it('requests only bills eligible for ordinary collection', async () => {
+    const get = vi.spyOn(http, 'get').mockResolvedValue({
+      data: { data: [] },
+    } as never)
+
+    await paymentApi.bills(7)
+
+    expect(get).toHaveBeenCalledWith('/contracts/7/bills', {
+      params: { collectible: true },
+    })
+  })})

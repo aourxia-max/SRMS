@@ -25,6 +25,7 @@ export class RoomDetailsService {
                 dueDate: true,
                 outstandingAmount: true,
                 status: true,
+                billCategory: true,
               },
             },
           },
@@ -95,6 +96,7 @@ export class RoomDetailsService {
     if (
       focus?.bills.some(
         (bill) =>
+          bill.billCategory === 'RENT' &&
           bill.dueDate < now &&
           new Prisma.Decimal(bill.outstandingAmount).gt(0) &&
           !['VOIDED', 'REFUNDED'].includes(bill.status),
@@ -113,6 +115,7 @@ export class RoomDetailsService {
       ...contract,
       hasOverdueBill: bills.some(
         (bill) =>
+          bill.billCategory === 'RENT' &&
           bill.dueDate < now &&
           new Prisma.Decimal(bill.outstandingAmount).gt(0) &&
           !['VOIDED', 'REFUNDED'].includes(bill.status),
@@ -126,7 +129,11 @@ export class RoomDetailsService {
     if (user.role === UserRole.SUPER_ADMIN && focus) {
       const [bills, payments, prepayments, refunds] = await Promise.all([
         this.prisma.db.rentBill.findMany({
-          where: { contractId: focus.id, status: { not: 'VOIDED' } },
+          where: {
+            contractId: focus.id,
+            billCategory: 'RENT',
+            status: { not: 'VOIDED' },
+          },
           orderBy: { periodSeq: 'asc' },
         }),
         this.prisma.db.payment.findMany({

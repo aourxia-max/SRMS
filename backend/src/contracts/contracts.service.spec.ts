@@ -747,4 +747,29 @@ describe('ContractsService', () => {
     });
     expect(tx.contractDraft.updateMany).not.toHaveBeenCalled();
   });
+
+  it('returns only rent bills and excludes checkout-protected arrears for ordinary collection', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new ContractsService({
+      db: { rentBill: { findMany } },
+    } as never);
+
+    await service.bills(7);
+    expect(findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { contractId: 7, billCategory: 'RENT' },
+      }),
+    );
+
+    await service.bills(7, true);
+    expect(findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contractId: 7,
+          billCategory: 'RENT',
+          NOT: expect.any(Object),
+        }),
+      }),
+    );
+  });
 });

@@ -9,7 +9,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SubmitRefundDto } from './dto/submit-refund.dto';
 import { ApproveRefundDto } from './dto/approve-refund.dto';
 import { calculateAdjustedBill } from './adjustment-calculator';
-import { reopenCheckoutSupplementalBalance } from './checkout-supplemental-balance';
+import {
+  assertPaymentReversalRequestAllowed,
+  assertPaymentDoesNotTouchProtectedCheckoutArrears,
+  reopenCheckoutSupplementalBalance,
+} from './checkout-supplemental-balance';
 
 @Injectable()
 export class RefundsService {
@@ -46,47 +50,56 @@ export class RefundsService {
     );
     if (!total.equals(refundAmount))
       throw new BadRequestException('退款明细合计必须等于退款金额');
-    const payment = await this.prisma.db.payment.findUniqueOrThrow({
-      where: { id: dto.paymentId },
-      include: { allocations: true },
-    });
-    if (!['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(payment.status))
-      throw new BadRequestException('该收款当前不能退款');
-    const original = new Map(
-      payment.allocations.map((item) => [item.id, item]),
-    );
-    for (const item of dto.allocations) {
-      const allocation = original.get(item.paymentAllocationId);
-      const amount = new Prisma.Decimal(item.amount);
-      if (
-        !allocation ||
-        amount.lte(0) ||
-        amount.gt(
-          new Prisma.Decimal(allocation.allocatedAmount).minus(
-            allocation.reversedAmount,
-          ),
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM payments WHERE id = ${dto.paymentId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payments WHERE id = ${dto.paymentId} FOR UPDATE`,
+      );
+      const payment = await tx.payment.findUniqueOrThrow({
+        where: { id: dto.paymentId },
+        include: { allocations: true },
+      });
+      if (!['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(payment.status))
+        throw new BadRequestException('该收款当前不能退款');
+      await assertPaymentReversalRequestAllowed(tx, payment);
+      const original = new Map(
+        payment.allocations.map((item) => [item.id, item]),
+      );
+      for (const item of dto.allocations) {
+        const allocation = original.get(item.paymentAllocationId);
+        const amount = new Prisma.Decimal(item.amount);
+        if (
+          !allocation ||
+          amount.lte(0) ||
+          amount.gt(
+            new Prisma.Decimal(allocation.allocatedAmount).minus(
+              allocation.reversedAmount,
+            ),
+          )
         )
-      )
-        throw new BadRequestException('退款金额超过原账单分配余额');
-    }
-    return this.prisma.db.paymentRefund.create({
-      data: {
-        refundNo: `TK${Date.now()}${payment.id}`,
-        paymentId: payment.id,
-        contractId: payment.contractId,
-        refundAmount,
-        refundDate: new Date(dto.refundDate),
-        refundMethod: dto.refundMethod,
-        reason: dto.reason,
-        submittedBy: user.id,
-        allocations: {
-          create: dto.allocations.map((item) => ({
-            paymentAllocationId: item.paymentAllocationId,
-            reversedAmount: item.amount,
-          })),
+          throw new BadRequestException('退款金额超过原账单分配余额');
+      }
+      return tx.paymentRefund.create({
+        data: {
+          refundNo: `TK${Date.now()}${payment.id}`,
+          paymentId: payment.id,
+          contractId: payment.contractId,
+          refundAmount,
+          refundDate: new Date(dto.refundDate),
+          refundMethod: dto.refundMethod,
+          reason: dto.reason,
+          submittedBy: user.id,
+          allocations: {
+            create: dto.allocations.map((item) => ({
+              paymentAllocationId: item.paymentAllocationId,
+              reversedAmount: item.amount,
+            })),
+          },
         },
-      },
-      include: { allocations: true },
+        include: { allocations: true },
+      });
     });
   }
   async approve(id: number, dto: ApproveRefundDto, user: AuthUser) {
@@ -125,6 +138,11 @@ export class RefundsService {
         throw new BadRequestException('只有待审批退款可以确认');
       if (!['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(refund.payment.status))
         throw new BadRequestException('原收款当前不能退款');
+      if (refund.payment.paymentCategory !== 'CHECKOUT_SUPPLEMENTAL')
+        await assertPaymentDoesNotTouchProtectedCheckoutArrears(
+          tx,
+          refund.paymentId,
+        );
 
       const affectedBillIds = new Set(
         refund.allocations.map((item) => item.paymentAllocation.rentBill.id),
