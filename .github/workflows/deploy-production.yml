@@ -1,0 +1,111 @@
+name: SRMS 生产部署
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: srms-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 测试与构建
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: 安装根目录依赖
+        run: npm ci
+
+      - name: 安装后端依赖
+        run: npm ci --prefix backend
+
+      - name: 生成 Prisma Client
+        run: npm --prefix backend run prisma:generate
+
+      - name: 安装前端依赖
+        run: npm ci --prefix frontend
+
+      - name: 后端单元测试
+        run: npm --prefix backend test -- --runInBand
+
+      - name: 后端 Lint
+        run: npm --prefix backend run lint:check
+
+      - name: Prisma 结构校验
+        run: npm --prefix backend run prisma:validate
+
+      - name: 前端单元测试
+        run: npm --prefix frontend run test:unit -- --run --testTimeout=15000
+
+      - name: 前后端构建
+        run: npm run build
+
+  deploy:
+    name: 部署到生产服务器
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 配置 SSH
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.SRMS_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.SRMS_DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.SRMS_DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.SRMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY"
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/srms_deploy"
+          chmod 600 "$HOME/.ssh/srms_deploy"
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts"
+
+      - name: 更新并重启 Docker 服务
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.SRMS_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.SRMS_DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.SRMS_DEPLOY_USER }}
+          DEPLOY_DIR: ${{ secrets.SRMS_DEPLOY_DIR || '/opt/srms' }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/srms_deploy" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_DIR='$DEPLOY_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          unsafe_changes="$(git status --porcelain | grep -v '^?? deploy/manual-backups/$' || true)"
+          if [ -n "$unsafe_changes" ]; then
+            echo '服务器工作区存在未提交修改，停止自动部署以保护现有内容。'
+            printf '%s\n' "$unsafe_changes"
+            exit 1
+          fi
+          git fetch --prune origin main
+          git merge --ff-only origin/main
+          docker compose -p srms_prod --env-file deploy/.env \
+            -f deploy/docker-compose.yml \
+            -f deploy/docker-compose.production.yml \
+            up -d --build api web caddy
+          docker compose -p srms_prod --env-file deploy/.env \
+            -f deploy/docker-compose.yml \
+            -f deploy/docker-compose.production.yml ps
+          REMOTE
