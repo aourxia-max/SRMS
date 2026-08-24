@@ -123,7 +123,7 @@ describe("CheckoutTopNav", () => {
     });
 
     expect(wrapper.text()).toContain("发起退租");
-    expect(wrapper.text()).toContain("请选择正在履行的合同");
+    expect(wrapper.text()).toContain("请选择待开始或正在履行的合同");
   });
   it("requires an active contract and checkout reason before initiation", async () => {
     const wrapper = mount(CheckoutInitiatePanel, {
@@ -134,7 +134,7 @@ describe("CheckoutTopNav", () => {
 
     await wrapper.get('[data-test="initiate-submit"]').trigger("click");
 
-    expect(wrapper.text()).toContain("请选择正在履行的合同");
+    expect(wrapper.text()).toContain("请选择待开始或正在履行的合同");
     expect(wrapper.text()).toContain("请填写退租原因");
   });
   it("loads active contracts into the initiate checkout form", async () => {
@@ -144,6 +144,23 @@ describe("CheckoutTopNav", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("HT202608010001");
+  });
+  it("allows a pending-start contract to be selected for checkout", async () => {
+    const wrapper = mount(CheckoutInitiatePanel, {
+      props: {
+        contracts: [
+          { id: 2, contractNo: "HT202609010002", status: "PENDING_START" },
+        ],
+        selectedContractId: 2,
+      },
+    });
+    await flushPromises();
+
+    const select = wrapper.get('[data-test="checkout-contract-select"]');
+    expect((select.element as HTMLSelectElement).value).toBe("2");
+    expect(wrapper.text()).toContain("HT202609010002");
+    expect(wrapper.text()).toContain("未入住退租");
+    expect(wrapper.emitted("contractChange")).toEqual([[2]]);
   });
   it("keeps an approved settlement in the final refund confirmation panel", () => {
     const wrapper = mount(CheckoutRefundPanel, {
@@ -308,6 +325,7 @@ describe("CheckoutTopNav", () => {
     await flushPromises();
 
     await wrapper
+
       .get('[data-test="refund-proof-download-6-77"]')
       .trigger("click");
     await flushPromises();
@@ -323,6 +341,57 @@ describe("CheckoutTopNav", () => {
     expect(click).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:refund-proof");
     click.mockRestore();
+  });
+
+  it.each([
+    ["image/png", "img"],
+    ["application/pdf", "iframe"],
+  ])("previews a refund proof with MIME type %s", async (mimeType, selector) => {
+    const createObjectURL = vi.fn().mockReturnValue("blob:refund-proof-preview");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    (
+      checkoutApi as unknown as {
+        downloadRefundProof: ReturnType<typeof vi.fn>;
+      }
+    ).downloadRefundProof.mockResolvedValueOnce({
+      data: new Blob(["proof"], { type: mimeType }),
+      headers: {
+        "content-type": mimeType,
+        "content-disposition": "attachment; filename*=UTF-8''refund-file",
+      },
+    });
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+    await wrapper
+      .get('[data-test="completed-contract-detail-9"]')
+      .trigger("click");
+    await flushPromises();
+
+    await wrapper
+      .get('[data-test="refund-proof-preview-6-77"]')
+      .trigger("click");
+    await flushPromises();
+
+    const dialog = wrapper.get('[data-test="refund-proof-preview-dialog"]');
+    expect(dialog.get(selector).attributes("src")).toBe(
+      "blob:refund-proof-preview",
+    );
+    expect(wrapper.find('[data-test="refund-proof-download-6-77"]').exists()).toBe(true);
+
+    await dialog.get('[data-test="refund-proof-preview-close"]').trigger("click");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:refund-proof-preview");
   });
 
   it("shows a Chinese error when a refund proof cannot be downloaded", async () => {
@@ -672,7 +741,7 @@ describe("CheckoutTopNav", () => {
       });
 
       const summary = wrapper.get('[data-test="settlement-summary"]');
-      expect(summary.text()).toContain("确认结算后计算");
+      expect(summary.text()).toContain("填写完整后自动计算");
       expect(summary.text()).not.toContain("¥0.00");
     },
   );

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { checkoutApi } from "../../services/checkout";
 import { useSessionStore } from "../../stores/session";
@@ -12,6 +12,7 @@ import type {
   CheckoutContract,
   CheckoutSettlement,
   CheckoutTab,
+  CheckoutSettlementPreview,
   CompletedCheckoutContractsResult,
 } from "./checkout-types";
 
@@ -38,9 +39,16 @@ const completedContracts = ref<CompletedCheckoutContractsResult>({
 const completedKeyword = ref("");
 const completedDetail = ref<CheckoutSettlement>();
 const loadingCompletedContracts = ref(false);
+const settlementPreview = ref<CheckoutSettlementPreview>();
+const previewLoading = ref(false);
 const actionError = ref("");
 const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
+const refundProofPreview = ref<{
+  url: string;
+  mimeType: string;
+  fileName: string;
+}>();
 const isSuper = computed(() => session.user?.role === "SUPER_ADMIN");
 applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
@@ -173,6 +181,38 @@ async function downloadRefundProof(refundId: number, fileId: number) {
     actionError.value = message(error, "退款凭证下载失败，请稍后重试");
   }
 }
+function closeRefundProofPreview() {
+  if (refundProofPreview.value?.url) {
+    URL.revokeObjectURL(refundProofPreview.value.url);
+  }
+  refundProofPreview.value = undefined;
+}
+async function previewRefundProof(refundId: number, fileId: number) {
+  actionError.value = "";
+  closeRefundProofPreview();
+  try {
+    const response = await checkoutApi.downloadRefundProof(refundId, fileId);
+    const mimeType = String(
+      response.headers["content-type"] || response.data.type || "",
+    ).toLowerCase();
+    if (!mimeType.startsWith("image/") && mimeType !== "application/pdf") {
+      actionError.value = "该凭证格式暂不支持在线预览，请下载后查看";
+      return;
+    }
+    refundProofPreview.value = {
+      url: URL.createObjectURL(response.data),
+      mimeType,
+      fileName: refundProofFilename(
+        response.headers["content-disposition"],
+        fileId,
+      ),
+    };
+  } catch (error) {
+    actionError.value = message(error, "退款凭证预览失败，请稍后重试");
+  }
+}
+onBeforeUnmount(closeRefundProofPreview);
+
 async function loadFinanceSnapshot(contractId: number) {
   try {
     financeSnapshot.value = await checkoutApi.financeSnapshot(contractId);
@@ -199,6 +239,19 @@ async function submitSettlement(id: number, payload: Record<string, unknown>) {
     actionError.value = message(error, "提交结算失败，请检查填写内容后重试");
   }
 }
+async function previewSettlement(id: number, payload: Record<string, unknown>) {
+  previewLoading.value = true;
+  actionError.value = "";
+  try {
+    settlementPreview.value = await checkoutApi.preview(id, payload);
+  } catch (error) {
+    settlementPreview.value = undefined;
+    actionError.value = message(error, "结算金额预估失败，请检查填写内容");
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
 async function returnToDraft(id: number) {
   actionError.value = "";
   try {
@@ -297,6 +350,9 @@ onMounted(loadData);
       :settlements="settlements"
       :is-super="isSuper"
       @submit="submitSettlement"
+      :preview="settlementPreview"
+      :preview-loading="previewLoading"
+      @preview="previewSettlement"
       @approve="approveSettlement"
       @return-to-draft="returnToDraft"
       @cancel="cancelSettlement"
@@ -370,23 +426,54 @@ onMounted(loadData);
                 }}，状态：{{ refundApprovalStatusLabel(refund.approvalStatus) }}
               </p>
               <p v-if="!refund.files?.length">未上传凭证</p>
-              <button
-                v-for="file in refund.files"
-                :key="file.fileAssetId"
-                :data-test="
-                  'refund-proof-download-' + refund.id + '-' + file.fileAssetId
-                "
-                type="button"
-                class="checkout-workspace__proof-download"
-                @click="downloadRefundProof(refund.id, file.fileAssetId)"
-              >
-                下载凭证（凭证编号：{{ file.fileAssetId }}）
-              </button>
+              <template v-for="file in refund.files" :key="file.fileAssetId">
+                <button
+                  :data-test="
+                    'refund-proof-preview-' + refund.id + '-' + file.fileAssetId
+                  "
+                  type="button"
+                  class="checkout-workspace__proof-download"
+                  @click="previewRefundProof(refund.id, file.fileAssetId)"
+                >
+                  在线预览
+                </button>
+                <button
+                  :data-test="
+                    'refund-proof-download-' + refund.id + '-' + file.fileAssetId
+                  "
+                  type="button"
+                  class="checkout-workspace__proof-download"
+                  @click="downloadRefundProof(refund.id, file.fileAssetId)"
+                >
+                  下载凭证（凭证编号：{{ file.fileAssetId }}）
+                </button>
+              </template>
             </div>
           </article>
         </div>
       </section>
     </template>
+    <div
+      v-if="refundProofPreview"
+      class="checkout-workspace__preview-overlay"
+      data-test="refund-proof-preview-dialog"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="`预览${refundProofPreview.fileName}`"
+    >
+      <div class="checkout-workspace__preview-dialog">
+        <header>
+          <strong>{{ refundProofPreview.fileName }}</strong>
+          <button data-test="refund-proof-preview-close" type="button" @click="closeRefundProofPreview">关闭</button>
+        </header>
+        <img
+          v-if="refundProofPreview.mimeType.startsWith('image/')"
+          :src="refundProofPreview.url"
+          :alt="refundProofPreview.fileName"
+        />
+        <iframe v-else :src="refundProofPreview.url" :title="refundProofPreview.fileName" />
+      </div>
+    </div>
   </main>
 </template>
 
@@ -478,5 +565,41 @@ onMounted(loadData);
   .checkout-workspace__readonly-grid {
     grid-template-columns: 1fr;
   }
+}
+.checkout-workspace__preview-overlay {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 23 42 / 58%);
+}
+.checkout-workspace__preview-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1000px, 92vw);
+  height: min(760px, 88vh);
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgb(15 23 42 / 30%);
+}
+.checkout-workspace__preview-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e4eaf3;
+}
+.checkout-workspace__preview-dialog img,
+.checkout-workspace__preview-dialog iframe {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+  background: #f7f9fc;
 }
 </style>

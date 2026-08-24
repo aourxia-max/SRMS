@@ -30,24 +30,32 @@ const form = reactive({
   targetRoomStatus: "EMPTY",
 });
 const errors = ref<string[]>([]);
-const activeContracts = computed(() =>
-  props.contracts.filter((item) => item.status === "ACTIVE"),
+const eligibleContracts = computed(() =>
+  props.contracts.filter((item) =>
+    ["PENDING_START", "ACTIVE"].includes(item.status),
+  ),
 );
+const isEligible = (status: string) => ["PENDING_START", "ACTIVE"].includes(status);
 
 watch(
   () => [props.selectedContractId, props.contracts] as const,
   ([contractId]) => {
     if (!contractId) return;
-    const exists = props.contracts.some((item) => item.id === contractId && item.status === "ACTIVE");
-    if (!exists || form.contractId === String(contractId)) return;
+    const contract = props.contracts.find((item) => item.id === contractId);
+    if (!contract || !isEligible(contract.status) || form.contractId === String(contractId)) return;
     form.contractId = String(contractId);
+    form.checkoutType = contract.status === "PENDING_START" ? "未入住退租" : "提前退租";
     emit("contractChange", contractId);
   },
   { immediate: true },
 );
 
 function contractChange() {
-  if (form.contractId) emit("contractChange", Number(form.contractId));
+  if (!form.contractId) return;
+  const contractId = Number(form.contractId);
+  const contract = props.contracts.find((item) => item.id === contractId);
+  form.checkoutType = contract?.status === "PENDING_START" ? "未入住退租" : "提前退租";
+  emit("contractChange", contractId);
 }
 
 function formatMoney(value: string) {
@@ -59,7 +67,7 @@ function formatMoney(value: string) {
 
 function submit() {
   errors.value = [];
-  if (!form.contractId) errors.value.push("请选择正在履行的合同");
+  if (!form.contractId) errors.value.push("请选择待开始或正在履行的合同");
   if (!form.checkoutReason.trim()) errors.value.push("请填写退租原因");
   if (errors.value.length) return;
   emit("submit", Number(form.contractId), {
@@ -112,9 +120,9 @@ function submit() {
             :disabled="loading"
             @change="contractChange"
           >
-            <option value="">请选择正在履行的合同</option>
+            <option value="">请选择待开始或正在履行的合同</option>
             <option
-              v-for="contract in activeContracts"
+              v-for="contract in eligibleContracts"
               :key="contract.id"
               :value="String(contract.id)"
             >
@@ -133,6 +141,7 @@ function submit() {
             <option>提前退租</option>
             <option>到期退租</option>
           </select>
+            <option>未入住退租</option>
         </label>
         <label class="form-field">
           <span><i>*</i>计划退房日期</span>

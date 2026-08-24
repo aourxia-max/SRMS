@@ -1004,6 +1004,7 @@ model CheckoutSettlement {
   settlementNo               String                   @unique @map("settlement_no") @db.VarChar(40)
   contractId                 Int                      @map("contract_id") @db.UnsignedInt
   checkoutType               String                   @map("checkout_type") @db.VarChar(50)
+  originContractStatus       ContractStatus           @default(ACTIVE) @map("origin_contract_status")
   plannedCheckoutDate        DateTime                 @map("planned_checkout_date") @db.Date
   actualCheckoutDate         DateTime?                @map("actual_checkout_date") @db.Date
   handoverDate               DateTime?                @map("handover_date") @db.Date

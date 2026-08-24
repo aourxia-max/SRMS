@@ -60,8 +60,21 @@ export class CheckoutController {
       data: await this.checkout.getDetail(id),
     };
   }
-  @Post('contract/:contractId/initiate')
+  @Post(':id/preview')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async preview(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SubmitCheckoutSettlementDto,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.preview(id, dto),
+    };
+  }
+
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @Post('contract/:contractId/initiate')
   async initiate(
     @Param('contractId', ParseIntPipe) contractId: number,
     @Body() dto: InitiateCheckoutDto,

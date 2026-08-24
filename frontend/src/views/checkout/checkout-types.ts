@@ -38,6 +38,7 @@ export type CheckoutSettlement = {
   status:
     "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED";
   contractId: number;
+
   actualCheckoutDate?: string;
   handoverDate?: string;
   inspectionAt?: string;
@@ -56,6 +57,13 @@ export type CheckoutSettlement = {
   contract?: CheckoutContract;
   items?: CheckoutSettlementItem[];
   depositRefunds?: DepositRefund[];
+};
+
+export type CheckoutSettlementPreview = {
+  depositRefundableAmount: string;
+  prepaymentRefundableAmount: string;
+  totalRefundAmount: string;
+  finalReceivable: string;
 };
 export type CompletedCheckoutContract = {
   settlementId: number;

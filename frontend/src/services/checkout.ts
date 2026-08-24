@@ -2,6 +2,7 @@ import { http } from "./http";
 import type {
   CheckoutContract,
   CheckoutSettlement,
+  CheckoutSettlementPreview,
   CompletedCheckoutContractsResult,
 } from "../views/checkout/checkout-types";
 
@@ -62,6 +63,13 @@ export const checkoutApi = {
     data(
       await http.post<Envelope<CheckoutSettlement>>(
         `/checkout-settlements/${id}/submit`,
+        payload,
+      ),
+    ),
+  preview: async (id: number, payload: Record<string, unknown>) =>
+    data(
+      await http.post<Envelope<CheckoutSettlementPreview>>(
+        `/checkout-settlements/${id}/preview`,
         payload,
       ),
     ),

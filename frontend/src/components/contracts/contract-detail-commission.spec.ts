@@ -48,6 +48,12 @@ describe('合同详情租房提成', () => {
     expect(mountPanel('VISITOR').find('[data-test="maintain-commission"]').exists()).toBe(false)
   })
 
+  it('shows the checkout entry for a pending-start contract', () => {
+    const pendingStartContract = { ...contract(), status: 'PENDING_START' as const }
+
+    expect(mountPanel('ADMIN', pendingStartContract).find('[data-test="open-checkout"]').exists()).toBe(true)
+  })
+
   it('creates a zero-value commission through the existing endpoint and requests a refresh', async () => {
     const wrapper = mountPanel('SUPER_ADMIN')
     const vm = wrapper.vm as unknown as {

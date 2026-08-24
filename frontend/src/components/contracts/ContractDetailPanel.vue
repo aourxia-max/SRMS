@@ -23,7 +23,7 @@ const primaryTenant = computed(() => props.contract?.members?.find((item) => ite
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
-const canInitiateCheckout = computed(() => props.contract?.status === 'ACTIVE')
+const canInitiateCheckout = computed(() => ['PENDING_START', 'ACTIVE'].includes(props.contract?.status || ''))
 const canRegisterPayment = computed(() => props.contract?.status === 'ACTIVE')
 const activeCommission = computed(() => props.contract?.commissions?.[0] ?? null)
 const commissionDialog = ref(false)

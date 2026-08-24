@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
+import { calculateCheckoutAmounts } from './checkout-calculation';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
@@ -261,6 +262,66 @@ export class CheckoutService {
       })),
     };
   }
+  async preview(id: number, dto: SubmitCheckoutSettlementDto) {
+    const settlement =
+      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        include: { contract: { include: { bills: true } } },
+      });
+    if (!['DRAFT', 'PENDING', 'REJECTED'].includes(settlement.status))
+      throw new BadRequestException('当前退租结算单不能预估金额');
+    if (settlement.contract.status !== 'PENDING_CHECKOUT')
+      throw new BadRequestException('合同当前不处于待退房状态');
+    const actual = new Date(dto.actualCheckoutDate);
+    if (
+      settlement.originContractStatus !== 'PENDING_START' &&
+      actual < settlement.contract.startDate
+    )
+      throw new BadRequestException('实际退房日期不能早于合同开始日期');
+    const arrearsBillIds = dto.items
+      .filter((item) => item.itemType === 'RENT_ARREARS')
+      .map((item) => item.rentBillId);
+    if (new Set(arrearsBillIds).size !== arrearsBillIds.length)
+      throw new BadRequestException('同一欠租账单不能重复添加');
+    for (const item of dto.items) {
+      const itemAmount = new Prisma.Decimal(item.amount);
+      if (!itemAmount.isFinite() || itemAmount.lte(0))
+        throw new BadRequestException('结算项目金额必须大于零');
+      if (item.itemType !== 'RENT_ARREARS' && !item.inspectionRecordRef)
+        throw new BadRequestException(
+          '维修、损坏、清洁及其他扣款必须关联验收记录',
+        );
+    }
+    const eligibleBills = settlement.contract.bills.filter(
+      (bill) =>
+        bill.periodStart <= actual &&
+        !['VOIDED', 'REFUNDED'].includes(bill.status),
+    );
+    const rentOutstanding = eligibleBills.reduce(
+      (sum, bill) => sum.plus(bill.outstandingAmount),
+      new Prisma.Decimal(0),
+    );
+    const otherCharges = dto.items
+      .filter((item) => item.itemType !== 'RENT_ARREARS')
+      .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+    const [deposit, prepayment] = await Promise.all([
+      this.prisma.db.depositTransaction.findFirst({
+        where: { contractId: settlement.contractId },
+        orderBy: { id: 'desc' },
+      }),
+      this.prisma.db.prepaymentTransaction.findFirst({
+        where: { contractId: settlement.contractId },
+        orderBy: { id: 'desc' },
+      }),
+    ]);
+    return calculateCheckoutAmounts({
+      depositBalance: deposit?.balanceAfter ?? 0,
+      prepaymentBalance: prepayment?.balanceAfter ?? 0,
+      rentOutstanding,
+      otherCharges,
+    });
+  }
+
   async initiate(contractId: number, dto: InitiateCheckoutDto, user: AuthUser) {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
@@ -269,8 +330,8 @@ export class CheckoutService {
         where: { id: contractId },
         include: { room: true },
       });
-      if (contract.status !== 'ACTIVE')
-        throw new BadRequestException('只有履行中的合同可以发起退租');
+      if (!['PENDING_START', 'ACTIVE'].includes(contract.status))
+        throw new BadRequestException('只有待开始或履行中的合同可以发起退租');
       const existing = await tx.checkoutSettlement.findFirst({
         where: { contractId, status: { in: ['DRAFT', 'PENDING', 'APPROVED'] } },
       });
@@ -280,6 +341,7 @@ export class CheckoutService {
           settlementNo: `TZ${Date.now()}${contractId}`,
           contractId,
           checkoutType: dto.checkoutType,
+          originContractStatus: contract.status,
           plannedCheckoutDate: new Date(dto.plannedCheckoutDate),
           handoverDate: new Date(dto.handoverDate),
           inspectionAt: new Date(dto.inspectionAt),
@@ -321,7 +383,10 @@ export class CheckoutService {
         throw new BadRequestException('只有草稿结算单可以提交');
       if (settlement.contract.status !== 'PENDING_CHECKOUT')
         throw new BadRequestException('合同当前不处于待退房状态');
-      if (actual < settlement.contract.startDate)
+      if (
+        settlement.originContractStatus !== 'PENDING_START' &&
+        actual < settlement.contract.startDate
+      )
         throw new BadRequestException('实际退房日期不能早于合同开始日期');
       const arrearsBillIds = dto.items
         .filter((item) => item.itemType === 'RENT_ARREARS')
@@ -435,6 +500,16 @@ export class CheckoutService {
         orderBy: { id: 'desc' },
       });
       let depositBalance = new Prisma.Decimal(latest?.balanceAfter ?? 0);
+      const prepayment = await tx.prepaymentTransaction.findFirst({
+        where: { contractId: settlement.contractId },
+        orderBy: { id: 'desc' },
+      });
+      const calculatedAmounts = calculateCheckoutAmounts({
+        depositBalance: latest?.balanceAfter ?? 0,
+        prepaymentBalance: prepayment?.balanceAfter ?? 0,
+        rentOutstanding: outstanding,
+        otherCharges,
+      });
       const initialDepositBalance = depositBalance;
       let depositOffsetAmount = new Prisma.Decimal(0);
       for (const item of arrearsItems) {
@@ -496,14 +571,12 @@ export class CheckoutService {
           },
         });
       }
-      const supplementalArrearsAmount = Prisma.Decimal.max(
-        new Prisma.Decimal(0),
-        outstanding.minus(depositOffsetAmount),
-      ).toDecimalPlaces(2);
-      const supplementalInspectionAmount = Prisma.Decimal.max(
-        new Prisma.Decimal(0),
-        otherCharges.minus(otherDeductionAmount),
-      ).toDecimalPlaces(2);
+      const supplementalArrearsAmount = new Prisma.Decimal(
+        calculatedAmounts.supplementalArrearsAmount,
+      );
+      const supplementalInspectionAmount = new Prisma.Decimal(
+        calculatedAmounts.supplementalInspectionAmount,
+      );
       const supplementalOutstandingAmount = supplementalArrearsAmount
         .plus(supplementalInspectionAmount)
         .toDecimalPlaces(2);
@@ -533,10 +606,6 @@ export class CheckoutService {
         });
       }
       const finalReceivable = supplementalOutstandingAmount;
-      const prepayment = await tx.prepaymentTransaction.findFirst({
-        where: { contractId: settlement.contractId },
-        orderBy: { id: 'desc' },
-      });
       await tx.rentBill.updateMany({
         where: {
           contractId: settlement.contractId,
@@ -565,9 +634,11 @@ export class CheckoutService {
           depositBalance: initialDepositBalance,
           depositOffsetAmount,
           otherDeductionAmount,
-          depositRefundableAmount: depositBalance,
+          depositRefundableAmount: new Prisma.Decimal(
+            calculatedAmounts.depositRefundableAmount,
+          ),
           prepaymentRefundableAmount: new Prisma.Decimal(
-            prepayment?.balanceAfter ?? 0,
+            calculatedAmounts.prepaymentRefundableAmount,
           ),
           finalReceivable,
           supplementalRequired: supplementalOutstandingAmount.gt(0),
@@ -689,7 +760,7 @@ export class CheckoutService {
 
       const contractRestored = await tx.contract.updateMany({
         where: { id: settlement.contractId, status: 'PENDING_CHECKOUT' },
-        data: { status: 'ACTIVE' },
+        data: { status: settlement.originContractStatus },
       });
       if (contractRestored.count !== 1)
         throw new ConflictException('合同状态已变化，请刷新后重试');

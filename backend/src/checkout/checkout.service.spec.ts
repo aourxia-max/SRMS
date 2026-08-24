@@ -5,6 +5,76 @@ import { CheckoutService } from './checkout.service';
 describe('CheckoutService', () => {
   const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
+  it('allows a pending-start contract to initiate checkout and records its original status', async () => {
+    const settlementCreate = jest.fn().mockResolvedValue({ id: 19 });
+    const contractUpdate = jest.fn();
+    const roomUpdate = jest.fn();
+    const historyCreate = jest.fn();
+    const tx = {
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 3,
+          status: 'PENDING_START',
+          roomId: 7,
+          room: { id: 7, roomStatus: 'WAITING_MOVE_IN' },
+        }),
+        update: contractUpdate,
+      },
+      checkoutSettlement: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: settlementCreate,
+      },
+      room: { update: roomUpdate },
+      roomStatusHistory: { create: historyCreate },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.initiate(
+        3,
+        {
+          checkoutType: '未入住退租',
+          plannedCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          checkoutReason: '未入住前取消租赁',
+          targetRoomStatus: 'EMPTY',
+        } as never,
+        user,
+      ),
+    ).resolves.toEqual({ id: 19 });
+    expect(settlementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        contractId: 3,
+        checkoutType: '未入住退租',
+        originContractStatus: 'PENDING_START',
+      }),
+    });
+    expect(contractUpdate).toHaveBeenCalledWith({
+      where: { id: 3 },
+      data: { status: 'PENDING_CHECKOUT' },
+    });
+    expect(roomUpdate).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: {
+        roomStatus: 'PENDING_CHECKOUT',
+        statusChangedAt: expect.any(Date),
+      },
+    });
+    expect(historyCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fromStatus: 'WAITING_MOVE_IN',
+        toStatus: 'PENDING_CHECKOUT',
+      }),
+    });
+  });
+
   it('lists only completed settlements whose contracts are ended', async () => {
     const findMany = jest.fn().mockResolvedValue([
       {
@@ -182,6 +252,7 @@ describe('CheckoutService', () => {
           id: 1,
           status: 'DRAFT',
           contractId: 3,
+          originContractStatus: 'PENDING_START',
           contract: {
             id: 3,
             status: 'PENDING_CHECKOUT',
@@ -217,7 +288,7 @@ describe('CheckoutService', () => {
     });
     expect(contractUpdateMany).toHaveBeenCalledWith({
       where: { id: 3, status: 'PENDING_CHECKOUT' },
-      data: { status: 'ACTIVE' },
+      data: { status: 'PENDING_START' },
     });
     expect(roomUpdateMany).toHaveBeenCalledWith({
       where: { id: 7, roomStatus: 'PENDING_CHECKOUT' },
@@ -349,6 +420,54 @@ describe('CheckoutService', () => {
       ),
     ).rejects.toThrow('同一欠租账单不能重复添加');
     expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('allows a pending-start checkout to use an actual date before the contract start date', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 1, status: 'PENDING' });
+    const tx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'DRAFT',
+          originContractStatus: 'PENDING_START',
+          contract: {
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-09-01'),
+            bills: [],
+          },
+        }),
+        update,
+      },
+      checkoutSettlementItem: { deleteMany: jest.fn() },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        1,
+        {
+          actualCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          targetRoomStatus: 'EMPTY',
+          items: [],
+        } as never,
+        user,
+      ),
+    ).resolves.toEqual({ id: 1, status: 'PENDING' });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          actualCheckoutDate: new Date('2026-08-20'),
+        }),
+      }),
+    );
   });
 
   it('returns a rejected settlement to draft without deleting its items', async () => {

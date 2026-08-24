@@ -1,19 +1,23 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type {
   CheckoutSettlement,
+  CheckoutSettlementPreview,
   CheckoutSettlementItem,
 } from "./checkout-types";
 
 const props = defineProps<{
   settlements: CheckoutSettlement[];
   isSuper?: boolean;
+  preview?: CheckoutSettlementPreview;
+  previewLoading?: boolean;
 }>();
 const emit = defineEmits<{
   approve: [id: number];
   submit: [id: number, payload: Record<string, unknown>];
   returnToDraft: [id: number];
   cancel: [id: number];
+  preview: [id: number, payload: Record<string, unknown>];
 }>();
 
 const selectedId = ref<number | null>(null);
@@ -67,6 +71,51 @@ function addItem(type: CheckoutSettlementItem["itemType"] = "REPAIR") {
 function removeItem(index: number) {
   items.value.splice(index, 1);
 }
+function payload() {
+  const { remark, ...requiredFields } = form;
+  return {
+    ...requiredFields,
+    ...(remark.trim() ? { remark: remark.trim() } : {}),
+    items: items.value.map((item) => ({
+      ...item,
+      amount: Number(item.amount).toFixed(2),
+      rentBillId: item.rentBillId ? Number(item.rentBillId) : undefined,
+      inspectionRecordRef: item.inspectionRecordRef?.trim() || undefined,
+      description: item.description.trim(),
+    })),
+  };
+}
+function previewReady() {
+  return Boolean(
+    selected.value &&
+      form.actualCheckoutDate &&
+      form.handoverDate &&
+      form.inspectionAt &&
+      items.value.every(
+        (item) =>
+          Number(item.amount) > 0 &&
+          item.description.trim() &&
+          (item.itemType === "RENT_ARREARS"
+            ? item.rentBillId
+            : item.inspectionRecordRef?.trim()),
+      ),
+  );
+}
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  [selected, form, items],
+  () => {
+    if (previewTimer) clearTimeout(previewTimer);
+    if (!previewReady() || !selected.value) return;
+    previewTimer = setTimeout(
+      () => emit("preview", selected.value!.id, payload()),
+      250,
+    );
+  },
+  { deep: true },
+);
+onBeforeUnmount(() => previewTimer && clearTimeout(previewTimer));
+
 function submit() {
   errors.value = [];
   if (!selected.value) return;
@@ -83,18 +132,7 @@ function submit() {
       errors.value.push(`请填写第 ${index + 1} 项验房记录编号`);
   });
   if (errors.value.length) return;
-  const { remark, ...requiredFields } = form;
-  emit("submit", selected.value.id, {
-    ...requiredFields,
-    ...(remark.trim() ? { remark: remark.trim() } : {}),
-    items: items.value.map((item) => ({
-      ...item,
-      amount: Number(item.amount).toFixed(2),
-      rentBillId: item.rentBillId ? Number(item.rentBillId) : undefined,
-      inspectionRecordRef: item.inspectionRecordRef?.trim() || undefined,
-      description: item.description.trim(),
-    })),
-  });
+  emit("submit", selected.value.id, payload());
 }
 function statusText(status: CheckoutSettlement["status"]) {
   return {
@@ -106,6 +144,18 @@ function statusText(status: CheckoutSettlement["status"]) {
     CANCELLED: "已取消",
   }[status];
 }
+function formatMoney(value: string) {
+  return `¥${Number(value || 0).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+const summaryCards = computed(() => [
+  { label: "应退押金", value: props.preview?.depositRefundableAmount },
+  { label: "应退预收款", value: props.preview?.prepaymentRefundableAmount },
+  { label: "合计应退", value: props.preview?.totalRefundAmount },
+  { label: "待补收金额", value: props.preview?.finalReceivable },
+]);
 function cancelSelected() {
   if (!selected.value) return;
   if (!window.confirm("确定取消该退租结算工单吗？取消后会恢复合同和房态。"))
@@ -156,13 +206,10 @@ function cancelSelected() {
           class="settlement-panel__summary"
           data-test="settlement-summary"
         >
-          <div
-            v-for="label in ['应退押金', '应退预收款', '合计应退', '待补收金额']"
-            :key="label"
-          >
-            <span>{{ label }}</span>
-            <strong>待计算</strong>
-            <small>确认结算后计算</small>
+          <div v-for="card in summaryCards" :key="card.label">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value ? formatMoney(card.value) : previewLoading ? "计算中…" : "待计算" }}</strong>
+            <small>{{ card.value ? "实时预估，确认后锁定" : "填写完整后自动计算" }}</small>
           </div>
         </div>
         <template v-if="selected.status === 'DRAFT'">
