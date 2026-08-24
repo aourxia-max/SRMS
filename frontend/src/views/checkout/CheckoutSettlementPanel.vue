@@ -96,20 +96,6 @@ function submit() {
     })),
   });
 }
-function amount(value: string) {
-  return Number(value || 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-function totalRefund(settlement: CheckoutSettlement) {
-  return amount(
-    String(
-      Number(settlement.depositRefundableAmount || 0) +
-        Number(settlement.prepaymentRefundableAmount || 0),
-    ),
-  );
-}
 function statusText(status: CheckoutSettlement["status"]) {
   return {
     DRAFT: "待录入结算",
@@ -166,21 +152,17 @@ function cancelSelected() {
             selected.rejectedReason || "请修改结算内容后重新提交。"
           }}</span>
         </div>
-        <div class="settlement-panel__summary">
-          <div>
-            <span>应退押金</span
-            ><strong>¥{{ amount(selected.depositRefundableAmount) }}</strong>
-          </div>
-          <div>
-            <span>应退预收款</span
-            ><strong>¥{{ amount(selected.prepaymentRefundableAmount) }}</strong>
-          </div>
-          <div>
-            <span>合计应退</span><strong>¥{{ totalRefund(selected) }}</strong>
-          </div>
-          <div>
-            <span>待补收金额</span
-            ><strong>¥{{ amount(selected.finalReceivable) }}</strong>
+        <div
+          class="settlement-panel__summary"
+          data-test="settlement-summary"
+        >
+          <div
+            v-for="label in ['应退押金', '应退预收款', '合计应退', '待补收金额']"
+            :key="label"
+          >
+            <span>{{ label }}</span>
+            <strong>待计算</strong>
+            <small>确认结算后计算</small>
           </div>
         </div>
         <template v-if="selected.status === 'DRAFT'">
@@ -436,6 +418,12 @@ function cancelSelected() {
 .settlement-panel__summary strong {
   margin-top: 8px;
   font-size: 20px;
+}
+.settlement-panel__summary small {
+  display: block;
+  margin-top: 4px;
+  color: #8a98ad;
+  font-size: 12px;
 }
 .settlement-panel__form-grid {
   display: grid;

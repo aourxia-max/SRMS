@@ -652,6 +652,31 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.emitted("submit")?.[0]?.[1]).toMatchObject({ items: [] });
   });
 
+  it.each(["DRAFT", "PENDING", "REJECTED"] as const)(
+    "does not present %s settlement amounts as confirmed zero values before approval",
+    (status) => {
+      const wrapper = mount(CheckoutSettlementPanel, {
+        props: {
+          settlements: [
+            {
+              id: 10,
+              settlementNo: "TZ202608010010",
+              status,
+              contractId: 3,
+              depositRefundableAmount: "0.00",
+              prepaymentRefundableAmount: "0.00",
+              finalReceivable: "0.00",
+            },
+          ],
+        },
+      });
+
+      const summary = wrapper.get('[data-test="settlement-summary"]');
+      expect(summary.text()).toContain("确认结算后计算");
+      expect(summary.text()).not.toContain("¥0.00");
+    },
+  );
+
   it("omits a blank optional remark when submitting a settlement", async () => {
     const wrapper = mount(CheckoutSettlementPanel, {
       props: {
