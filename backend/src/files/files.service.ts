@@ -137,6 +137,23 @@ export class FilesService {
     };
   }
 
+  async saveAndLinkContractFile(
+    contractId: number,
+    file: UploadedFile,
+    user: AuthUser,
+  ) {
+    const contract = await this.prisma.db.contract.findUnique({
+      where: { id: contractId },
+      select: { id: true },
+    });
+    if (!contract) throw new NotFoundException('合同不存在');
+    const asset = await this.saveContractFile(file, user);
+    await this.prisma.db.contractFile.create({
+      data: { contractId, fileAssetId: asset.id },
+    });
+    return asset;
+  }
+
   async listContractFiles(contractId: number) {
     return (
       await this.prisma.db.contractFile.findMany({

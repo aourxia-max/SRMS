@@ -11,11 +11,14 @@ import {
   type TenantListItem,
   type TenantType,
 } from "./tenant-form";
+import { pageAfterDeleting } from './tenant-pagination'
 
 const session = useSessionStore();
 const canManage = computed(() =>
   ["SUPER_ADMIN", "ADMIN"].includes(session.user?.role ?? ""),
 );
+const page = ref(1);
+const pageSize = ref(20);
 const tenants = ref<TenantListItem[]>([]);
 const total = ref(0);
 const keyword = ref("");
@@ -34,7 +37,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 async function load() {
   const response = await http.get("/tenants", {
-    params: { keyword: keyword.value || undefined },
+    params: { keyword: keyword.value || undefined, page: page.value, pageSize: pageSize.value },
   });
   tenants.value = response.data.data.items;
   total.value = response.data.data.total;
@@ -44,6 +47,22 @@ function open(tenant?: TenantListItem) {
   editingId.value = tenant?.id ?? null;
   Object.assign(form, tenantFormFromListItem(tenant, defaultTenantType.value));
   dialog.value = true;
+}
+
+async function search() {
+  page.value = 1;
+  await load();
+}
+
+async function changePage(value: number) {
+  page.value = value;
+  await load();
+}
+
+async function changePageSize(value: number) {
+  pageSize.value = value;
+  page.value = 1;
+  await load();
 }
 
 async function save() {
@@ -74,8 +93,10 @@ async function removeTenant() {
         type: "warning",
       },
     );
+    const pageAfterDelete = pageAfterDeleting(page.value, tenants.value.length);
     await http.delete(`/tenants/${editingId.value}`);
     dialog.value = false;
+    page.value = pageAfterDelete;
     await load();
     ElMessage.success("承租人已删除");
   } catch (error) {
@@ -127,9 +148,9 @@ onMounted(async () => {
           v-model="keyword"
           placeholder="姓名或联系电话"
           clearable
-          @keyup.enter="load"
+          @keyup.enter="search"
         />
-        <el-button @click="load">查询</el-button>
+        <el-button @click="search">查询</el-button>
       </div>
       <p>共 {{ total }} 名承租人</p>
       <el-table :data="tenants" stripe>
@@ -169,6 +190,16 @@ onMounted(async () => {
         </el-table-column>
       </el-table>
     </el-card>
+      <el-pagination
+        class="pagination"
+        :current-page="page"
+        :page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="total"
+        layout="total, sizes, prev, pager, next, jumper"
+        @update:current-page="changePage"
+        @update:page-size="changePageSize"
+      />
 
     <el-dialog
       v-model="dialog"
@@ -251,5 +282,9 @@ onMounted(async () => {
 }
 .dialog-footer__spacer {
   flex: 1;
+}
+.pagination {
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 </style>

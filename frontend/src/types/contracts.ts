@@ -117,6 +117,21 @@ export type ContractFile = {
   mimeType: string
   sizeBytes?: number | string
 }
+export type ContractChange = {
+  id: number
+  changeNo: string
+  changeType: string
+  effectiveDate: string
+  reason: string
+  approvalStatus: string
+  submittedAt?: string
+  approvedAt?: string | null
+  rejectedReason?: string | null
+  beforeSnapshot: Record<string, unknown>
+  afterSnapshot: Record<string, unknown>
+  tenantNames?: Record<string, string>
+}
+
 
 export type ContractDetail = ContractListItem & {
   plannedMoveInDate?: string | null

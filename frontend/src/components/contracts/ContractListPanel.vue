@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ContractListItem } from '../../types/contracts'
 import { contractStatusLabel, contractStatusLabels, contractStatusTagClass, contractStatusTagType } from '../../utils/status-labels'
 
@@ -8,12 +8,14 @@ const props = withDefaults(defineProps<{
   selectedContractId?: number | null
   loading?: boolean
   draftId?: number | null
-}>(), { selectedContractId: null, loading: false, draftId: null })
+  initialRoomId?: number | null
+}>(), { selectedContractId: null, loading: false, draftId: null, initialRoomId: null })
 
 const emit = defineEmits<{ select: [contract: ContractListItem]; create: []; 'continue-draft': [] }>()
 const keyword = ref('')
 const status = ref('')
-const roomId = ref<number | ''>('')
+const roomId = ref<number | ''>(props.initialRoomId ?? '')
+watch(() => props.initialRoomId, (value) => { roomId.value = value ?? '' })
 
 const roomOptions = computed(() => {
   const seen = new Map<number, string>()

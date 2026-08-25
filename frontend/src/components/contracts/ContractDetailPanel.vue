@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
+import { presentContractChange, type ContractChangeRecord } from './contract-change-presentation'
 import { isFixedRentRebateEligible, isPreviewableContractImage } from '../../services/contracts'
 import { http } from '../../services/http'
-import type { ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
+import type { ContractChange, ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 import { contractStatusLabel, contractStatusTagClass, contractStatusTagType, paymentMethodLabel, paymentStatusLabel, rentBillStatusLabel } from '../../utils/status-labels'
 
@@ -11,13 +12,13 @@ const props = withDefaults(defineProps<{
   contract?: ContractDetail | null
   bills?: RentBill[]
   files?: ContractFile[]
-  changes?: unknown[]
+  changes?: ContractChange[]
   payments?: PaymentListItem[]
   role: ContractRole
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; commissionChanged: [] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; upload: [file: File]; commissionChanged: [] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
@@ -25,10 +26,17 @@ const date = (value?: string | null) => value ? String(value).slice(0, 10) : '�
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
 const canInitiateCheckout = computed(() => ['PENDING_START', 'ACTIVE'].includes(props.contract?.status || ''))
 const canRegisterPayment = computed(() => props.contract?.status === 'ACTIVE')
+const canUploadContractFile = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.role))
 const activeCommission = computed(() => props.contract?.commissions?.[0] ?? null)
 const commissionDialog = ref(false)
 const commissionSaving = ref(false)
 const commissionForm = reactive({ recipientName: '', amount: '' })
+function handleAppendUpload(uploadFile: { raw?: File }) {
+  if (uploadFile.raw) emit('upload', uploadFile.raw)
+}
+function changePresentation(change: ContractChangeRecord) {
+  return presentContractChange(change)
+}
 
 function commissionError(error: unknown, fallback: string) {
   const message = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message
@@ -161,6 +169,12 @@ async function removeCommission() {
               <el-table :data="contract.members" empty-text="暂无合同成员"><el-table-column label="成员角色"><template #default="{ row }">{{ row.memberRole === 'PRIMARY' ? '主承租人' : '副承租人' }}</template></el-table-column><el-table-column prop="tenant.name" label="姓名" /><el-table-column prop="tenant.phone" label="电话" /></el-table>
             </el-tab-pane>
             <el-tab-pane label="附件" name="files">
+              <div v-if="canUploadContractFile" class="file-actions">
+                <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif" :on-change="handleAppendUpload">
+                  <el-button data-test="append-contract-file" type="primary" plain>上传新附件</el-button>
+                </el-upload>
+                <span>可追加上传，历史附件会继续保留</span>
+              </div>
               <el-table :data="files" empty-text="暂无合同附件">
                 <el-table-column prop="originalName" label="文件名" />
                 <el-table-column prop="mimeType" label="类型" />
@@ -168,7 +182,18 @@ async function removeCommission() {
                 <el-table-column label="操作" width="150"><template #default="{ row }"><el-button v-if="isPreviewableContractImage(row)" :data-test="`preview-contract-file-${row.id}`" type="primary" link @click="emit('preview', row)">预览</el-button><el-button :data-test="`download-contract-file-${row.id}`" type="primary" link @click="emit('download', row)">下载</el-button></template></el-table-column>
               </el-table>
             </el-tab-pane>
-            <el-tab-pane label="变更记录" name="changes"><el-empty v-if="!changes.length" :image-size="64" description="暂无合同变更记录" /><pre v-else class="change-data">{{ changes }}</pre></el-tab-pane>
+            <el-tab-pane label="变更记录" name="changes">
+              <el-empty v-if="!changes.length" :image-size="64" description="暂无合同变更记录" />
+              <div v-else class="change-list">
+                <article v-for="change in changes" :key="change.id" class="change-card">
+                  <header><div><b>{{ changePresentation(change).typeLabel }}</b><small>{{ change.changeNo }}</small></div><el-tag effect="light">{{ changePresentation(change).statusLabel }}</el-tag></header>
+                  <dl v-for="item in changePresentation(change).items" :key="item.label">
+                    <dt>{{ item.label }}</dt><dd><span>{{ item.before }}</span><b>→</b><span>{{ item.after }}</span></dd>
+                  </dl>
+                  <footer><span>生效日期：{{ date(change.effectiveDate) }}</span><span>变更原因：{{ change.reason || '未填写' }}</span><span v-if="change.rejectedReason">驳回原因：{{ change.rejectedReason }}</span></footer>
+                </article>
+              </div>
+            </el-tab-pane>
           </el-tabs>
         </section>
         <aside>
@@ -211,5 +236,10 @@ async function removeCommission() {
 .detail-main :deep(.el-tabs__header) { margin-bottom: 17px; }
 .card-head { padding: 14px 17px; border-bottom: 1px solid #edf1f5; }.card-head h2 { margin: 0; font-size: 16px; }
 .summary-list { display: grid; gap: 12px; padding: 17px; }.summary-list > div { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 1px dashed #e2e7ee; }.summary-list span { color: #748196; }.commission-row > div { display:flex; align-items:flex-end; flex-direction:column; gap:4px; }.commission-dialog-footer { display:grid; grid-template-columns:auto 1fr auto auto; gap:8px; }.summary-list b { text-align: right; }.money-blue { color: #246bfd; }.commission { color: #6848c2; }
-.notice { padding: 12px; margin-top: 15px; color: #46648e; font-size: 12px; background: #eef4ff; border: 1px solid #ccdcfb; border-radius: 8px; }.change-data { white-space: pre-wrap; }
+.notice { padding: 12px; margin-top: 15px; color: #46648e; font-size: 12px; background: #eef4ff; border: 1px solid #ccdcfb; border-radius: 8px; }
+.file-actions { display:flex; align-items:center; gap:12px; margin-bottom:14px; }.file-actions span { color:#748196; font-size:12px; }
+.change-list { display:grid; gap:12px; }.change-card { padding:15px; background:#f8faff; border:1px solid #e4eaf4; border-radius:10px; }
+.change-card header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:12px; }.change-card header div { display:flex; align-items:baseline; gap:10px; }.change-card header small { color:#8491a5; }
+.change-card dl { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; margin:0; padding:10px 0; border-top:1px dashed #dfe6f0; }.change-card dt { color:#66758b; }.change-card dd { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:10px; margin:0; }.change-card dd b { color:#246bfd; }
+.change-card footer { display:flex; flex-wrap:wrap; gap:8px 18px; padding-top:10px; color:#748196; font-size:12px; border-top:1px dashed #dfe6f0; }
 </style>

@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../services/http'
+import { roomContractRoute, supportedRoomContractId } from './room-detail-navigation'
 import { useSessionStore } from '../stores/session'
 import { paymentMethodLabel, paymentStatusLabel, rentBillStatusLabel, usageTypeLabel } from '../utils/status-labels'
 
@@ -36,6 +37,10 @@ const statusLabels: Record<string, string> = { EMPTY: '空置', PENDING_MOVE_IN:
 const decorationLabels: Record<string, string> = { RENOVATED: '已装修', UNRENOVATED: '未装修', RENOVATING: '装修中', UNKNOWN: '未知' }
 const contractLabels: Record<string, string> = { DRAFT: '??', PENDING_START: '???', ACTIVE: '???', PENDING_CHECKOUT: '???', ENDED: '???', VOIDED: '???' }
 function date(value: string | null | undefined) { return value ? new Date(value).toLocaleDateString('zh-CN') : '-' }
+function openContractManagement() {
+  if (!room.value) return
+  void router.push(roomContractRoute(room.value.id, supportedRoomContractId(focusContract.value)))
+}
 function money(value: unknown) { return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function statusLabel(value: string) { return statusLabels[value] ?? value }
 async function load() { loading.value = true; try { detail.value = (await http.get(`/properties/rooms/${route.params.id}/detail`)).data.data } finally { loading.value = false } }
@@ -93,7 +98,7 @@ onMounted(load)
           <div class="title-row"><h1>{{ room.fullHouseNo }}</h1><el-tag effect="light" type="success">{{ statusLabel(room.roomStatus) }}</el-tag></div>
           <p>{{ room.building?.buildingName || room.building?.buildingNo }} · {{ room.floorNo }} 层 · 状态更新于 {{ date(room.statusChangedAt) }}</p>
         </div>
-        <div class="detail-actions"><el-button @click="router.push('/properties')">前往房源管理</el-button><el-button v-if="canManage" @click="openEdit">编辑房源</el-button><el-button @click="router.push({ path: '/contracts', query: { roomId: room.id } })">合同管理</el-button><el-button type="primary" @click="router.push(focusContract ? { path: '/payments', query: { contractId: focusContract.id } } : '/payments')">收款登记</el-button></div>
+        <div class="detail-actions"><el-button @click="router.push('/properties')">前往房源管理</el-button><el-button v-if="canManage" @click="openEdit">编辑房源</el-button><el-button @click="openContractManagement">合同管理</el-button><el-button type="primary" @click="router.push(focusContract ? { path: '/payments', query: { contractId: focusContract.id } } : '/payments')">收款登记</el-button></div>
       </header>
 
       <section class="risk-row"><el-tag v-for="label in detail.riskLabels" :key="label" :type="label === '当前无待办' ? 'success' : 'warning'" effect="light">{{ label }}</el-tag></section>
@@ -103,7 +108,7 @@ onMounted(load)
         <el-card shadow="never"><template #header><h2>业主/租户信息</h2></template><dl class="info-grid"><dt>业主/租户姓名</dt><dd>{{ room.ownerName || '-' }}</dd><dt>业主/租户电话</dt><dd>{{ room.ownerPhone || '-' }}</dd><dt>业主/租户备注</dt><dd>{{ room.ownerRemark || '-' }}</dd></dl></el-card>
       </section>
 
-      <el-card shadow="never" class="contract-card"><template #header><div class="card-head"><div><h2>合同与租户</h2><small>{{ focusContract ? '优先展示当前合同；可展开查看历史合同' : '当前暂无合同记录' }}</small></div><el-button text type="primary" @click="router.push('/contracts')">查看合同管理</el-button></div></template>
+      <el-card shadow="never" class="contract-card"><template #header><div class="card-head"><div><h2>合同与租户</h2><small>{{ focusContract ? '优先展示当前合同；可展开查看历史合同' : '当前暂无合同记录' }}</small></div><el-button text type="primary" @click="openContractManagement">查看合同管理</el-button></div></template>
         <el-empty v-if="!focusContract" description="暂无生效合同 / 暂无租客" />
         <template v-else><div class="contract-summary"><div><span>合同编号</span><b>{{ focusContract.contractNo }}</b></div><div><span>合同状态</span><b>{{ contractLabels[focusContract.status] ?? focusContract.status }}</b></div><div><span>租期</span><b>{{ date(focusContract.startDate) }} 至 {{ date(focusContract.endDate) }}</b></div><div><span>月租金</span><b>{{ money(focusContract.monthlyRent) }}</b></div></div><div class="tenant-list"><article v-for="member in focusContract.members" :key="member.id"><b>{{ member.tenant?.name || '-' }}</b><span>{{ member.memberRole === 'PRIMARY' ? '主承租人' : '共同承租人' }}</span><small>{{ member.tenant?.phone || '未填写联系电话' }}</small></article></div></template>
       </el-card>

@@ -129,10 +129,35 @@ export class ContractsService {
   }
 
   async changes(contractId: number) {
-    return this.prisma.db.contractChange.findMany({
+    const changes = await this.prisma.db.contractChange.findMany({
       where: { contractId },
       orderBy: { id: 'desc' },
     });
+    const tenantIds = new Set<number>();
+    for (const change of changes) {
+      const before = change.beforeSnapshot as Record<string, unknown>;
+      const after = change.afterSnapshot as Record<string, unknown>;
+      const members = Array.isArray(before.members) ? before.members : [];
+      for (const raw of members) {
+        const member = raw as Record<string, unknown>;
+        if (member.memberRole === 'PRIMARY' && Number(member.tenantId) > 0) {
+          tenantIds.add(Number(member.tenantId));
+        }
+      }
+      if (Number(after.primaryTenantId) > 0) {
+        tenantIds.add(Number(after.primaryTenantId));
+      }
+    }
+    const tenants = tenantIds.size
+      ? await this.prisma.db.tenant.findMany({
+          where: { id: { in: [...tenantIds] } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const tenantNames = Object.fromEntries(
+      tenants.map((tenant) => [String(tenant.id), tenant.name]),
+    );
+    return changes.map((change) => ({ ...change, tenantNames }));
   }
 
   async submitChange(
@@ -142,7 +167,10 @@ export class ContractsService {
   ) {
     const contract = await this.prisma.db.contract.findUniqueOrThrow({
       where: { id: contractId },
-      include: { members: { where: { isCurrent: true } }, concessions: true },
+      include: {
+        members: { where: { isCurrent: true } },
+        concessions: { where: { status: 'ACTIVE' } },
+      },
     });
     this.validateChange(contract, dto);
     return this.prisma.db.contractChange.create({

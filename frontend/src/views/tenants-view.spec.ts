@@ -97,7 +97,7 @@ describe("承租人管理页面", () => {
 
     expect(http.delete).toHaveBeenCalledWith("/tenants/17");
     expect(http.get).toHaveBeenCalledWith("/tenants", {
-      params: { keyword: undefined },
+      params: { keyword: undefined, page: 1, pageSize: 20 },
     });
   });
 });

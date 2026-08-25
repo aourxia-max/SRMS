@@ -10,6 +10,7 @@ import ContractSummaryPanel from '../../components/contracts/ContractSummaryPane
 import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
 import FixedRentRebatePanel from '../../components/contracts/FixedRentRebatePanel.vue'
 import {
+  appendContractFile,
   approveFixedRentRebate,
   confirmContractDraft,
   confirmFixedContract,
@@ -37,6 +38,7 @@ import { useSessionStore } from '../../stores/session'
 import {
   emptyContractForm,
   type ContractDetail,
+  type ContractChange,
   type ContractFile,
   type ContractFormModel,
   type ContractListItem,
@@ -65,7 +67,7 @@ const selectedContractId = ref<number | null>(null)
 const selectedContract = ref<ContractDetail | null>(null)
 const bills = ref<RentBill[]>([])
 const files = ref<ContractFile[]>([])
-const changes = ref<unknown[]>([])
+const changes = ref<ContractChange[]>([])
 const rebates = ref<PricingRebate[]>([])
 const payments = ref<PaymentListItem[]>([])
 const form = ref<ContractFormModel>(emptyContractForm())
@@ -160,9 +162,7 @@ async function loadBaseData() {
     }
     if (roomId && rooms.value.some((room) => room.id === roomId)) {
       form.value.roomId = roomId
-      const existing = contracts.value.find((contract) => contract.roomId === roomId && contract.pricingMode === 'FIXED')
-      if (existing) await selectContract(existing)
-      else tab.value = 'create'
+      tab.value = 'list'
     }
     baseDataLoaded = true
     await applyRouteState()
@@ -203,7 +203,10 @@ async function selectContract(summary: ContractListItem, syncRoute = true) {
 function startCreate() {
   currentDraftId.value = null
   localStorage.removeItem(draftStorageKey)
-  form.value = emptyContractForm()
+  const nextForm = emptyContractForm()
+  const routeRoomId = Number(route.query.roomId)
+  if (rooms.value.some((room) => room.id === routeRoomId)) nextForm.roomId = routeRoomId
+  form.value = nextForm
   preview.value = null
   setTab('create')
 }
@@ -284,6 +287,20 @@ async function uploadFile(file: File) {
     ElMessage.success(`附件“${asset.originalName}”上传成功`)
   } catch (error) {
     ElMessage.error(errorMessage(error, '合同附件上传失败，可单独重试'))
+  }
+}
+
+async function appendSelectedContractFile(file: File) {
+  if (!selectedContractId.value) return
+  saving.value = true
+  try {
+    const asset = await appendContractFile(selectedContractId.value, file)
+    files.value = await getContractFiles(selectedContractId.value)
+    ElMessage.success(`附件“${asset.originalName}”已添加，历史附件仍保留`)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '合同附件上传失败，请检查文件后重试'))
+  } finally {
+    saving.value = false
   }
 }
 
@@ -454,12 +471,12 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
   <el-config-provider :locale="zhCn">
     <main class="contracts-workspace">
       <ContractTopNav :model-value="tab" :selected-contract-id="selectedContractId" @update:model-value="setTab" />
-      <ContractListPanel v-if="tab === 'list'" :contracts="contracts" :selected-contract-id="selectedContractId" :draft-id="currentDraftId" :loading="loading" @select="selectContract" @create="startCreate" @continue-draft="setTab('create')" />
+      <ContractListPanel v-if="tab === 'list'" :contracts="contracts" :selected-contract-id="selectedContractId" :draft-id="currentDraftId" :loading="loading" :initial-room-id="Number(route.query.roomId) || null" @select="selectContract" @create="startCreate" @continue-draft="setTab('create')" />
       <div v-else-if="tab === 'create'" class="create-grid">
         <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="setTab('list')" @upload-file="uploadFile" />
         <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="fixedPreviewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @preview="previewFile" @download="downloadFile" @commission-changed="reloadSelectedContract" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @preview="previewFile" @download="downloadFile" @upload="appendSelectedContractFile" @commission-changed="reloadSelectedContract" />
       <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
     </main>
       <el-dialog v-model="previewOpen" :title="previewName || '合同附件预览'" width="880px" @closed="closePreview">

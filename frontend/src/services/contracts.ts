@@ -1,5 +1,6 @@
 import { http } from './http'
 import type {
+  ContractChange,
   ContractConcession,
   ContractDetail,
   ContractDraft,
@@ -99,7 +100,7 @@ export async function getContractFiles(id: number) {
 }
 
 export async function getContractChanges(id: number) {
-  return (await http.get<ApiResponse<unknown[]>>(`/contracts/${id}/changes`)).data.data
+  return (await http.get<ApiResponse<ContractChange[]>>(`/contracts/${id}/changes`)).data.data
 }
 
 export async function createContractDraft(payload: ContractPayload) {
@@ -147,6 +148,12 @@ export async function uploadContractFile(file: File) {
   body.append('file', file)
   return (await http.post<ApiResponse<ContractFile>>('/contracts/files', body)).data.data
 }
+export async function appendContractFile(contractId: number, file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return (await http.post<ApiResponse<ContractFile>>(`/contracts/${contractId}/files`, body)).data.data
+}
+
 
 export async function downloadContractFile(contractId: number, fileId: number) {
   return (await http.get(`/contracts/${contractId}/files/${fileId}/download`, { responseType: 'blob' })).data as Blob

@@ -68,6 +68,25 @@ export class ContractsController {
       data: await this.contractFiles.saveContractFile(file, user),
     };
   }
+  @Post(':id/files')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: contractUploadBufferLimit },
+    }),
+  )
+  async appendFile(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: ContractUploadedFile,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contractFiles.saveAndLinkContractFile(id, file, user),
+    };
+  }
+
   @Post('drafts')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async createDraft(
