@@ -88,14 +88,20 @@ describe('驾驶舱房态卡片用途与月租', () => {
     wrapper.unmount()
   })
 
-  it('超级管理员在没有有效合同时看到租金未定', async () => {
-    mockRoom({ ...baseRoom, roomStatus: 'EMPTY', usageType: 'RESIDENCE', currentMonthlyRent: null })
+  it.each([
+    ['空值', null],
+    ['未提供', undefined],
+    ['空字符串', ''],
+    ['无效内容', 'invalid'],
+  ])('超级管理员在租金为%s时只看到用途，不显示租金未定', async (_case, currentMonthlyRent) => {
+    mockRoom({ ...baseRoom, roomStatus: 'EMPTY', usageType: 'RESIDENCE', currentMonthlyRent })
     const wrapper = mount(DashboardView, {
       global: { plugins: [sessionFor('SUPER_ADMIN'), ElementPlus] },
     })
     await flushPromises()
 
-    expect(wrapper.find('.room-owner').text()).toBe('居住 · 租金未定')
+    expect(wrapper.find('.room-owner').text()).toBe('居住')
+    expect(wrapper.text()).not.toContain('租金未定')
     wrapper.unmount()
   })
 })

@@ -186,16 +186,15 @@ function roomBusinessMeta(room: DashboardRoom) {
     room.currentMonthlyRent === undefined ||
     room.currentMonthlyRent === ''
   ) {
-    return `${usage} · 租金未定`
+    return usage
   }
   const monthlyRent = Number(room.currentMonthlyRent)
-  const rentText = Number.isFinite(monthlyRent)
-    ? monthlyRent.toLocaleString('zh-CN', {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-      })
-    : '租金未定'
-  return rentText === '租金未定' ? `${usage} · ${rentText}` : `${usage} · ¥${rentText}/月`
+  if (!Number.isFinite(monthlyRent)) return usage
+  const rentText = monthlyRent.toLocaleString('zh-CN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })
+  return `${usage} · ¥${rentText}/月`
 }
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return '-'
