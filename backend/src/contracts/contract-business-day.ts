@@ -14,3 +14,23 @@ export function contractBusinessDay(now = new Date()): Date {
     Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day)),
   );
 }
+const CHINA_STANDARD_TIME_OFFSET = '+08:00';
+const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
+
+function contractBusinessDayStart(value: string): Date {
+  return new Date(`${value}T00:00:00.000${CHINA_STANDARD_TIME_OFFSET}`);
+}
+
+export function contractBusinessDateRange(from?: string, to?: string) {
+  if (!from && !to) return undefined;
+  return {
+    ...(from ? { gte: contractBusinessDayStart(from) } : {}),
+    ...(to
+      ? {
+          lt: new Date(
+            contractBusinessDayStart(to).getTime() + DAY_IN_MILLISECONDS,
+          ),
+        }
+      : {}),
+  };
+}

@@ -216,7 +216,10 @@ export class DashboardService {
         where: {
           status: 'COMPLETED',
           actualCheckoutDate: { gte: monthFrom, lte: monthTo },
-          ...(buildingId ? { contract: { room: { buildingId } } } : {}),
+          contract: {
+            status: { not: 'VOIDED' },
+            ...(buildingId ? { room: { buildingId } } : {}),
+          },
         },
       }),
     ]);

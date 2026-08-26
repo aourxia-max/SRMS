@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import type { ContractVoidReversalCategory } from '@prisma/client';
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { readFile } from 'fs/promises';
@@ -17,6 +18,23 @@ const sourceValue = (input: CashFlowRow['source']) =>
   input
     ? `${input.entityType}${input.entityId === null ? '' : `#${input.entityId}`}`
     : '';
+const cashFlowCategoryLabels: Record<ContractVoidReversalCategory, string> = {
+  RENT_BILL: '租金账单',
+  PAYMENT: '收款',
+  PAYMENT_ALLOCATION: '收款分配',
+  PREPAYMENT: '预收款',
+  DEPOSIT: '押金',
+  REFUND: '退款',
+  ADJUSTMENT: '账单调整',
+  PRICING_REBATE: '固定月租退差',
+  CHECKOUT: '退租结算',
+  COMMISSION: '租房提成',
+  ROOM_STATUS: '房间状态',
+};
+const categoryValue = (input: CashFlowRow['category']) =>
+  input ? cashFlowCategoryLabels[input] : '';
+const businessReference = (row: CashFlowRow) =>
+  row.flowType === 'CONTRACT_VOID_REVERSAL' ? '' : row.reference;
 
 @Injectable()
 export class FinanceExportService {
@@ -94,7 +112,7 @@ export class FinanceExportService {
     const report = await this.finance.cashFlows(from, to);
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('资金流水');
-    this.header(sheet, '资金流水（纠错发生日期口径）', from, to, user);
+    this.header(sheet, '资金流水（纠错发生日期口径）', from, to, user, 13);
     sheet.addRow([
       '发生日期',
       '原业务日期',
@@ -104,6 +122,7 @@ export class FinanceExportService {
       '方向',
       '外部现金流',
       '计入租金实收',
+      '业务编号',
       '纠错单号',
       '合同编号',
       '原始来源',
@@ -114,12 +133,13 @@ export class FinanceExportService {
         dateValue(row.date),
         dateValue(row.originalOccurredAt),
         row.type,
-        row.category ?? '',
+        categoryValue(row.category),
         value(row.amount),
         row.direction === 'IN' ? '流入' : '流出',
         row.external ? '是' : '否（内部抵扣）',
         row.countsAsRentReceipt ? '是' : '否',
-        row.requestNo ?? row.reference,
+        businessReference(row),
+        row.requestNo ?? '',
         row.contractNo ?? '',
         sourceValue(row.source),
         sourceValue(row.generatedSource),
@@ -134,7 +154,7 @@ export class FinanceExportService {
       `流出：${value(report.outflow)}`,
       `净资金流：${value(report.netCashFlow)}`,
     ]);
-    this.style(sheet, 12);
+    this.style(sheet, 13);
     await this.system.recordFinancialExport(user, 'CASH_FLOW_XLSX', {
       from: from ?? null,
       to: to ?? null,
@@ -181,10 +201,11 @@ export class FinanceExportService {
       dateValue(row.date),
       dateValue(row.originalOccurredAt),
       row.type,
-      row.category ?? '',
+      categoryValue(row.category),
       value(row.amount),
       row.direction === 'IN' ? '流入' : '流出',
-      row.requestNo ?? row.reference,
+      businessReference(row),
+      row.requestNo ?? '',
       row.contractNo ?? '',
       sourceValue(row.source),
       sourceValue(row.generatedSource),
@@ -198,6 +219,7 @@ export class FinanceExportService {
         '类别',
         '金额',
         '方向',
+        '业务编号',
         '纠错单号',
         '合同编号',
         '原始来源',
@@ -294,11 +316,12 @@ export class FinanceExportService {
     from: string | undefined,
     to: string | undefined,
     user: AuthUser,
+    columns = 12,
   ) {
-    sheet.mergeCells('A1:L1');
+    sheet.mergeCells(1, 1, 1, columns);
     sheet.getCell('A1').value = title;
     sheet.getCell('A1').font = { bold: true, size: 14 };
-    sheet.mergeCells('A2:L2');
+    sheet.mergeCells(2, 1, 2, columns);
     sheet.getCell('A2').value =
       `统计期间：${from ?? '全部'} 至 ${to ?? '全部'}；生成时间：${new Date().toLocaleString('zh-CN')}；操作人：${user.displayName}`;
   }

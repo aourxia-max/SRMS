@@ -19,6 +19,7 @@ export interface RentBill {
 export interface ContractSummary {
   id: number
   contractNo: string
+  status?: string
   room?: { id: number; fullHouseNo: string }
   members?: Array<{ tenant?: { id: number; name: string; phone?: string } }>
 }

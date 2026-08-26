@@ -3,9 +3,18 @@ import type { ContractSummary, PaymentDetail, PaymentListPage, RecordPaymentPayl
 
 type Envelope<T> = { code: number; message: string; data: T }
 const data = <T>(response: { data: Envelope<T> }) => response.data.data
+export function paymentContractOptions(contracts: readonly ContractSummary[]) {
+  return contracts.filter((contract) => contract.status !== 'VOIDED')
+}
+
+export function preselectedPaymentContractId(contracts: readonly ContractSummary[], requested: unknown) {
+  const contractId = Number(requested)
+  if (!Number.isInteger(contractId) || contractId <= 0) return undefined
+  return paymentContractOptions(contracts).some((contract) => contract.id === contractId) ? contractId : undefined
+}
 
 export const paymentApi = {
-  async contracts() { return data(await http.get<Envelope<ContractSummary[]>>('/contracts')) },
+  async contracts() { return paymentContractOptions(data(await http.get<Envelope<ContractSummary[]>>('/contracts'))) },
   async bills(contractId: number) { return data(await http.get<Envelope<RentBill[]>>(`/contracts/${contractId}/bills`, { params: { collectible: true } })) },
   async prepayments(contractId: number) { return data(await http.get<Envelope<{ balance: string; items: Record<string, unknown>[] }>>('/payments/prepayments', { params: { contractId } })) },
   async uploadProof(file: File) {

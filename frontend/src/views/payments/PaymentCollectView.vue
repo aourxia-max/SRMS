@@ -6,7 +6,7 @@ import type { UploadRequestOptions } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { createLatestRequestGuard } from '../../services/contracts'
-import { paymentApi } from '../../services/payments'
+import { paymentApi, preselectedPaymentContractId } from '../../services/payments'
 import { checkoutApi } from '../../services/checkout'
 import { useSessionStore } from '../../stores/session'
 import type { ContractSummary, ManualPaymentMethod, RentBill } from '../../types/payments'
@@ -71,8 +71,8 @@ function applySelectedBillsAmount(ids: number[]) {
 
 async function loadContracts() {
   contracts.value = await paymentApi.contracts()
-  const requested = Number(route.query.contractId)
-  if (requested > 0 && contracts.value.some((item) => item.id === requested)) {
+  const requested = preselectedPaymentContractId(contracts.value, route.query.contractId)
+  if (requested) {
     form.contractId = requested
     if (isCheckoutSupplemental.value) {
       clearContractPaymentState()
@@ -137,7 +137,7 @@ async function uploadProof(options: UploadRequestOptions) {
   } catch (error) { ElMessage.error('凭证上传失败'); throw error }
 }
 async function submit() {
-  if (!form.contractId || !form.amount || (!isCheckoutSupplemental.value && selectedBillIds.value.length === 0)) return ElMessage.warning('请完整填写合同、金额并选择账期')
+  if (!form.contractId || !selectedContract.value || !form.amount || (!isCheckoutSupplemental.value && selectedBillIds.value.length === 0)) return ElMessage.warning('请完整填写合同、金额并选择账期')
   if (Number(form.amount) <= 0) return ElMessage.warning('收款金额必须大于 0')
   if (!isCheckoutSupplemental.value && manualAllocation.value && !form.manualAllocationReason.trim()) return ElMessage.warning('跳期分配必须填写人工分配原因')
   if (!isCheckoutSupplemental.value && adjustment.enabled && (!adjustment.rentBillId || Number(adjustment.amount) <= 0 || !adjustment.reason.trim())) return ElMessage.warning('请完整填写优惠/减免信息')

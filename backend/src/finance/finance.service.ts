@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ContractVoidReversalCategory, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { contractBusinessDateRange } from '../contracts/contract-business-day';
 
 const financialReversalCategories: ContractVoidReversalCategory[] = [
   'RENT_BILL',
@@ -156,17 +157,13 @@ export class FinanceService {
     };
   }
   async cashFlows(from?: string, to?: string) {
-    const date =
-      from || to
-        ? {
-            ...(from ? { gte: new Date(from) } : {}),
-            ...(to ? { lte: new Date(to) } : {}),
-          }
-        : undefined;
+    const date = contractBusinessDateRange(from, to);
     const [payments, refunds, deposits, reversals] = await Promise.all([
       this.prisma.db.payment.findMany({
         where: {
-          status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'VOIDED'] },
+          status: {
+            in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED', 'VOIDED'],
+          },
           ...(date ? { paymentDate: date } : {}),
         },
       }),
@@ -214,7 +211,8 @@ export class FinanceService {
         direction: 'IN' as const,
         external: true,
         countsAsRentReceipt:
-          item.paymentCategory === 'RENT' && item.status !== 'VOIDED',
+          item.paymentCategory === 'RENT' &&
+          ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.status),
         reference: item.receiptNo,
         requestNo: null,
         contractNo: null,

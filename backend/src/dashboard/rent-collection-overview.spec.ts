@@ -138,7 +138,10 @@ describe('DashboardService monthly rental movement metrics', () => {
           gte: expect.any(Date),
           lte: expect.any(Date),
         },
-        contract: { room: { buildingId: 2 } },
+        contract: {
+          status: { not: 'VOIDED' },
+          room: { buildingId: 2 },
+        },
       },
     });
     expect(result).toMatchObject({
@@ -166,6 +169,7 @@ describe('DashboardService monthly rental movement metrics', () => {
           gte: expect.any(Date),
           lte: expect.any(Date),
         },
+        contract: { status: { not: 'VOIDED' } },
       },
     });
   });

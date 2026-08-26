@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { paymentApi } from '../../services/payments'
 import { checkoutApi } from '../../services/checkout'
-import type { RentBill } from '../../types/payments'
+import type { ContractSummary, RentBill } from '../../types/payments'
 import PaymentCollectView from './PaymentCollectView.vue'
 
 type Deferred<T> = {
@@ -48,8 +48,8 @@ function bill(id: number, outstandingAmount: string, periodSeq = 1): RentBill {
   }
 }
 
-async function mountView(path = '/payments/collect') {
-  vi.spyOn(paymentApi, 'contracts').mockResolvedValue(contracts)
+async function mountView(path = '/payments/collect', contractRows: ContractSummary[] = contracts) {
+  vi.spyOn(paymentApi, 'contracts').mockResolvedValue(contractRows)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -222,6 +222,24 @@ describe('收款登记合同切换', () => {
     wrapper.unmount()
   })
 
+  it('路由指向已作废合同时不自动选中或提交收款', async () => {
+    const bills = vi.spyOn(paymentApi, 'bills').mockResolvedValue([])
+    const prepayments = vi.spyOn(paymentApi, 'prepayments').mockResolvedValue({ balance: '0.00', items: [] })
+    const record = vi.spyOn(paymentApi, 'record')
+    const { wrapper, contractSelect } = await mountView('/payments/collect?contractId=2', [
+      { ...contracts[0], status: 'ACTIVE' },
+      { ...contracts[1], status: 'VOIDED' },
+    ])
+
+    expect(contractSelect.props('modelValue')).toBeUndefined()
+    expect(bills).not.toHaveBeenCalled()
+    expect(prepayments).not.toHaveBeenCalled()
+    const submit = wrapper.findAll('button').find((button) => button.text().includes('确认收款并生成票据'))
+    if (!submit) throw new Error('submit button not found')
+    await submit.trigger('click')
+    expect(record).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
   it('从租金账单入口自动带入合同并连续选择到目标账期', async () => {
     vi.spyOn(paymentApi, 'bills').mockResolvedValue([
       bill(101, '100.00', 1),
