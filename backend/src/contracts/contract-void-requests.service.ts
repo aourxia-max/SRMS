@@ -10,7 +10,9 @@ import { randomUUID } from 'crypto';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
+import { ContractVoidExecutorService } from './contract-void-executor.service';
 import {
+  ApproveContractVoidRequestDto,
   ListContractVoidRequestsDto,
   SubmitContractVoidRequestDto,
 } from './dto/contract-void.dto';
@@ -55,6 +57,7 @@ export class ContractVoidRequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly previews: ContractVoidPreviewService,
+    private readonly executor?: ContractVoidExecutorService,
   ) {}
 
   async list(query: ListContractVoidRequestsDto, user: AuthUser) {
@@ -189,6 +192,23 @@ export class ContractVoidRequestsService {
         throw new ConflictException('作废申请编号冲突，请重试');
       throw new ConflictException('合同作废申请唯一键冲突，请重试');
     }
+  }
+
+  async approve(
+    id: number,
+    dto: ApproveContractVoidRequestDto,
+    user: AuthUser,
+  ) {
+    if (!this.executor) {
+      throw new ConflictException('合同作废执行服务不可用');
+    }
+    return this.executor.execute(
+      id,
+      dto.previewHash,
+      dto.confirmation,
+      dto.idempotencyKey,
+      user,
+    );
   }
 
   async cancel(id: number, user: AuthUser) {

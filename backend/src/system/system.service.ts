@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   BackupStatus,
@@ -22,6 +23,10 @@ import { Cron } from '@nestjs/schedule';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
+import {
+  hashSecurityAuditRecord,
+  SecurityAuditChainService,
+} from './security-audit-chain.service';
 
 const DEFAULTS: Record<
   string,
@@ -65,8 +70,6 @@ const DEFAULTS: Record<
   },
 };
 
-type JsonObject = { [key: string]: JsonLike };
-type JsonLike = null | boolean | number | string | JsonLike[] | JsonObject;
 type PreRestoreBackup = {
   backupNo: string;
   status: BackupStatus;
@@ -87,22 +90,17 @@ type BackupMetadataSource = {
   startedAt: Date | null;
 };
 
-const stableJson = (value: JsonLike): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object')
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
-      .join(',')}}`;
-  return JSON.stringify(value);
-};
-
 @Injectable()
 export class SystemService {
+  private readonly auditChain: SecurityAuditChainService;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-  ) {}
+    @Optional() auditChain?: SecurityAuditChainService,
+  ) {
+    this.auditChain = auditChain ?? new SecurityAuditChainService();
+  }
 
   async settings() {
     const rows = await this.prisma.db.systemSetting.findMany();
@@ -278,17 +276,16 @@ export class SystemService {
     const legacy: number[] = [];
     for (const [index, row] of rows.entries()) {
       if (!row.recordHash) continue;
-      const payload = stableJson({
+      const expected = hashSecurityAuditRecord({
         eventType: row.eventType,
         entityType: row.entityType,
         entityId: row.entityId,
         operatorId: row.operatorId,
         eventData: row.eventData,
         reason: row.reason,
-        occurredAt: row.occurredAt.toISOString(),
+        occurredAt: row.occurredAt,
         previousHash: row.previousHash,
-      } as JsonLike);
-      const expected = createHash('sha256').update(payload).digest('hex');
+      });
       const isLegacyFirstRecord =
         index === 0 && row.previousHash === null && row.recordHash !== expected;
       if (isLegacyFirstRecord) legacy.push(row.id);
@@ -580,34 +577,13 @@ export class SystemService {
     user: AuthUser,
     eventData: Prisma.InputJsonValue,
   ) {
-    const last = await tx.securityAuditLog.findFirst({
-      where: { recordHash: { not: null } },
-      orderBy: { id: 'desc' },
-    });
-    const occurredAt = new Date();
-    const previousHash = last?.recordHash ?? null;
-    const payload = stableJson({
+    return this.auditChain.append(tx, {
       eventType,
       entityType,
       entityId,
       operatorId: user.id,
       eventData,
       reason: null,
-      occurredAt: occurredAt.toISOString(),
-      previousHash,
-    } as JsonLike);
-    const recordHash = createHash('sha256').update(payload).digest('hex');
-    await tx.securityAuditLog.create({
-      data: {
-        eventType,
-        entityType,
-        entityId,
-        operatorId: user.id,
-        eventData,
-        occurredAt,
-        previousHash,
-        recordHash,
-      },
     });
   }
 

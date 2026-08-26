@@ -28,6 +28,7 @@ import type { UploadedFile as StoredFile } from '../files/files.service';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
 import { ContractVoidRequestsService } from './contract-void-requests.service';
 import {
+  ApproveContractVoidRequestDto,
   ListContractVoidRequestsDto,
   RejectContractVoidRequestDto,
   SubmitContractVoidRequestDto,
@@ -135,6 +136,20 @@ export class ContractVoidController {
       code: 200,
       message: 'success',
       data: await this.requests.submit(dto, user),
+    };
+  }
+
+  @Post('void-requests/:id/approve')
+  @Roles(UserRole.SUPER_ADMIN)
+  async approve(
+    @Param('id', positiveIntPipe) id: number,
+    @Body() dto: ApproveContractVoidRequestDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.requests.approve(id, dto, user),
     };
   }
 

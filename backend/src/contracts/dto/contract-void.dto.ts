@@ -2,6 +2,7 @@ import { ContractVoidRequestStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayUnique,
+  Equals,
   IsArray,
   IsEnum,
   IsInt,
@@ -62,6 +63,20 @@ export class SubmitContractVoidRequestDto {
 
   @IsString({ message: '提交幂等键必须为文本' })
   @Length(16, 100, { message: '提交幂等键长度必须为16至100个字符' })
+  idempotencyKey!: string;
+}
+
+export class ApproveContractVoidRequestDto {
+  @IsString({ message: '影响摘要哈希必须为文本' })
+  @Matches(/^[0-9a-f]{64}$/, { message: '影响摘要哈希格式无效' })
+  previewHash!: string;
+
+  @IsString({ message: '确认文本必须为文本' })
+  @Equals('确认作废合同', { message: '确认文本必须为“确认作废合同”' })
+  confirmation!: string;
+
+  @IsString({ message: '执行幂等键必须为文本' })
+  @Length(16, 100, { message: '执行幂等键长度必须为16至100个字符' })
   idempotencyKey!: string;
 }
 
