@@ -7,7 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserRole } from '@prisma/client';
+import { ContractVoidRequestStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   billAmount,
@@ -117,16 +117,58 @@ export class ContractsService {
   }
 
   async detail(contractId: number, user: AuthUser) {
-    return this.prisma.db.contract.findUniqueOrThrow({
-      where: { id: contractId },
-      include: {
-        members: { where: { isCurrent: true }, include: { tenant: true } },
-        concessions: { where: { status: 'ACTIVE' } },
-        ...(user.role === UserRole.SUPER_ADMIN
-          ? { commissions: { where: { deletedAt: null } } }
-          : {}),
-      },
-    });
+    const { voidRequests = [], ...contract } =
+      await this.prisma.db.contract.findUniqueOrThrow({
+        where: { id: contractId },
+        include: {
+          members: { where: { isCurrent: true }, include: { tenant: true } },
+          concessions: { where: { status: 'ACTIVE' } },
+          voidRequests: {
+            where: { status: { in: ['PENDING', 'COMPLETED'] } },
+            select: {
+              id: true,
+              requestNo: true,
+              status: true,
+              completedAt: true,
+            },
+            orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
+          },
+          ...(user.role === UserRole.SUPER_ADMIN
+            ? { commissions: { where: { deletedAt: null } } }
+            : {}),
+        },
+      });
+    const priority: Record<ContractVoidRequestStatus, number> = {
+      COMPLETED: 0,
+      PENDING: 1,
+      REJECTED: 2,
+      CANCELLED: 2,
+    };
+    const selected = voidRequests
+      .filter(
+        (item) => item.status === 'COMPLETED' || item.status === 'PENDING',
+      )
+      .sort((left, right) => {
+        const byStatus = priority[left.status] - priority[right.status];
+        if (byStatus !== 0) return byStatus;
+        const byCompletion =
+          (right.completedAt?.getTime() ?? 0) -
+          (left.completedAt?.getTime() ?? 0);
+        return byCompletion || right.id - left.id;
+      })[0];
+    return {
+      ...contract,
+      ...(selected
+        ? {
+            voidRequest: {
+              id: selected.id,
+              requestNo: selected.requestNo,
+              status: selected.status,
+              completedAt: selected.completedAt,
+            },
+          }
+        : {}),
+    };
   }
 
   async changes(contractId: number) {

@@ -141,7 +141,8 @@ export class RentBillsService {
     ]);
     const businessRows = all.filter(
       (item) =>
-        !(['VOIDED', 'REFUNDED'] as RentBillStatus[]).includes(item.status),
+        !(['VOIDED', 'REFUNDED'] as RentBillStatus[]).includes(item.status) &&
+        item.contract.status !== 'VOIDED',
     );
     const summary = businessRows.reduce(
       (result, bill) => {

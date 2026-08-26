@@ -177,4 +177,33 @@ describe('DashboardService room map monthly rent visibility', () => {
     expect(roomSummary.rooms[0]).not.toHaveProperty('currentMonthlyRent');
     expect(roomSummary.rooms[0]).not.toHaveProperty('contracts');
   });
+
+  it('excludes voided contracts from reminder, arrears and monthly move-in operating queries', async () => {
+    const { prisma, finance } = dependencies([]);
+
+    await new DashboardService(prisma, finance).summary({
+      id: 1,
+      role: 'SUPER_ADMIN',
+    });
+
+    const calls = prisma.db.rentBill.findMany.mock.calls as Array<
+      [{ where: Record<string, unknown> }]
+    >;
+    const billQueries = calls.map(([query]) => query.where);
+    expect(billQueries).toHaveLength(2);
+    expect(billQueries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: { notIn: ['VOIDED', 'REFUNDED'] },
+          contract: { status: { not: 'VOIDED' } },
+        }),
+      ]),
+    );
+    expect(prisma.db.contract.count).toHaveBeenCalledWith({
+      where: {
+        status: { notIn: ['DRAFT', 'VOIDED'] },
+        startDate: { gte: expect.any(Date), lte: expect.any(Date) },
+      },
+    });
+  });
 });

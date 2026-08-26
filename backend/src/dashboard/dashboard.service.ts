@@ -121,6 +121,7 @@ export class DashboardService {
           dueDate: { gte: now, lte: in7 },
           outstandingAmount: { gt: 0 },
           status: { notIn: ['VOIDED', 'REFUNDED'] },
+          contract: { status: { not: 'VOIDED' } },
         },
         include: {
           contract: {
@@ -141,6 +142,7 @@ export class DashboardService {
           dueDate: { lt: now },
           outstandingAmount: { gt: 0 },
           status: { notIn: ['VOIDED', 'REFUNDED'] },
+          contract: { status: { not: 'VOIDED' } },
         },
         include: {
           contract: {
@@ -205,7 +207,7 @@ export class DashboardService {
         : Promise.resolve(null),
       this.prisma.db.contract.count({
         where: {
-          status: { not: 'DRAFT' },
+          status: { notIn: ['DRAFT', 'VOIDED'] },
           startDate: { gte: monthFrom, lte: monthTo },
           ...(buildingId ? { room: { buildingId } } : {}),
         },

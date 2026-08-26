@@ -35,6 +35,24 @@ describe('CommissionsService', () => {
     role: UserRole.SUPER_ADMIN,
   };
 
+  it('excludes commissions belonging to voided contracts from list and export data', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CommissionsService({
+      db: { contractCommission: { findMany } },
+    } as never);
+
+    await service.list();
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        deletedAt: null,
+        contract: { status: { not: 'VOIDED' } },
+      },
+      include: { contract: { include: { room: true } } },
+      orderBy: { id: 'desc' },
+    });
+  });
+
   it('restores a matching soft-deleted commission instead of violating the unique key', async () => {
     const deleted = {
       id: 31,

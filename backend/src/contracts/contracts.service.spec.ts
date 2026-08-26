@@ -64,6 +64,109 @@ describe('ContractsService', () => {
     primaryTenantId: 1,
   };
 
+  it('returns a stable completed correction summary and ignores cancelled or rejected requests', async () => {
+    const completedAt = new Date('2026-08-26T10:00:00.000Z');
+    const findUniqueOrThrow = jest.fn().mockResolvedValue({
+      id: 7,
+      contractNo: 'HT20260007',
+      status: 'VOIDED',
+      members: [],
+      concessions: [],
+      voidRequests: [
+        {
+          id: 74,
+          requestNo: 'HTZF-CANCELLED',
+          status: 'CANCELLED',
+          completedAt: null,
+        },
+        {
+          id: 73,
+          requestNo: 'HTZF-PENDING',
+          status: 'PENDING',
+          completedAt: null,
+        },
+        {
+          id: 72,
+          requestNo: 'HTZF-COMPLETED',
+          status: 'COMPLETED',
+          completedAt,
+        },
+        {
+          id: 71,
+          requestNo: 'HTZF-REJECTED',
+          status: 'REJECTED',
+          completedAt: null,
+        },
+      ],
+    });
+    const service = new ContractsService({
+      db: { contract: { findUniqueOrThrow } },
+    } as never);
+
+    const result = await service.detail(7, admin);
+
+    expect(findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 7 },
+        include: expect.objectContaining({
+          voidRequests: expect.objectContaining({
+            where: { status: { in: ['PENDING', 'COMPLETED'] } },
+          }),
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      id: 7,
+      status: 'VOIDED',
+      voidRequest: {
+        id: 72,
+        requestNo: 'HTZF-COMPLETED',
+        status: 'COMPLETED',
+        completedAt,
+      },
+    });
+    expect(result).not.toHaveProperty('voidRequests');
+  });
+
+  it('returns the newest pending correction summary when no request is completed', async () => {
+    const service = new ContractsService({
+      db: {
+        contract: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 8,
+            contractNo: 'HT20260008',
+            status: 'ACTIVE',
+            members: [],
+            concessions: [],
+            voidRequests: [
+              {
+                id: 81,
+                requestNo: 'HTZF-PENDING-OLD',
+                status: 'PENDING',
+                completedAt: null,
+              },
+              {
+                id: 82,
+                requestNo: 'HTZF-PENDING-NEW',
+                status: 'PENDING',
+                completedAt: null,
+              },
+            ],
+          }),
+        },
+      },
+    } as never);
+
+    await expect(service.detail(8, admin)).resolves.toMatchObject({
+      voidRequest: {
+        id: 82,
+        requestNo: 'HTZF-PENDING-NEW',
+        status: 'PENDING',
+        completedAt: null,
+      },
+    });
+  });
+
   it('rejects an overlapping effective contract before creating any data', async () => {
     const tx = {
       room: {

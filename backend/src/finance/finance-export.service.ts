@@ -5,12 +5,18 @@ import { PDFDocument, rgb } from 'pdf-lib';
 import { readFile } from 'fs/promises';
 import type { AuthUser } from '../auth/auth-user.type';
 import { SystemService } from '../system/system.service';
-import { FinanceService } from './finance.service';
+import { FinanceService, type CashFlowRow } from './finance.service';
 import { CommissionsService } from './commissions.service';
 
 const value = (
   input: { toString(): string } | string | number | boolean | null | undefined,
 ) => (input === null || input === undefined ? '' : input.toString());
+const dateValue = (input: Date | null) =>
+  input ? input.toISOString().slice(0, 10) : '';
+const sourceValue = (input: CashFlowRow['source']) =>
+  input
+    ? `${input.entityType}${input.entityId === null ? '' : `#${input.entityId}`}`
+    : '';
 
 @Injectable()
 export class FinanceExportService {
@@ -88,35 +94,47 @@ export class FinanceExportService {
     const report = await this.finance.cashFlows(from, to);
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('资金流水');
-    this.header(sheet, '资金流水（实际收付日期口径）', from, to, user);
+    this.header(sheet, '资金流水（纠错发生日期口径）', from, to, user);
     sheet.addRow([
       '发生日期',
-      '类型',
+      '原业务日期',
+      '流水类型',
+      '类别',
       '金额',
       '方向',
       '外部现金流',
       '计入租金实收',
-      '业务编号',
+      '纠错单号',
+      '合同编号',
+      '原始来源',
+      '生成来源',
     ]);
     report.flows.forEach((row) =>
       sheet.addRow([
-        row.date.toISOString().slice(0, 10),
+        dateValue(row.date),
+        dateValue(row.originalOccurredAt),
         row.type,
+        row.category ?? '',
         value(row.amount),
         row.direction === 'IN' ? '流入' : '流出',
         row.external ? '是' : '否（内部抵扣）',
         row.countsAsRentReceipt ? '是' : '否',
-        row.reference,
+        row.requestNo ?? row.reference,
+        row.contractNo ?? '',
+        sourceValue(row.source),
+        sourceValue(row.generatedSource),
       ]),
     );
     sheet.addRow([
       '合计',
       '',
+      '',
+      '',
       `流入：${value(report.inflow)}`,
       `流出：${value(report.outflow)}`,
       `净资金流：${value(report.netCashFlow)}`,
     ]);
-    this.style(sheet, 7);
+    this.style(sheet, 12);
     await this.system.recordFinancialExport(user, 'CASH_FLOW_XLSX', {
       from: from ?? null,
       to: to ?? null,
@@ -160,16 +178,31 @@ export class FinanceExportService {
   ) {
     const report = await this.finance.cashFlows(from, to);
     const rows = report.flows.map((row) => [
-      row.date.toISOString().slice(0, 10),
+      dateValue(row.date),
+      dateValue(row.originalOccurredAt),
       row.type,
+      row.category ?? '',
       value(row.amount),
       row.direction === 'IN' ? '流入' : '流出',
-      row.external ? '外部' : '内部抵扣',
-      row.reference,
+      row.requestNo ?? row.reference,
+      row.contractNo ?? '',
+      sourceValue(row.source),
+      sourceValue(row.generatedSource),
     ]);
     const file = await this.tablePdf(
-      '资金流水（实际收付日期口径）',
-      ['日期', '类型', '金额', '方向', '现金流', '业务编号'],
+      '资金流水（纠错发生日期口径）',
+      [
+        '发生日期',
+        '原业务日期',
+        '类型',
+        '类别',
+        '金额',
+        '方向',
+        '纠错单号',
+        '合同编号',
+        '原始来源',
+        '生成来源',
+      ],
       rows,
       from,
       to,
@@ -262,10 +295,10 @@ export class FinanceExportService {
     to: string | undefined,
     user: AuthUser,
   ) {
-    sheet.mergeCells('A1:K1');
+    sheet.mergeCells('A1:L1');
     sheet.getCell('A1').value = title;
     sheet.getCell('A1').font = { bold: true, size: 14 };
-    sheet.mergeCells('A2:K2');
+    sheet.mergeCells('A2:L2');
     sheet.getCell('A2').value =
       `统计期间：${from ?? '全部'} 至 ${to ?? '全部'}；生成时间：${new Date().toLocaleString('zh-CN')}；操作人：${user.displayName}`;
   }

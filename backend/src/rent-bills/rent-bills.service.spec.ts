@@ -18,6 +18,7 @@ function bill(overrides: Record<string, unknown> = {}) {
     contract: {
       id: 1,
       contractNo: 'HT2026080101',
+      status: 'ACTIVE',
       room: {
         id: 11,
         fullHouseNo: '1栋101',
@@ -123,6 +124,45 @@ describe('RentBillsService', () => {
     });
   });
 
+  it('keeps bills of a voided contract visible but excludes them from the business summary', async () => {
+    const rows = [
+      bill(),
+      bill({
+        id: 2,
+        payableAmount: new Prisma.Decimal('5000'),
+        receivedAmount: new Prisma.Decimal('5000'),
+        outstandingAmount: new Prisma.Decimal('0'),
+        contract: {
+          ...bill().contract,
+          id: 2,
+          contractNo: 'HT2026080102',
+          status: 'VOIDED',
+        },
+      }),
+    ];
+    const prisma = {
+      db: {
+        rentBill: {
+          findMany: jest.fn().mockResolvedValue(rows),
+          count: jest.fn().mockResolvedValue(2),
+        },
+      },
+    } as any;
+
+    const result = await new RentBillsService(prisma).list({
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.summary).toMatchObject({
+      payable: '3000.00',
+      received: '1500.00',
+      outstanding: '1500.00',
+      count: 1,
+    });
+  });
   it('returns detail relations without sensitive tenant or payment account fields', async () => {
     const row = {
       ...bill(),

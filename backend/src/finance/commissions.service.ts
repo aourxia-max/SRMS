@@ -9,7 +9,10 @@ export class CommissionsService {
   constructor(private readonly prisma: PrismaService) {}
   async list() {
     return this.prisma.db.contractCommission.findMany({
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        contract: { status: { not: 'VOIDED' } },
+      },
       include: { contract: { include: { room: true } } },
       orderBy: { id: 'desc' },
     });

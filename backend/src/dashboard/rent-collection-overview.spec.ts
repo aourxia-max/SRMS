@@ -126,7 +126,7 @@ describe('DashboardService monthly rental movement metrics', () => {
 
     expect(prisma.db.contract.count).toHaveBeenCalledWith({
       where: {
-        status: { not: 'DRAFT' },
+        status: { notIn: ['DRAFT', 'VOIDED'] },
         startDate: { gte: expect.any(Date), lte: expect.any(Date) },
         room: { buildingId: 2 },
       },
@@ -155,7 +155,7 @@ describe('DashboardService monthly rental movement metrics', () => {
 
     expect(prisma.db.contract.count).toHaveBeenCalledWith({
       where: {
-        status: { not: 'DRAFT' },
+        status: { notIn: ['DRAFT', 'VOIDED'] },
         startDate: { gte: expect.any(Date), lte: expect.any(Date) },
       },
     });
