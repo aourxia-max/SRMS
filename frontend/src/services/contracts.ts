@@ -12,6 +12,12 @@ import type {
   ContractRole,
   PricingRebate,
   RentBill,
+  ApproveContractVoidRequestInput,
+  ContractVoidExecutionResult,
+  ContractVoidImpact,
+  ContractVoidRequest,
+  ContractVoidRequestQuery,
+  SubmitContractVoidRequestInput,
 } from '../types/contracts'
 
 type ApiResponse<T> = { code: number; message: string; data: T }
@@ -204,4 +210,32 @@ export function filterFixedRentRebateContracts(contracts: ContractListItem[], ke
     if (!normalized) return true
     return fixedRentRebateContractLabel(contract).toLocaleLowerCase('zh-CN').includes(normalized)
   })
+}
+
+export async function previewContractVoid(id: number) {
+  return (await http.get<ApiResponse<ContractVoidImpact>>(`/contracts/${id}/void-preview`)).data.data
+}
+
+export async function listContractVoidRequests(query: ContractVoidRequestQuery = {}) {
+  return (await http.get<ApiResponse<ContractVoidRequest[]>>('/contracts/void-requests', { params: query })).data.data
+}
+
+export async function getContractVoidRequest(id: number) {
+  return (await http.get<ApiResponse<ContractVoidRequest>>(`/contracts/void-requests/${id}`)).data.data
+}
+
+export async function submitContractVoidRequest(payload: SubmitContractVoidRequestInput) {
+  return (await http.post<ApiResponse<ContractVoidRequest>>('/contracts/void-requests', payload)).data.data
+}
+
+export async function cancelContractVoidRequest(id: number) {
+  return (await http.post<ApiResponse<ContractVoidRequest>>(`/contracts/void-requests/${id}/cancel`)).data.data
+}
+
+export async function approveContractVoidRequest(id: number, payload: ApproveContractVoidRequestInput) {
+  return (await http.post<ApiResponse<ContractVoidExecutionResult>>(`/contracts/void-requests/${id}/approve`, payload)).data.data
+}
+
+export async function rejectContractVoidRequest(id: number, reason: string) {
+  return (await http.post<ApiResponse<ContractVoidRequest>>(`/contracts/void-requests/${id}/reject`, { reason })).data.data
 }

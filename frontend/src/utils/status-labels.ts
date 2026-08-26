@@ -111,7 +111,10 @@ export const paymentMethodLabels: StatusMap = {
 export const approvalStatusLabel = (value?: string | null) => fallback(approvalStatusLabels, value);
 export const paymentStatusLabel = (value?: string | null) => safeBusinessLabel(paymentStatusLabels, value);
 export const rentBillStatusLabel = (value?: string | null) => safeBusinessLabel(rentBillStatusLabels, value);
-export const contractStatusLabel = (value?: string | null) => safeBusinessLabel(contractStatusLabels, value);
+export const contractStatusLabel = (value?: string | null) => {
+  if (!value) return '—';
+  return contractStatusLabels[value] ?? `未知状态（${value}）`;
+};
 export const contractStatusTagType = (value?: string | null): StatusTagType =>
   value ? contractStatusTagTypes[value] ?? "info" : "info";
 export const contractStatusTagClass = (value?: string | null) =>

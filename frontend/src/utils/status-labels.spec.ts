@@ -34,7 +34,7 @@ describe("status label helpers", () => {
     expect(contractStatusTagClass("PENDING_CHECKOUT")).toBe("contract-status-tag--pending-checkout");
     expect(contractStatusTagType("ENDED")).toBe("primary");
     expect(contractStatusTagType("VOIDED")).toBe("danger");
-    expect(contractStatusLabel("UNEXPECTED")).toBe("未知状态");
+    expect(contractStatusLabel("UNEXPECTED")).toBe("未知状态（UNEXPECTED）");
   });
 
   it("translates business operation codes instead of exposing raw English", () => {
