@@ -74,6 +74,7 @@ enum FileCategory {
   TENANT_ID
   CONTRACT
   PAYMENT_PROOF
+  CONTRACT_VOID_PROOF
   DEPOSIT_REFUND_PROOF
   PRICING_REBATE_PROOF
   IMPORT
@@ -101,6 +102,27 @@ enum ContractStatus {
   PENDING_CHECKOUT
   ENDED
   VOIDED
+}
+
+enum ContractVoidRequestStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+enum ContractVoidReversalCategory {
+  RENT_BILL
+  PAYMENT
+  PAYMENT_ALLOCATION
+  PREPAYMENT
+  DEPOSIT
+  REFUND
+  ADJUSTMENT
+  PRICING_REBATE
+  CHECKOUT
+  COMMISSION
+  ROOM_STATUS
 }
 
 enum PricingMode {
@@ -350,6 +372,7 @@ model FileAsset {
   paymentFiles                PaymentFile[]
   contractFiles               ContractFile[]
   exportTasks                 ExportTask[]
+  contractVoidRequestFiles    ContractVoidRequestFile[]
 
   @@index([category, uploadedAt])
   @@map("file_assets")
@@ -574,6 +597,7 @@ model Contract {
   commissions            ContractCommission[]
   files                  ContractFile[]
   currentPricingTier     ContractPricingTier?    @relation("ContractCurrentPricingTier", fields: [currentPricingTierId], references: [id], onDelete: Restrict)
+  voidRequests           ContractVoidRequest[]
 
   @@index([roomId, startDate, endDate, status])
   @@index([status, nextDueDate])
@@ -605,6 +629,71 @@ model ContractFile {
 
   @@id([contractId, fileAssetId])
   @@map("contract_files")
+}
+
+model ContractVoidRequest {
+  id                      Int                       @id @default(autoincrement()) @db.UnsignedInt
+  requestNo               String                    @unique @map("request_no") @db.VarChar(40)
+  contractId              Int                       @map("contract_id") @db.UnsignedInt
+  status                  ContractVoidRequestStatus @default(PENDING)
+  reason                  String                    @db.VarChar(500)
+  impactSnapshot          Json                      @map("impact_snapshot")
+  impactHash              String                    @map("impact_hash") @db.Char(64)
+  activeContractKey       String?                   @unique @map("active_contract_key") @db.VarChar(80)
+  completedContractKey    String?                   @unique @map("completed_contract_key") @db.VarChar(80)
+  executionBatchNo        String?                   @unique @map("execution_batch_no") @db.VarChar(40)
+  executionIdempotencyKey String?                   @unique @map("execution_idempotency_key") @db.VarChar(100)
+  resultSnapshot          Json?                     @map("result_snapshot")
+  submittedBy             Int                       @map("submitted_by") @db.UnsignedInt
+  submittedAt             DateTime                  @default(now()) @map("submitted_at") @db.DateTime(3)
+  completedBy             Int?                      @map("completed_by") @db.UnsignedInt
+  completedAt             DateTime?                 @map("completed_at") @db.DateTime(3)
+  rejectedBy              Int?                      @map("rejected_by") @db.UnsignedInt
+  rejectedAt              DateTime?                 @map("rejected_at") @db.DateTime(3)
+  rejectedReason          String?                   @map("rejected_reason") @db.VarChar(500)
+  cancelledBy             Int?                      @map("cancelled_by") @db.UnsignedInt
+  cancelledAt             DateTime?                 @map("cancelled_at") @db.DateTime(3)
+  createdAt               DateTime                  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt               DateTime                  @updatedAt @map("updated_at") @db.DateTime(3)
+  contract                Contract                  @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  reversals               ContractVoidReversal[]
+  files                   ContractVoidRequestFile[]
+
+  @@index([contractId, status, submittedAt])
+  @@map("contract_void_requests")
+}
+
+model ContractVoidReversal {
+  id                    Int                          @id @default(autoincrement()) @db.UnsignedInt
+  contractVoidRequestId Int                          @map("contract_void_request_id") @db.UnsignedInt
+  category              ContractVoidReversalCategory
+  originalEntityType    String                       @map("original_entity_type") @db.VarChar(60)
+  originalEntityId      Int?                         @map("original_entity_id") @db.UnsignedInt
+  amount                Decimal                      @db.Decimal(14, 2)
+  balanceBefore         Decimal?                     @map("balance_before") @db.Decimal(14, 2)
+  balanceAfter          Decimal?                     @map("balance_after") @db.Decimal(14, 2)
+  generatedEntityType   String?                      @map("generated_entity_type") @db.VarChar(60)
+  generatedEntityId     Int?                         @map("generated_entity_id") @db.UnsignedInt
+  originalOccurredAt    DateTime?                    @map("original_occurred_at") @db.DateTime(3)
+  correctionOccurredAt  DateTime                     @map("correction_occurred_at") @db.DateTime(3)
+  idempotencyKey        String                       @unique @map("idempotency_key") @db.VarChar(160)
+  metadata              Json?
+  request               ContractVoidRequest          @relation(fields: [contractVoidRequestId], references: [id], onDelete: Restrict)
+
+  @@index([contractVoidRequestId, category])
+  @@index([originalEntityType, originalEntityId])
+  @@map("contract_void_reversals")
+}
+
+model ContractVoidRequestFile {
+  contractVoidRequestId Int                 @map("contract_void_request_id") @db.UnsignedInt
+  fileAssetId           Int                 @map("file_asset_id") @db.UnsignedInt
+  createdAt             DateTime            @default(now()) @map("created_at") @db.DateTime(3)
+  request               ContractVoidRequest @relation(fields: [contractVoidRequestId], references: [id], onDelete: Restrict)
+  fileAsset             FileAsset           @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@id([contractVoidRequestId, fileAssetId])
+  @@map("contract_void_request_files")
 }
 
 model ContractCommission {
