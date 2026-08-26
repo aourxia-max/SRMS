@@ -45,6 +45,13 @@ const requestInclude = {
   },
 } satisfies Prisma.ContractVoidRequestInclude;
 
+const requestDetailInclude = {
+  ...requestInclude,
+  reversals: {
+    orderBy: [{ correctionOccurredAt: 'asc' }, { id: 'asc' }],
+  },
+} satisfies Prisma.ContractVoidRequestInclude;
+
 type IdempotentRequest = {
   contractId: number;
   reason: string;
@@ -98,7 +105,7 @@ export class ContractVoidRequestsService {
     this.assertCanView(user);
     const request = await this.prisma.db.contractVoidRequest.findUnique({
       where: { id },
-      include: requestInclude,
+      include: requestDetailInclude,
     });
     if (!request) throw new NotFoundException('合同作废申请不存在');
     return request;

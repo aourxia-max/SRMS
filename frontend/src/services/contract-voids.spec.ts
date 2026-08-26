@@ -35,4 +35,14 @@ describe('合同作废 API 客户端', () => {
     expect(http.post).toHaveBeenNthCalledWith(2, '/contracts/void-requests/9/approve', { previewHash: impactHash, confirmation: '确认作废合同', idempotencyKey: 'execute-contract-void-0001' })
     expect(http.post).toHaveBeenNthCalledWith(3, '/contracts/void-requests/9/reject', { reason: '资料不完整' })
   })
+  it('保留详情返回的冲销来源、金额字符串和日期字段', async () => {
+    const detail = { id: 9, reversals: [{ id: 4, category: 'PAYMENT', amount: '-12.50', originalEntityType: 'Payment', originalEntityId: 31, generatedEntityType: 'PaymentReversal', generatedEntityId: 71, originalOccurredAt: '2026-08-20T00:00:00.000Z', correctionOccurredAt: '2026-08-26T00:00:00.000Z', idempotencyKey: 'contract-void:9:PAYMENT:31' }] }
+    vi.mocked(http.get).mockResolvedValue({ data: { code: 200, message: 'success', data: detail } })
+
+    const result = await (contracts as any).getContractVoidRequest(9)
+
+    expect(result.reversals).toEqual(detail.reversals)
+    expect(result.reversals[0].amount).toBe('-12.50')
+    expect(http.get).toHaveBeenCalledWith('/contracts/void-requests/9')
+  })
 })

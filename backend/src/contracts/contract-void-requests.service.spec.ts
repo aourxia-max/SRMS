@@ -3,7 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ContractVoidRequestsService } from './contract-void-requests.service';
@@ -497,5 +497,77 @@ describe('ContractVoidRequestsService', () => {
       '申请状态已变化，请刷新后重试',
     );
     expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('ContractVoidRequestsService reversal detail contract', () => {
+  it('loads deterministically ordered reversals and serializes monetary and date fields for detail', async () => {
+    const findUnique = jest.fn().mockImplementation(({ include }) => {
+      if (!include.reversals) return Promise.resolve({ id: 9 });
+      return Promise.resolve({
+        id: 9,
+        reversals: [
+          {
+            id: 4,
+            contractVoidRequestId: 9,
+            category: 'PAYMENT',
+            originalEntityType: 'Payment',
+            originalEntityId: 31,
+            amount: new Prisma.Decimal('-12.50'),
+            balanceBefore: new Prisma.Decimal('12.50'),
+            balanceAfter: new Prisma.Decimal('0.00'),
+            generatedEntityType: 'PaymentReversal',
+            generatedEntityId: 71,
+            originalOccurredAt: new Date('2026-08-20T00:00:00.000Z'),
+            correctionOccurredAt: new Date('2026-08-26T00:00:00.000Z'),
+            idempotencyKey: 'contract-void:9:PAYMENT:31',
+            metadata: { paymentId: 31 },
+          },
+        ],
+      });
+    });
+    const service = new ContractVoidRequestsService(
+      { db: { contractVoidRequest: { findUnique } } } as never,
+      {} as never,
+    );
+
+    const result = JSON.parse(JSON.stringify(await service.detail(9, admin)));
+
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 9 },
+      include: expect.objectContaining({
+        reversals: {
+          orderBy: [{ correctionOccurredAt: 'asc' }, { id: 'asc' }],
+        },
+      }),
+    });
+    expect(result.reversals).toEqual([
+      expect.objectContaining({
+        amount: '-12.5',
+        balanceBefore: '12.5',
+        balanceAfter: '0',
+        originalOccurredAt: '2026-08-20T00:00:00.000Z',
+        correctionOccurredAt: '2026-08-26T00:00:00.000Z',
+        generatedEntityType: 'PaymentReversal',
+        generatedEntityId: 71,
+        idempotencyKey: 'contract-void:9:PAYMENT:31',
+      }),
+    ]);
+  });
+
+  it('keeps reversals out of list queries', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new ContractVoidRequestsService(
+      { db: { contractVoidRequest: { findMany } } } as never,
+      {} as never,
+    );
+
+    await service.list({}, admin);
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.not.objectContaining({ reversals: expect.anything() }),
+      }),
+    );
   });
 });
