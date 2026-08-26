@@ -81,6 +81,9 @@ export class FilesService {
       throw new ServiceUnavailableException('证件附件类型限制未配置');
     return values;
   }
+  private contractVoidProofFolder() {
+    return resolve(process.cwd(), '..', 'uploads', 'contract-void-proofs');
+  }
   private folder() {
     return resolve(process.cwd(), '..', 'uploads', 'tenant-ids');
   }
@@ -186,6 +189,49 @@ export class FilesService {
     return { asset: item.fileAsset, content };
   }
 
+  async saveContractVoidProof(file: UploadedFile, user: AuthUser) {
+    if (!file || !file.buffer)
+      throw new BadRequestException('请上传合同作废证明');
+    const limit = await this.configLimit();
+    if (file.size > limit || file.buffer.length > limit)
+      throw new BadRequestException('附件超过允许大小');
+    if (
+      !this.allowedTypes().includes(file.mimetype) ||
+      !signatures[file.mimetype]?.(file.buffer)
+    )
+      throw new BadRequestException('附件类型或内容不符合限制');
+
+    const originalName = basename(file.originalname);
+    const extension = extname(originalName).toLowerCase();
+    const storedName = `${randomUUID()}${extension}`;
+    const storageKey = `contract-void-proofs/${storedName}`;
+    await mkdir(this.contractVoidProofFolder(), { recursive: true });
+    await writeFile(
+      resolve(this.contractVoidProofFolder(), storedName),
+      file.buffer,
+      { flag: 'wx' },
+    );
+    const asset = await this.prisma.db.fileAsset.create({
+      data: {
+        storageKey,
+        originalName,
+        storedName,
+        mimeType: file.mimetype,
+        extension,
+        sizeBytes: BigInt(file.buffer.length),
+        sha256: createHash('sha256').update(file.buffer).digest('hex'),
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: user.id,
+      },
+    });
+    return {
+      id: asset.id,
+      originalName: asset.originalName,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes.toString(),
+      uploadedAt: asset.uploadedAt,
+    };
+  }
   async savePaymentProof(file: UploadedFile, user: AuthUser) {
     if (!file || !file.buffer) throw new BadRequestException('请上传收款凭证');
     if (file.size > (await this.configLimit()))

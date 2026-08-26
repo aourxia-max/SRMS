@@ -561,3 +561,55 @@ describe('FilesService contract files', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('FilesService contract void proofs', () => {
+  it('stores a validated proof as a staged contract-void asset', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 61,
+      originalName: 'proof.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 9n,
+      uploadedAt: new Date('2026-08-26T00:00:00Z'),
+    });
+    const service = new FilesService(
+      {
+        db: {
+          systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
+          fileAsset: { create },
+        },
+      } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'TENANT_FILE_MAX_SIZE_BYTES'
+            ? '10485760'
+            : 'application/pdf,image/jpeg,image/png,image/webp',
+        ),
+      } as never,
+    );
+    const content = Buffer.from('%PDF-1.7');
+
+    await expect(
+      service.saveContractVoidProof(
+        {
+          originalname: 'proof.pdf',
+          mimetype: 'application/pdf',
+          size: content.length,
+          buffer: content,
+        },
+        {
+          id: 2,
+          username: 'admin',
+          displayName: '\u7ba1\u7406\u5458',
+          role: UserRole.ADMIN,
+        },
+      ),
+    ).resolves.toEqual(expect.objectContaining({ id: 61, sizeBytes: '9' }));
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: 2,
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+    });
+  });
+});
