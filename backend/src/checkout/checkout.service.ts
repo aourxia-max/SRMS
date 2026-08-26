@@ -327,6 +327,15 @@ export class CheckoutService {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${contractId} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT room_id FROM contracts WHERE id = ${contractId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
+      );
       const contract = await tx.contract.findUniqueOrThrow({
         where: { id: contractId },
         include: { room: true },
@@ -377,6 +386,18 @@ export class CheckoutService {
   async submit(id: number, dto: SubmitCheckoutSettlementDto, user: AuthUser) {
     const actual = new Date(dto.actualCheckoutDate);
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) ORDER BY id FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlement_items WHERE checkout_settlement_id = ${id} ORDER BY id FOR UPDATE`,
+      );
       const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
         include: { contract: { include: { bills: true } } },
@@ -707,26 +728,42 @@ export class CheckoutService {
     });
   }
   async reject(id: number, reason: string, user: AuthUser) {
-    const settlement =
-      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
+      );
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
         include: { contract: { select: { status: true } } },
       });
-    if (settlement.status !== 'PENDING')
-      throw new BadRequestException('只有待确认结算单可以驳回');
-    assertContractNotVoided(settlement.contract.status, '驳回退租结算');
-    return this.prisma.db.checkoutSettlement.update({
-      where: { id },
-      data: {
-        status: 'REJECTED',
-        rejectedReason: reason,
-        approvedBy: user.id,
-        approvedAt: new Date(),
-      },
+      if (settlement.status !== 'PENDING')
+        throw new BadRequestException('只有待确认结算单可以驳回');
+      assertContractNotVoided(settlement.contract.status, '驳回退租结算');
+      return tx.checkoutSettlement.update({
+        where: { id },
+        data: {
+          status: 'REJECTED',
+          rejectedReason: reason,
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
     });
   }
   async cancel(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT c.room_id FROM contracts c JOIN checkout_settlements cs ON cs.contract_id = c.id WHERE cs.id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
+      );
       const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
         include: { contract: { include: { room: true } } },
@@ -803,17 +840,24 @@ export class CheckoutService {
   }
   async returnToDraft(id: number, user: AuthUser) {
     void user;
-    const settlement =
-      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
+      );
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
         include: { contract: { select: { status: true } } },
       });
-    if (settlement.status !== 'REJECTED')
-      throw new BadRequestException('只有已驳回结算单可以退回草稿');
-    assertContractNotVoided(settlement.contract.status, '退回退租结算草稿');
-    return this.prisma.db.checkoutSettlement.update({
-      where: { id },
-      data: { status: 'DRAFT' },
+      if (settlement.status !== 'REJECTED')
+        throw new BadRequestException('只有已驳回结算单可以退回草稿');
+      assertContractNotVoided(settlement.contract.status, '退回退租结算草稿');
+      return tx.checkoutSettlement.update({
+        where: { id },
+        data: { status: 'DRAFT' },
+      });
     });
   }
   private money(value: Prisma.Decimal | string | number) {

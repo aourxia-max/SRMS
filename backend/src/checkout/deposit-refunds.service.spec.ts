@@ -1,6 +1,23 @@
 import { ConflictException } from '@nestjs/common';
 import { DepositRefundsService } from './deposit-refunds.service';
 
+function transactional<T extends object>(tx: T) {
+  const client = {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+    ...tx,
+  };
+  return {
+    client,
+    db: {
+      ...client,
+      $transaction: jest.fn(
+        (callback: (value: typeof client) => Promise<unknown>) =>
+          callback(client),
+      ),
+    },
+  };
+}
+
 describe('DepositRefundsService', () => {
   it('serializes refund proof file sizes for JSON responses', async () => {
     const service = new DepositRefundsService({
@@ -38,13 +55,13 @@ describe('DepositRefundsService', () => {
     };
     const create = jest.fn().mockResolvedValue({ id: 9 });
     const service = new DepositRefundsService({
-      db: {
+      db: transactional({
         checkoutSettlement: {
           findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
         },
         fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
         depositRefund: { create },
-      },
+      }).db,
     } as never);
     const dto = {
       checkoutSettlementId: 1,
@@ -69,7 +86,7 @@ describe('DepositRefundsService', () => {
   it('allows refund registration after a required supplemental receivable is fully collected', async () => {
     const create = jest.fn().mockResolvedValue({ id: 9 });
     const service = new DepositRefundsService({
-      db: {
+      db: transactional({
         checkoutSettlement: {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 1,
@@ -86,7 +103,7 @@ describe('DepositRefundsService', () => {
         },
         fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
         depositRefund: { create },
-      },
+      }).db,
     } as never);
 
     await expect(
@@ -238,22 +255,23 @@ describe('DepositRefundsService', () => {
 
   it('rejects deposit-refund submission and approval for a voided contract', async () => {
     const submitCreate = jest.fn();
-    const submitService = new DepositRefundsService({
-      db: {
-        checkoutSettlement: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 1,
-            contractId: 3,
-            status: 'APPROVED',
-            handoverDate: new Date('2026-08-01'),
-            finalReceivable: '0.00',
-            depositRefundableAmount: '800.00',
-            prepaymentRefundableAmount: '0.00',
-            contract: { status: 'VOIDED' },
-          }),
-        },
-        depositRefund: { create: submitCreate },
+    const submitHarness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'APPROVED',
+          handoverDate: new Date('2026-08-01'),
+          finalReceivable: '0.00',
+          depositRefundableAmount: '800.00',
+          prepaymentRefundableAmount: '0.00',
+          contract: { status: 'VOIDED' },
+        }),
       },
+      depositRefund: { create: submitCreate },
+    });
+    const submitService = new DepositRefundsService({
+      db: submitHarness.db,
     } as never);
 
     await expect(
@@ -269,6 +287,12 @@ describe('DepositRefundsService', () => {
       ),
     ).rejects.toThrow('已作废合同不能登记押金退款');
     expect(submitCreate).not.toHaveBeenCalled();
+    expect(
+      submitHarness.client.$queryRaw.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      submitHarness.client.checkoutSettlement.findUniqueOrThrow.mock
+        .invocationCallOrder[0],
+    );
 
     const approveUpdate = jest.fn();
     const approveTx = {
@@ -314,5 +338,8 @@ describe('DepositRefundsService', () => {
       }),
     ).rejects.toThrow('已作废合同不能确认押金退款');
     expect(approveUpdate).not.toHaveBeenCalled();
+    expect(approveTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      approveTx.depositRefund.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
   });
 });

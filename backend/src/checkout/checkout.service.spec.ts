@@ -2,6 +2,23 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CheckoutService } from './checkout.service';
 
+function transactional<T extends object>(tx: T) {
+  const client = {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+    ...tx,
+  };
+  return {
+    client,
+    db: {
+      ...client,
+      $transaction: jest.fn(
+        (callback: (value: typeof client) => Promise<unknown>) =>
+          callback(client),
+      ),
+    },
+  };
+}
+
 describe('CheckoutService', () => {
   const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
@@ -11,6 +28,7 @@ describe('CheckoutService', () => {
     const roomUpdate = jest.fn();
     const historyCreate = jest.fn();
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       contract: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 3,
@@ -73,6 +91,12 @@ describe('CheckoutService', () => {
         toStatus: 'PENDING_CHECKOUT',
       }),
     });
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    ).toBeLessThan(settlementCreate.mock.invocationCallOrder[0]);
   });
 
   it('lists only completed settlements whose contracts are ended', async () => {
@@ -425,6 +449,7 @@ describe('CheckoutService', () => {
   it('allows a pending-start checkout to use an actual date before the contract start date', async () => {
     const update = jest.fn().mockResolvedValue({ id: 1, status: 'PENDING' });
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
@@ -473,7 +498,7 @@ describe('CheckoutService', () => {
   it('returns a rejected settlement to draft without deleting its items', async () => {
     const update = jest.fn().mockResolvedValue({ id: 1, status: 'DRAFT' });
     const service = new CheckoutService({
-      db: {
+      db: transactional({
         checkoutSettlement: {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 1,
@@ -483,7 +508,7 @@ describe('CheckoutService', () => {
           }),
           update,
         },
-      },
+      }).db,
     } as never);
 
     await expect(service.returnToDraft(1, user)).resolves.toEqual({
@@ -498,13 +523,13 @@ describe('CheckoutService', () => {
 
   it('rejects returning a settlement that was not rejected', async () => {
     const service = new CheckoutService({
-      db: {
+      db: transactional({
         checkoutSettlement: {
           findUniqueOrThrow: jest
             .fn()
             .mockResolvedValue({ id: 1, status: 'PENDING' }),
         },
-      },
+      }).db,
     } as never);
 
     await expect(service.returnToDraft(1, user)).rejects.toBeInstanceOf(
@@ -935,24 +960,27 @@ describe('CheckoutService', () => {
 
   it('rejects every checkout mutation for a voided contract', async () => {
     const initiateCreate = jest.fn();
+    const initiateTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 3,
+          status: 'VOIDED',
+          roomId: 7,
+          room: { id: 7, roomStatus: 'RENTED' },
+        }),
+        update: jest.fn(),
+      },
+      checkoutSettlement: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: initiateCreate,
+      },
+    };
     const initiateService = new CheckoutService({
       db: {
-        $transaction: jest.fn((callback: (client: never) => Promise<unknown>) =>
-          callback({
-            contract: {
-              findUniqueOrThrow: jest.fn().mockResolvedValue({
-                id: 3,
-                status: 'VOIDED',
-                roomId: 7,
-                room: { id: 7, roomStatus: 'RENTED' },
-              }),
-              update: jest.fn(),
-            },
-            checkoutSettlement: {
-              findFirst: jest.fn().mockResolvedValue(null),
-              create: initiateCreate,
-            },
-          } as never),
+        $transaction: jest.fn(
+          (callback: (client: typeof initiateTx) => Promise<unknown>) =>
+            callback(initiateTx),
         ),
       },
     } as never);
@@ -969,9 +997,13 @@ describe('CheckoutService', () => {
       initiateService.initiate(3, initiateDto, user),
     ).rejects.toThrow('已作废合同不能发起退租');
     expect(initiateCreate).not.toHaveBeenCalled();
+    expect(initiateTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      initiateTx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
 
     const submitDelete = jest.fn();
     const submitTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
@@ -1009,6 +1041,9 @@ describe('CheckoutService', () => {
       ),
     ).rejects.toThrow('已作废合同不能提交退租结算');
     expect(submitDelete).not.toHaveBeenCalled();
+    expect(submitTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      submitTx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
 
     const approveSettlement = {
       id: 1,
@@ -1038,6 +1073,11 @@ describe('CheckoutService', () => {
       '已作废合同不能确认退租结算',
     );
     expect(approveTx.checkoutSettlement.update).not.toHaveBeenCalled();
+    expect(approveTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      approveTx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder.at(
+        -1,
+      )!,
+    );
 
     const completeUpdate = jest.fn();
     const completeTx = {
@@ -1068,27 +1108,39 @@ describe('CheckoutService', () => {
       '已作废合同不能完成退租结算',
     );
     expect(completeUpdate).not.toHaveBeenCalled();
+    expect(completeTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      completeTx.checkoutSettlement.findUniqueOrThrow.mock
+        .invocationCallOrder[0],
+    );
 
     const rejectUpdate = jest.fn();
-    const rejectService = new CheckoutService({
-      db: {
-        checkoutSettlement: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 1,
-            status: 'PENDING',
-            contract: { status: 'VOIDED' },
-          }),
-          update: rejectUpdate,
-        },
+    const rejectHarness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'PENDING',
+          contract: { status: 'VOIDED' },
+        }),
+        update: rejectUpdate,
       },
+    });
+    const rejectService = new CheckoutService({
+      db: rejectHarness.db,
     } as never);
     await expect(rejectService.reject(1, '信息有误', user)).rejects.toThrow(
       '已作废合同不能驳回退租结算',
     );
     expect(rejectUpdate).not.toHaveBeenCalled();
+    expect(
+      rejectHarness.client.$queryRaw.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      rejectHarness.client.checkoutSettlement.findUniqueOrThrow.mock
+        .invocationCallOrder[0],
+    );
 
     const cancelUpdate = jest.fn();
     const cancelTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
@@ -1115,23 +1167,33 @@ describe('CheckoutService', () => {
       '已作废合同不能取消退租结算',
     );
     expect(cancelUpdate).not.toHaveBeenCalled();
+    expect(cancelTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      cancelTx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
 
     const draftUpdate = jest.fn();
-    const draftService = new CheckoutService({
-      db: {
-        checkoutSettlement: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 1,
-            status: 'REJECTED',
-            contract: { status: 'VOIDED' },
-          }),
-          update: draftUpdate,
-        },
+    const draftHarness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'REJECTED',
+          contract: { status: 'VOIDED' },
+        }),
+        update: draftUpdate,
       },
+    });
+    const draftService = new CheckoutService({
+      db: draftHarness.db,
     } as never);
     await expect(draftService.returnToDraft(1, user)).rejects.toThrow(
       '已作废合同不能退回退租结算草稿',
     );
     expect(draftUpdate).not.toHaveBeenCalled();
+    expect(
+      draftHarness.client.$queryRaw.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      draftHarness.client.checkoutSettlement.findUniqueOrThrow.mock
+        .invocationCallOrder[0],
+    );
   });
 });

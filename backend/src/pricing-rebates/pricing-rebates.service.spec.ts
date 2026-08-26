@@ -18,39 +18,53 @@ const fixedManualDto = {
   actualAmount: '100',
   settlementMethod: 'PREPAYMENT_CREDIT' as const,
 };
+function rebateFixture(
+  pricingMode: 'FIXED' | 'TIERED_RETROACTIVE',
+  status = 'ACTIVE',
+) {
+  const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+    contract: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 1,
+        status,
+        pricingMode,
+        bills: [{ id: 9, status: 'ISSUED' }],
+        pricingTiers: [],
+        pricingRebates: [],
+      }),
+    },
+    payment: {
+      aggregate: jest.fn().mockResolvedValue({ _sum: { amount: '500' } }),
+    },
+    paymentRefund: {
+      aggregate: jest.fn().mockResolvedValue({ _sum: { refundAmount: '0' } }),
+    },
+    pricingRebate: {
+      aggregate: jest.fn().mockResolvedValue({ _sum: { actualAmount: '0' } }),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }) =>
+          Promise.resolve({ ...data, files: [] }),
+        ),
+    },
+    fileAsset: { findMany: jest.fn().mockResolvedValue([]) },
+  };
+  const service = new PricingRebatesService({
+    db: {
+      ...tx,
+      $transaction: jest.fn(
+        (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    },
+  } as never);
+  return { service, tx };
+}
 function serviceWithContract(
   pricingMode: 'FIXED' | 'TIERED_RETROACTIVE',
   status = 'ACTIVE',
 ) {
-  return new PricingRebatesService({
-    db: {
-      contract: {
-        findUniqueOrThrow: jest.fn().mockResolvedValue({
-          id: 1,
-          status,
-          pricingMode,
-          bills: [{ id: 9, status: 'ISSUED' }],
-          pricingTiers: [],
-          pricingRebates: [],
-        }),
-      },
-      payment: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: '500' } }),
-      },
-      paymentRefund: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { refundAmount: '0' } }),
-      },
-      pricingRebate: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { actualAmount: '0' } }),
-        create: jest
-          .fn()
-          .mockImplementation(({ data }) =>
-            Promise.resolve({ ...data, files: [] }),
-          ),
-      },
-      fileAsset: { findMany: jest.fn().mockResolvedValue([]) },
-    },
-  } as never);
+  return rebateFixture(pricingMode, status).service;
 }
 
 describe('PricingRebatesService', () => {
@@ -103,12 +117,18 @@ describe('PricingRebatesService', () => {
   });
 
   it('rejects every rebate mutation for a voided contract', async () => {
-    await expect(
-      serviceWithContract('FIXED', 'VOIDED').submit(fixedManualDto, admin),
-    ).rejects.toThrow('已作废合同不能提交租金退差');
+    const submit = rebateFixture('FIXED', 'VOIDED');
+    await expect(submit.service.submit(fixedManualDto, admin)).rejects.toThrow(
+      '已作废合同不能提交租金退差',
+    );
+    expect(submit.tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      submit.tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(submit.tx.pricingRebate.create).not.toHaveBeenCalled();
 
     const approveUpdate = jest.fn();
     const approveTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       pricingRebate: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 21,
@@ -139,26 +159,41 @@ describe('PricingRebatesService', () => {
     await expect(approveService.approve(21, admin)).rejects.toThrow(
       '已作废合同不能确认租金退差',
     );
+    expect(approveTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      approveTx.pricingRebate.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(approveTx.$queryRaw).toHaveBeenCalledTimes(2);
     expect(approveTx.prepaymentTransaction.create).not.toHaveBeenCalled();
     expect(approveUpdate).not.toHaveBeenCalled();
 
     const rejectUpdate = jest.fn();
+    const rejectTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      pricingRebate: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 21,
+          approvalStatus: 'PENDING',
+          contract: { status: 'VOIDED' },
+        }),
+        update: rejectUpdate,
+      },
+    };
     const rejectService = new PricingRebatesService({
       db: {
-        pricingRebate: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 21,
-            approvalStatus: 'PENDING',
-            contract: { status: 'VOIDED' },
-          }),
-          update: rejectUpdate,
-        },
+        $transaction: jest.fn(
+          (callback: (value: typeof rejectTx) => Promise<unknown>) =>
+            callback(rejectTx),
+        ),
       },
     } as never);
 
     await expect(rejectService.reject(21, '信息有误', admin)).rejects.toThrow(
       '已作废合同不能驳回租金退差',
     );
+    expect(rejectTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      rejectTx.pricingRebate.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(rejectTx.$queryRaw).toHaveBeenCalledTimes(2);
     expect(rejectUpdate).not.toHaveBeenCalled();
   });
 });

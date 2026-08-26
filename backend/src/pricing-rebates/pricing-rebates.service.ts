@@ -47,128 +47,143 @@ export class PricingRebatesService {
       throw new BadRequestException('退款凭证不能重复');
     if (dto.sourceType !== 'FIXED_RENT_MANUAL')
       throw new GoneException('阶梯退差功能已停用');
-    const contract = await this.loadContract(dto.contractId);
-    if (contract.pricingMode !== 'FIXED')
-      throw new BadRequestException('固定月租人工退差仅适用于固定月租合同');
-    assertContractNotVoided(contract.status, '提交租金退差');
-    if (contract.status !== 'ACTIVE')
-      throw new BadRequestException('仅生效中的合同可以提交退差');
-    if (
-      dto.settlementMethod === 'ACTUAL_REFUND' &&
-      (!dto.refundDate || !dto.refundMethod || !dto.proofFileIds?.length)
-    )
-      throw new BadRequestException(
-        '实际退款必须填写退款日期、退款方式并上传退款凭证',
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${dto.contractId} FOR UPDATE`,
       );
-    if (
-      dto.settlementMethod === 'PREPAYMENT_CREDIT' &&
-      (dto.refundDate || dto.refundMethod || dto.proofFileIds?.length)
-    )
-      throw new BadRequestException(
-        '转预收款不应填写退款日期、退款方式或退款凭证',
-      );
+      const contract = await this.loadContract(dto.contractId, tx);
+      if (contract.pricingMode !== 'FIXED')
+        throw new BadRequestException('固定月租人工退差仅适用于固定月租合同');
+      assertContractNotVoided(contract.status, '提交租金退差');
+      if (contract.status !== 'ACTIVE')
+        throw new BadRequestException('仅生效中的合同可以提交退差');
+      if (
+        dto.settlementMethod === 'ACTUAL_REFUND' &&
+        (!dto.refundDate || !dto.refundMethod || !dto.proofFileIds?.length)
+      )
+        throw new BadRequestException(
+          '实际退款必须填写退款日期、退款方式并上传退款凭证',
+        );
+      if (
+        dto.settlementMethod === 'PREPAYMENT_CREDIT' &&
+        (dto.refundDate || dto.refundMethod || dto.proofFileIds?.length)
+      )
+        throw new BadRequestException(
+          '转预收款不应填写退款日期、退款方式或退款凭证',
+        );
 
-    const referenceAmount: Prisma.Decimal | null = null;
-    const grossBilledAmount = new Prisma.Decimal(0);
-    const targetNetRentAmount: Prisma.Decimal | null = null;
-    const previousRebateAmount = new Prisma.Decimal(0);
-    const qualificationDate: Date | null = null;
-    const thresholdMonths: number | null = null;
-    let pricingTierId: number | null = dto.pricingTierId ?? null;
-    const rentBillId: number | null = dto.rentBillId ?? null;
+      const referenceAmount: Prisma.Decimal | null = null;
+      const grossBilledAmount = new Prisma.Decimal(0);
+      const targetNetRentAmount: Prisma.Decimal | null = null;
+      const previousRebateAmount = new Prisma.Decimal(0);
+      const qualificationDate: Date | null = null;
+      const thresholdMonths: number | null = null;
+      let pricingTierId: number | null = dto.pricingTierId ?? null;
+      const rentBillId: number | null = dto.rentBillId ?? null;
 
-    if (!rentBillId)
-      throw new BadRequestException('固定租金手工退差必须关联有效租金账单');
-    const bill = contract.bills.find((item) => item.id === rentBillId);
-    if (!bill || ['VOIDED', 'REFUNDED'].includes(bill.status))
-      throw new BadRequestException('关联的租金账单无效');
-    pricingTierId = null;
-    if (dto.rebateType === 'MILESTONE')
-      throw new BadRequestException('固定租金合同不能提交达档退差');
-    if (
-      referenceAmount &&
-      !actualAmount.equals(referenceAmount) &&
-      !dto.differenceReason
-    )
-      throw new BadRequestException(
-        '实际退差金额与系统参考额不一致时必须填写原因',
+      if (!rentBillId)
+        throw new BadRequestException('固定租金手工退差必须关联有效租金账单');
+      const bill = contract.bills.find((item) => item.id === rentBillId);
+      if (!bill || ['VOIDED', 'REFUNDED'].includes(bill.status))
+        throw new BadRequestException('关联的租金账单无效');
+      pricingTierId = null;
+      if (dto.rebateType === 'MILESTONE')
+        throw new BadRequestException('固定租金合同不能提交达档退差');
+      if (
+        referenceAmount &&
+        !actualAmount.equals(referenceAmount) &&
+        !dto.differenceReason
+      )
+        throw new BadRequestException(
+          '实际退差金额与系统参考额不一致时必须填写原因',
+        );
+      const validRentReceipts = await this.validRentReceipts(contract.id, tx);
+      const approvedRebates = await tx.pricingRebate.aggregate({
+        where: { contractId: contract.id, approvalStatus: 'APPROVED' },
+        _sum: { actualAmount: true },
+      });
+      const remainingReceipts = validRentReceipts.minus(
+        approvedRebates._sum.actualAmount ?? 0,
       );
-    const validRentReceipts = await this.validRentReceipts(contract.id);
-    const approvedRebates = await this.prisma.db.pricingRebate.aggregate({
-      where: { contractId: contract.id, approvalStatus: 'APPROVED' },
-      _sum: { actualAmount: true },
-    });
-    const remainingReceipts = validRentReceipts.minus(
-      approvedRebates._sum.actualAmount ?? 0,
-    );
-    if (actualAmount.gt(remainingReceipts))
-      throw new BadRequestException('实际退差金额不得超过合同累计有效实收租金');
-    const files = dto.proofFileIds?.length
-      ? await this.prisma.db.fileAsset.findMany({
+      if (actualAmount.gt(remainingReceipts))
+        throw new BadRequestException(
+          '实际退差金额不得超过合同累计有效实收租金',
+        );
+      const files = dto.proofFileIds?.length
+        ? await tx.fileAsset.findMany({
+            where: {
+              id: { in: dto.proofFileIds },
+              category: 'PRICING_REBATE_PROOF',
+              lockedAt: null,
+            },
+          })
+        : [];
+      if (files.length !== (dto.proofFileIds?.length ?? 0))
+        throw new BadRequestException('退款凭证不存在、类型不正确或已锁定');
+      if (dto.parentRebateId) {
+        const parent = await tx.pricingRebate.findFirst({
           where: {
-            id: { in: dto.proofFileIds },
-            category: 'PRICING_REBATE_PROOF',
-            lockedAt: null,
+            id: dto.parentRebateId,
+            contractId: contract.id,
+            approvalStatus: 'APPROVED',
           },
-        })
-      : [];
-    if (files.length !== (dto.proofFileIds?.length ?? 0))
-      throw new BadRequestException('退款凭证不存在、类型不正确或已锁定');
-    if (dto.parentRebateId) {
-      const parent = await this.prisma.db.pricingRebate.findFirst({
-        where: {
-          id: dto.parentRebateId,
+        });
+        if (!parent)
+          throw new BadRequestException(
+            '补充退差必须关联本合同已确认的原退差单',
+          );
+      }
+      const rebate = await tx.pricingRebate.create({
+        data: {
+          rebateNo: `TC${Date.now()}${contract.id}`,
           contractId: contract.id,
-          approvalStatus: 'APPROVED',
+          sourceType: dto.sourceType,
+          rebateType: dto.rebateType,
+          pricingTierId,
+          rentBillId,
+          parentRebateId: dto.parentRebateId,
+          thresholdMonths,
+          qualificationDate,
+          periodStart: new Date(dto.periodStart),
+          periodEnd: new Date(dto.periodEnd),
+          grossBilledAmount,
+          targetNetRentAmount,
+          previousRebateAmount,
+          referenceAmount,
+          actualAmount,
+          differenceAmount: referenceAmount
+            ? actualAmount.minus(referenceAmount)
+            : null,
+          differenceReason: dto.differenceReason,
+          settlementMethod: dto.settlementMethod,
+          refundDate: dto.refundDate ? new Date(dto.refundDate) : null,
+          refundMethod: dto.refundMethod,
+          remark: dto.remark,
+          approvalStatus: 'PENDING',
+          submittedBy: user.id,
+          submittedAt: new Date(),
+          files: files.length
+            ? { create: files.map((file) => ({ fileAssetId: file.id })) }
+            : undefined,
+        },
+        include: {
+          pricingTier: true,
+          rentBill: true,
+          files: { include: { fileAsset: true } },
         },
       });
-      if (!parent)
-        throw new BadRequestException('补充退差必须关联本合同已确认的原退差单');
-    }
-    const rebate = await this.prisma.db.pricingRebate.create({
-      data: {
-        rebateNo: `TC${Date.now()}${contract.id}`,
-        contractId: contract.id,
-        sourceType: dto.sourceType,
-        rebateType: dto.rebateType,
-        pricingTierId,
-        rentBillId,
-        parentRebateId: dto.parentRebateId,
-        thresholdMonths,
-        qualificationDate,
-        periodStart: new Date(dto.periodStart),
-        periodEnd: new Date(dto.periodEnd),
-        grossBilledAmount,
-        targetNetRentAmount,
-        previousRebateAmount,
-        referenceAmount,
-        actualAmount,
-        differenceAmount: referenceAmount
-          ? actualAmount.minus(referenceAmount)
-          : null,
-        differenceReason: dto.differenceReason,
-        settlementMethod: dto.settlementMethod,
-        refundDate: dto.refundDate ? new Date(dto.refundDate) : null,
-        refundMethod: dto.refundMethod,
-        remark: dto.remark,
-        approvalStatus: 'PENDING',
-        submittedBy: user.id,
-        submittedAt: new Date(),
-        files: files.length
-          ? { create: files.map((file) => ({ fileAssetId: file.id })) }
-          : undefined,
-      },
-      include: {
-        pricingTier: true,
-        rentBill: true,
-        files: { include: { fileAsset: true } },
-      },
+      return this.serializeFiles(rebate);
     });
-    return this.serializeFiles(rebate);
   }
 
   async approve(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM pricing_rebates WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM pricing_rebates WHERE id = ${id} FOR UPDATE`,
+      );
       const rebate = await tx.pricingRebate.findUniqueOrThrow({
         where: { id },
         include: { files: true, contract: { select: { status: true } } },
@@ -212,26 +227,37 @@ export class PricingRebatesService {
   }
 
   async reject(id: number, reason: string, user: AuthUser) {
-    const rebate = await this.prisma.db.pricingRebate.findUniqueOrThrow({
-      where: { id },
-      include: { contract: { select: { status: true } } },
-    });
-    if (rebate.approvalStatus !== 'PENDING')
-      throw new BadRequestException('只有待确认退差单可以驳回');
-    assertContractNotVoided(rebate.contract.status, '驳回租金退差');
-    return this.prisma.db.pricingRebate.update({
-      where: { id },
-      data: {
-        approvalStatus: 'REJECTED',
-        rejectedReason: reason,
-        approvedBy: user.id,
-        approvedAt: new Date(),
-      },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM pricing_rebates WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM pricing_rebates WHERE id = ${id} FOR UPDATE`,
+      );
+      const rebate = await tx.pricingRebate.findUniqueOrThrow({
+        where: { id },
+        include: { contract: { select: { status: true } } },
+      });
+      if (rebate.approvalStatus !== 'PENDING')
+        throw new BadRequestException('只有待确认退差单可以驳回');
+      assertContractNotVoided(rebate.contract.status, '驳回租金退差');
+      return tx.pricingRebate.update({
+        where: { id },
+        data: {
+          approvalStatus: 'REJECTED',
+          rejectedReason: reason,
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
     });
   }
 
-  private async validRentReceipts(contractId: number) {
-    const payments = await this.prisma.db.payment.aggregate({
+  private async validRentReceipts(
+    contractId: number,
+    db: Prisma.TransactionClient = this.prisma.db,
+  ) {
+    const payments = await db.payment.aggregate({
       where: {
         contractId,
         paymentCategory: 'RENT',
@@ -239,7 +265,7 @@ export class PricingRebatesService {
       },
       _sum: { amount: true },
     });
-    const refunds = await this.prisma.db.paymentRefund.aggregate({
+    const refunds = await db.paymentRefund.aggregate({
       where: { contractId, approvalStatus: 'APPROVED' },
       _sum: { refundAmount: true },
     });
@@ -263,8 +289,11 @@ export class PricingRebatesService {
     };
   }
 
-  private async loadContract(contractId: number) {
-    return this.prisma.db.contract.findUniqueOrThrow({
+  private async loadContract(
+    contractId: number,
+    db: Prisma.TransactionClient = this.prisma.db,
+  ) {
+    return db.contract.findUniqueOrThrow({
       where: { id: contractId },
       include: {
         pricingTiers: { orderBy: { thresholdMonths: 'asc' } },

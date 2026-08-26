@@ -267,22 +267,36 @@ describe('ContractsService', () => {
       reason: '纠正月租',
     };
     const submitCreate = jest.fn();
+    const submitReload = jest.fn().mockResolvedValue(validContract);
+    const submitTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      contract: { findUniqueOrThrow: submitReload },
+      contractChange: { create: submitCreate },
+    };
+    const submitTransaction = jest.fn(
+      (callback: (value: typeof submitTx) => Promise<unknown>) =>
+        callback(submitTx),
+    );
     const submitService = new ContractsService({
       db: {
-        contract: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue(validContract),
-        },
+        contract: { findUniqueOrThrow: submitReload },
         contractChange: { create: submitCreate },
+        $transaction: submitTransaction,
       },
     } as never);
 
     await expect(submitService.submitChange(1, dto, admin)).rejects.toThrow(
       '已作废合同不能提交合同变更',
     );
+    expect(submitTransaction).toHaveBeenCalledTimes(1);
+    expect(submitTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      submitReload.mock.invocationCallOrder.at(-1)!,
+    );
     expect(submitCreate).not.toHaveBeenCalled();
 
     const approveUpdate = jest.fn();
     const approveTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       contractChange: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 9,
@@ -309,26 +323,45 @@ describe('ContractsService', () => {
     await expect(approveService.approveChange(9, superAdmin)).rejects.toThrow(
       '已作废合同不能确认合同变更',
     );
+    expect(approveTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      approveTx.contractChange.findUniqueOrThrow.mock.invocationCallOrder.at(
+        -1,
+      )!,
+    );
     expect(approveUpdate).not.toHaveBeenCalled();
 
     const rejectUpdate = jest.fn();
+    const rejectReload = jest.fn().mockResolvedValue({
+      id: 9,
+      contractId: 1,
+      approvalStatus: 'PENDING',
+      contract: { status: 'VOIDED' },
+    });
+    const rejectTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      contractChange: { findUniqueOrThrow: rejectReload, update: rejectUpdate },
+    };
+    const rejectTransaction = jest.fn(
+      (callback: (value: typeof rejectTx) => Promise<unknown>) =>
+        callback(rejectTx),
+    );
     const rejectService = new ContractsService({
       db: {
         contractChange: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 9,
-            contractId: 1,
-            approvalStatus: 'PENDING',
-            contract: { status: 'VOIDED' },
-          }),
+          findUniqueOrThrow: rejectReload,
           update: rejectUpdate,
         },
+        $transaction: rejectTransaction,
       },
     } as never);
 
     await expect(
       rejectService.rejectChange(9, '信息有误', superAdmin),
     ).rejects.toThrow('已作废合同不能驳回合同变更');
+    expect(rejectTransaction).toHaveBeenCalledTimes(1);
+    expect(rejectTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      rejectReload.mock.invocationCallOrder.at(-1)!,
+    );
     expect(rejectUpdate).not.toHaveBeenCalled();
   });
 

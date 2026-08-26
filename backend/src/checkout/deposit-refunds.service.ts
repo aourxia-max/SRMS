@@ -32,45 +32,54 @@ export class DepositRefundsService {
       new Set(dto.proofFileIds).size !== dto.proofFileIds.length
     )
       throw new BadRequestException('押金退款金额必须大于零且必须关联有效凭证');
-    const settlement =
-      await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${dto.checkoutSettlementId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${dto.checkoutSettlementId} FOR UPDATE`,
+      );
+      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id: dto.checkoutSettlementId },
         include: { contract: true },
       });
-    assertContractNotVoided(settlement.contract.status, '登记押金退款');
-    if (
-      settlement.status !== 'APPROVED' ||
-      settlement.contract.status !== 'PENDING_CHECKOUT' ||
-      !settlement.handoverDate ||
-      !this.isSupplementalCleared(settlement)
-    )
-      throw new BadRequestException('当前不满足登记押金退款的条件');
-    const expectedRefund = new Prisma.Decimal(
-      settlement.depositRefundableAmount,
-    ).plus(settlement.prepaymentRefundableAmount);
-    if (!amount.equals(expectedRefund))
-      throw new BadRequestException('退款金额必须等于结算单锁定的合计应退金额');
-    const files = await this.prisma.db.fileAsset.findMany({
-      where: {
-        id: { in: dto.proofFileIds },
-        category: 'DEPOSIT_REFUND_PROOF',
-        lockedAt: null,
-      },
-    });
-    if (files.length !== dto.proofFileIds.length)
-      throw new BadRequestException('押金退款凭证不存在、类型不正确或已锁定');
-    return this.prisma.db.depositRefund.create({
-      data: {
-        refundNo: `YJTK${Date.now()}${settlement.contractId}`,
-        contractId: settlement.contractId,
-        checkoutSettlementId: settlement.id,
-        refundAmount: amount,
-        refundDate: new Date(dto.refundDate),
-        refundMethod: dto.refundMethod,
-        remark: dto.remark,
-        submittedBy: user.id,
-        files: { create: files.map((file) => ({ fileAssetId: file.id })) },
-      },
+      assertContractNotVoided(settlement.contract.status, '登记押金退款');
+      if (
+        settlement.status !== 'APPROVED' ||
+        settlement.contract.status !== 'PENDING_CHECKOUT' ||
+        !settlement.handoverDate ||
+        !this.isSupplementalCleared(settlement)
+      )
+        throw new BadRequestException('当前不满足登记押金退款的条件');
+      const expectedRefund = new Prisma.Decimal(
+        settlement.depositRefundableAmount,
+      ).plus(settlement.prepaymentRefundableAmount);
+      if (!amount.equals(expectedRefund))
+        throw new BadRequestException(
+          '退款金额必须等于结算单锁定的合计应退金额',
+        );
+      const files = await tx.fileAsset.findMany({
+        where: {
+          id: { in: dto.proofFileIds },
+          category: 'DEPOSIT_REFUND_PROOF',
+          lockedAt: null,
+        },
+      });
+      if (files.length !== dto.proofFileIds.length)
+        throw new BadRequestException('押金退款凭证不存在、类型不正确或已锁定');
+      return tx.depositRefund.create({
+        data: {
+          refundNo: `YJTK${Date.now()}${settlement.contractId}`,
+          contractId: settlement.contractId,
+          checkoutSettlementId: settlement.id,
+          refundAmount: amount,
+          refundDate: new Date(dto.refundDate),
+          refundMethod: dto.refundMethod,
+          remark: dto.remark,
+          submittedBy: user.id,
+          files: { create: files.map((file) => ({ fileAssetId: file.id })) },
+        },
+      });
     });
   }
   async approve(id: number, user: AuthUser) {

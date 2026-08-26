@@ -334,21 +334,29 @@ export class RefundsService {
   async reject(id: number, reason: string, user: AuthUser) {
     if (user.role !== UserRole.SUPER_ADMIN)
       throw new ForbiddenException('只有超级管理员可以驳回退款');
-    const refund = await this.prisma.db.paymentRefund.findUniqueOrThrow({
-      where: { id },
-      include: { contract: { select: { status: true } } },
-    });
-    if (refund.approvalStatus !== 'PENDING')
-      throw new BadRequestException('只有待审批退款可以驳回');
-    assertContractNotVoided(refund.contract.status, '驳回退款');
-    return this.prisma.db.paymentRefund.update({
-      where: { id },
-      data: {
-        approvalStatus: 'REJECTED',
-        rejectedReason: reason,
-        approvedBy: user.id,
-        approvedAt: new Date(),
-      },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM payment_refunds WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payment_refunds WHERE id = ${id} FOR UPDATE`,
+      );
+      const refund = await tx.paymentRefund.findUniqueOrThrow({
+        where: { id },
+        include: { contract: { select: { status: true } } },
+      });
+      if (refund.approvalStatus !== 'PENDING')
+        throw new BadRequestException('只有待审批退款可以驳回');
+      assertContractNotVoided(refund.contract.status, '驳回退款');
+      return tx.paymentRefund.update({
+        where: { id },
+        data: {
+          approvalStatus: 'REJECTED',
+          rejectedReason: reason,
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
     });
   }
   private async refreshContractPaymentSnapshot(

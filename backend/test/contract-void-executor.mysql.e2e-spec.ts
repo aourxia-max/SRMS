@@ -1,9 +1,11 @@
 import { ConfigService } from '@nestjs/config';
-import { Prisma, UserRole } from '@prisma/client';
+import { Prisma, RoomStatus, UserRole } from '@prisma/client';
 import type { AuthUser } from '../src/auth/auth-user.type';
+import { CheckoutService } from '../src/checkout/checkout.service';
 import { ContractVoidExecutorService } from '../src/contracts/contract-void-executor.service';
 import { ContractVoidPreviewService } from '../src/contracts/contract-void-preview.service';
 import { ContractVoidReversalWriter } from '../src/contracts/contract-void-reversal-writer';
+import { CommissionsService } from '../src/finance/commissions.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SecurityAuditChainService } from '../src/system/security-audit-chain.service';
 
@@ -16,6 +18,14 @@ type Fixture = {
   requestId: number;
   previewHash: string;
 };
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 describe('contract void executor real MySQL transaction semantics (e2e)', () => {
   let prisma: PrismaService;
@@ -172,18 +182,47 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
     };
   }
 
+  function startGatedExecution(fixture: Fixture, executionKey: string) {
+    const writeReached = deferred();
+    const writeRelease = deferred();
+    const writer = new ContractVoidReversalWriter();
+    const baseWrite = writer.write.bind(writer);
+    jest.spyOn(writer, 'write').mockImplementation(async (...args) => {
+      writeReached.resolve();
+      await writeRelease.promise;
+      return baseWrite(...args);
+    });
+    const executor = new ContractVoidExecutorService(
+      prisma,
+      new ContractVoidPreviewService(prisma),
+      writer,
+      new SecurityAuditChainService(),
+    );
+    const execution = executor.execute(
+      fixture.requestId,
+      fixture.previewHash,
+      '确认作废合同',
+      executionKey,
+      operator,
+    );
+    return {
+      execution,
+      writeReached: writeReached.promise,
+      releaseWrite: writeRelease.resolve,
+    };
+  }
+
   it('rolls back every row when failure occurs after reversal insertion', async () => {
     rollbackFixture = await createFixture('rollback');
     const previews = new ContractVoidPreviewService(prisma);
-    const baseWriter = new ContractVoidReversalWriter();
+    const observingWriter = new ContractVoidReversalWriter();
+    const baseWrite = observingWriter.write.bind(observingWriter);
     let observedInsertedReversals = false;
-    const observingWriter = {
-      async write(...args: Parameters<ContractVoidReversalWriter['write']>) {
-        const rows = await baseWriter.write(...args);
-        observedInsertedReversals = rows.length > 0;
-        return rows;
-      },
-    };
+    jest.spyOn(observingWriter, 'write').mockImplementation(async (...args) => {
+      const rows = await baseWrite(...args);
+      observedInsertedReversals = rows.length > 0;
+      return rows;
+    });
     const executor = new ContractVoidExecutorService(
       prisma,
       previews,
@@ -321,5 +360,78 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
     expect(new Set(reversals.map((row) => row.idempotencyKey)).size).toBe(
       reversals.length,
     );
+  });
+
+  it('does not let checkout initiation overwrite a concurrently committed VOIDED status', async () => {
+    const fixture = await createFixture('checkout-race');
+    const gated = startGatedExecution(
+      fixture,
+      `execute-checkout-race-${marker}`,
+    );
+    await gated.writeReached;
+
+    const checkout = new CheckoutService(prisma);
+    const checkoutAttempt = checkout.initiate(
+      fixture.contractId,
+      {
+        checkoutType: '并发退租',
+        plannedCheckoutDate: '2035-08-20',
+        handoverDate: '2035-08-20',
+        inspectionAt: '2035-08-20T09:00:00.000Z',
+        checkoutReason: '验证合同锁后重载',
+        targetRoomStatus: RoomStatus.EMPTY,
+      },
+      operator,
+    );
+    void checkoutAttempt.catch(() => undefined);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    gated.releaseWrite();
+
+    await expect(gated.execution).resolves.toMatchObject({
+      contractStatus: 'VOIDED',
+    });
+    await expect(checkoutAttempt).rejects.toThrow('已作废合同不能发起退租');
+    await expect(
+      prisma.db.contract.findUniqueOrThrow({
+        where: { id: fixture.contractId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'VOIDED' });
+    await expect(
+      prisma.db.checkoutSettlement.count({
+        where: { contractId: fixture.contractId },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it('does not insert a commission after concurrent contract void commits', async () => {
+    const fixture = await createFixture('child-race');
+    const gated = startGatedExecution(fixture, `execute-child-race-${marker}`);
+    await gated.writeReached;
+
+    const commissions = new CommissionsService(prisma);
+    const commissionAttempt = commissions.create(
+      {
+        contractId: fixture.contractId,
+        recipientName: `并发提成-${marker}`,
+        amount: '10.00',
+      },
+      operator,
+    );
+    void commissionAttempt.catch(() => undefined);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    gated.releaseWrite();
+
+    await expect(gated.execution).resolves.toMatchObject({
+      contractStatus: 'VOIDED',
+    });
+    await expect(commissionAttempt).rejects.toThrow(
+      '已作废合同不能新增租房提成',
+    );
+    await expect(
+      prisma.db.contractCommission.count({
+        where: { contractId: fixture.contractId },
+      }),
+    ).resolves.toBe(0);
   });
 });

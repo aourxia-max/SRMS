@@ -41,10 +41,16 @@ describe('ContractsService readable change records', () => {
       members: [],
       concessions: [],
     });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 12 }]),
+      contract: { findUniqueOrThrow },
+      contractChange: { create: jest.fn() },
+    };
     const service = new ContractsService({
       db: {
-        contract: { findUniqueOrThrow },
-        contractChange: { create: jest.fn() },
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
       },
     } as never);
 
@@ -67,5 +73,8 @@ describe('ContractsService readable change records', () => {
         concessions: { where: { status: 'ACTIVE' } },
       },
     });
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
   });
 });

@@ -166,37 +166,48 @@ export class ContractsService {
     dto: SubmitContractChangeDto,
     user: AuthUser,
   ) {
-    const contract = await this.prisma.db.contract.findUniqueOrThrow({
-      where: { id: contractId },
-      include: {
-        members: { where: { isCurrent: true } },
-        concessions: { where: { status: 'ACTIVE' } },
-      },
-    });
-    this.validateChange(contract, dto);
-    assertContractNotVoided(contract.status, '提交合同变更');
-    return this.prisma.db.contractChange.create({
-      data: {
-        contractId,
-        changeNo: `BG${Date.now()}${contractId}`,
-        changeType: dto.changeType,
-        effectiveDate: new Date(dto.effectiveDate),
-        beforeSnapshot: JSON.parse(
-          JSON.stringify(contract),
-        ) as Prisma.InputJsonValue,
-        afterSnapshot: JSON.parse(
-          JSON.stringify(dto.afterSnapshot),
-        ) as Prisma.InputJsonValue,
-        reason: dto.reason,
-        approvalStatus: 'PENDING',
-        submittedBy: user.id,
-        submittedAt: new Date(),
-      },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${contractId} FOR UPDATE`,
+      );
+      const contract = await tx.contract.findUniqueOrThrow({
+        where: { id: contractId },
+        include: {
+          members: { where: { isCurrent: true } },
+          concessions: { where: { status: 'ACTIVE' } },
+        },
+      });
+      this.validateChange(contract, dto);
+      assertContractNotVoided(contract.status, '提交合同变更');
+      return tx.contractChange.create({
+        data: {
+          contractId,
+          changeNo: `BG${Date.now()}${contractId}`,
+          changeType: dto.changeType,
+          effectiveDate: new Date(dto.effectiveDate),
+          beforeSnapshot: JSON.parse(
+            JSON.stringify(contract),
+          ) as Prisma.InputJsonValue,
+          afterSnapshot: JSON.parse(
+            JSON.stringify(dto.afterSnapshot),
+          ) as Prisma.InputJsonValue,
+          reason: dto.reason,
+          approvalStatus: 'PENDING',
+          submittedBy: user.id,
+          submittedAt: new Date(),
+        },
+      });
     });
   }
 
   async approveChange(changeId: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM contract_changes WHERE id = ${changeId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contract_changes WHERE id = ${changeId} FOR UPDATE`,
+      );
       const change = await tx.contractChange.findUniqueOrThrow({
         where: { id: changeId },
         include: {
@@ -520,21 +531,29 @@ export class ContractsService {
   }
 
   async rejectChange(changeId: number, reason: string, user: AuthUser) {
-    const change = await this.prisma.db.contractChange.findUniqueOrThrow({
-      where: { id: changeId },
-      include: { contract: true },
-    });
-    if (change.approvalStatus !== 'PENDING')
-      throw new BadRequestException('只有待审批变更可以驳回');
-    assertContractNotVoided(change.contract.status, '驳回合同变更');
-    return this.prisma.db.contractChange.update({
-      where: { id: changeId },
-      data: {
-        approvalStatus: 'REJECTED',
-        rejectedReason: reason,
-        approvedBy: user.id,
-        approvedAt: new Date(),
-      },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM contract_changes WHERE id = ${changeId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contract_changes WHERE id = ${changeId} FOR UPDATE`,
+      );
+      const change = await tx.contractChange.findUniqueOrThrow({
+        where: { id: changeId },
+        include: { contract: true },
+      });
+      if (change.approvalStatus !== 'PENDING')
+        throw new BadRequestException('只有待审批变更可以驳回');
+      assertContractNotVoided(change.contract.status, '驳回合同变更');
+      return tx.contractChange.update({
+        where: { id: changeId },
+        data: {
+          approvalStatus: 'REJECTED',
+          rejectedReason: reason,
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
     });
   }
 

@@ -23,35 +23,43 @@ export class AdjustmentsService {
     const amount = new Prisma.Decimal(dto.amount);
     if (!amount.isFinite() || amount.lte(0))
       throw new BadRequestException('调整金额必须大于零');
-    const bill = await this.prisma.db.rentBill.findUniqueOrThrow({
-      where: { id: dto.rentBillId },
-      include: { contract: true },
-    });
-    if (bill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
-      throw new BadRequestException('退租补收账单不能优惠、减免或调整');
-    await assertRentBillNotProtectedByCheckout(this.prisma.db, bill.id);
-    if (bill.status === 'VOIDED')
-      throw new BadRequestException('已作废账单不能提交调整');
-    assertContractNotVoided(bill.contract.status, '提交账单调整');
-    const preview = calculateAdjustedBill({
-      ...bill,
-      currentAdjustmentAmount: bill.adjustmentAmount,
-      direction: dto.direction,
-      amount,
-    });
-    return this.prisma.db.billAdjustment.create({
-      data: {
-        adjustmentNo: `TZ${Date.now()}${dto.rentBillId}`,
-        rentBillId: dto.rentBillId,
-        adjustmentType: dto.adjustmentType,
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM rent_bills WHERE id = ${dto.rentBillId}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE id = ${dto.rentBillId} FOR UPDATE`,
+      );
+      const bill = await tx.rentBill.findUniqueOrThrow({
+        where: { id: dto.rentBillId },
+        include: { contract: true },
+      });
+      if (bill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
+        throw new BadRequestException('退租补收账单不能优惠、减免或调整');
+      await assertRentBillNotProtectedByCheckout(tx, bill.id);
+      if (bill.status === 'VOIDED')
+        throw new BadRequestException('已作废账单不能提交调整');
+      assertContractNotVoided(bill.contract.status, '提交账单调整');
+      const preview = calculateAdjustedBill({
+        ...bill,
+        currentAdjustmentAmount: bill.adjustmentAmount,
         direction: dto.direction,
         amount,
-        beforeAmount: bill.payableAmount,
-        afterAmount: preview.payableAmount,
-        reason: dto.reason,
-        sourcePaymentId: dto.sourcePaymentId,
-        submittedBy: user.id,
-      },
+      });
+      return tx.billAdjustment.create({
+        data: {
+          adjustmentNo: `TZ${Date.now()}${dto.rentBillId}`,
+          rentBillId: dto.rentBillId,
+          adjustmentType: dto.adjustmentType,
+          direction: dto.direction,
+          amount,
+          beforeAmount: bill.payableAmount,
+          afterAmount: preview.payableAmount,
+          reason: dto.reason,
+          sourcePaymentId: dto.sourcePaymentId,
+          submittedBy: user.id,
+        },
+      });
     });
   }
 
@@ -110,24 +118,35 @@ export class AdjustmentsService {
   }
 
   async reject(id: number, reason: string, user: AuthUser) {
-    const adjustment = await this.prisma.db.billAdjustment.findUniqueOrThrow({
-      where: { id },
-      include: { rentBill: { include: { contract: true } } },
-    });
-    if (adjustment.approvalStatus !== 'PENDING')
-      throw new BadRequestException('只有待审批调整可以驳回');
-    assertContractNotVoided(
-      adjustment.rentBill.contract.status,
-      '驳回账单调整',
-    );
-    return this.prisma.db.billAdjustment.update({
-      where: { id },
-      data: {
-        approvalStatus: 'REJECTED',
-        rejectedReason: reason,
-        approvedBy: user.id,
-        approvedAt: new Date(),
-      },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT rb.contract_id FROM rent_bills rb JOIN bill_adjustments ba ON ba.rent_bill_id = rb.id WHERE ba.id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rent_bills WHERE id = (SELECT rent_bill_id FROM bill_adjustments WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM bill_adjustments WHERE id = ${id} FOR UPDATE`,
+      );
+      const adjustment = await tx.billAdjustment.findUniqueOrThrow({
+        where: { id },
+        include: { rentBill: { include: { contract: true } } },
+      });
+      if (adjustment.approvalStatus !== 'PENDING')
+        throw new BadRequestException('只有待审批调整可以驳回');
+      assertContractNotVoided(
+        adjustment.rentBill.contract.status,
+        '驳回账单调整',
+      );
+      return tx.billAdjustment.update({
+        where: { id },
+        data: {
+          approvalStatus: 'REJECTED',
+          rejectedReason: reason,
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
     });
   }
 

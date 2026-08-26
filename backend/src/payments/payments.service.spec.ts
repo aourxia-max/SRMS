@@ -43,6 +43,7 @@ describe('PaymentsService.record', () => {
             id: 7,
             status: 'ACTIVE',
             startDate: new Date('2026-08-01'),
+            pricingTiers: [],
           })
           .mockResolvedValueOnce({
             id: 7,
@@ -172,6 +173,12 @@ describe('PaymentsService.record', () => {
         },
       }),
     );
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    ).toBeLessThan(tx.payment.create.mock.invocationCallOrder[0]);
   });
 
   it('audits a super administrator manual allocation with its reason', async () => {
@@ -322,6 +329,12 @@ describe('PaymentsService.record', () => {
         }),
       }),
     );
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[1],
+    );
+    expect(
+      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[1],
+    ).toBeLessThan(tx.payment.create.mock.invocationCallOrder[0]);
   });
   it('rejects a checkout proof claimed concurrently before binding it to the payment', async () => {
     const { tx, service } = fixture();
@@ -951,6 +964,12 @@ describe('PaymentsService.edit', () => {
         }),
       }),
     );
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[1],
+    );
+    expect(
+      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[1],
+    ).toBeLessThan(tx.paymentAllocation.update.mock.invocationCallOrder[0]);
     expect(tx.securityAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         eventType: 'PAYMENT_CORRECTED',

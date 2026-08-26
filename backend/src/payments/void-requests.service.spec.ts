@@ -366,22 +366,33 @@ describe('VoidRequestsService adjustment reversal', () => {
     expect(approveTx.payment.update).not.toHaveBeenCalled();
 
     const rejectUpdate = jest.fn();
+    const rejectTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 301 }]),
+      paymentVoidRequest: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 301,
+          approvalStatus: 'PENDING',
+          payment: { contract: { status: 'VOIDED' } },
+        }),
+        update: rejectUpdate,
+      },
+    };
     const rejectService = new VoidRequestsService({
       db: {
-        paymentVoidRequest: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 301,
-            approvalStatus: 'PENDING',
-            payment: { contract: { status: 'VOIDED' } },
-          }),
-          update: rejectUpdate,
-        },
+        $transaction: jest.fn(
+          (callback: (value: typeof rejectTx) => Promise<unknown>) =>
+            callback(rejectTx),
+        ),
       },
     } as never);
 
     await expect(rejectService.reject(301, '信息有误', user)).rejects.toThrow(
       '已作废合同不能驳回收款作废',
     );
+    expect(rejectTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      rejectTx.paymentVoidRequest.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(rejectTx.$queryRaw).toHaveBeenCalledTimes(3);
     expect(rejectUpdate).not.toHaveBeenCalled();
   });
 });

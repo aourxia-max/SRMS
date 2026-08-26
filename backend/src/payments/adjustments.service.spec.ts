@@ -1,6 +1,23 @@
 import { Prisma, UserRole } from '@prisma/client';
 import { AdjustmentsService } from './adjustments.service';
 
+function transactional<T extends object>(tx: T) {
+  const client = {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+    ...tx,
+  };
+  return {
+    client,
+    db: {
+      ...client,
+      $transaction: jest.fn(
+        (callback: (value: typeof client) => Promise<unknown>) =>
+          callback(client),
+      ),
+    },
+  };
+}
+
 describe('AdjustmentsService checkout supplemental protection', () => {
   const user = {
     id: 1,
@@ -12,7 +29,7 @@ describe('AdjustmentsService checkout supplemental protection', () => {
   it('rejects submitting an adjustment for a checkout supplemental bill', async () => {
     const create = jest.fn();
     const service = new AdjustmentsService({
-      db: {
+      db: transactional({
         rentBill: {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 19,
@@ -21,7 +38,7 @@ describe('AdjustmentsService checkout supplemental protection', () => {
           }),
         },
         billAdjustment: { create },
-      },
+      }).db,
     } as never);
 
     await expect(
@@ -81,7 +98,7 @@ describe('AdjustmentsService checkout supplemental protection', () => {
   it('rejects adjusting original arrears locked by an approved checkout settlement', async () => {
     const create = jest.fn();
     const service = new AdjustmentsService({
-      db: {
+      db: transactional({
         rentBill: {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 11,
@@ -93,7 +110,7 @@ describe('AdjustmentsService checkout supplemental protection', () => {
           findFirst: jest.fn().mockResolvedValue({ id: 51 }),
         },
         billAdjustment: { create },
-      },
+      }).db,
     } as never);
 
     await expect(
@@ -113,25 +130,26 @@ describe('AdjustmentsService checkout supplemental protection', () => {
 
   it('rejects every adjustment mutation for a voided contract', async () => {
     const create = jest.fn();
-    const submitService = new AdjustmentsService({
-      db: {
-        rentBill: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 11,
-            status: 'PENDING',
-            billCategory: 'RENT',
-            payableAmount: '100.00',
-            receivedAmount: '0.00',
-            outstandingAmount: '100.00',
-            adjustmentAmount: '0.00',
-            contract: { status: 'VOIDED' },
-          }),
-        },
-        checkoutSettlementItem: {
-          findFirst: jest.fn().mockResolvedValue(null),
-        },
-        billAdjustment: { create },
+    const submitHarness = transactional({
+      rentBill: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 11,
+          status: 'PENDING',
+          billCategory: 'RENT',
+          payableAmount: '100.00',
+          receivedAmount: '0.00',
+          outstandingAmount: '100.00',
+          adjustmentAmount: '0.00',
+          contract: { status: 'VOIDED' },
+        }),
       },
+      checkoutSettlementItem: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      billAdjustment: { create },
+    });
+    const submitService = new AdjustmentsService({
+      db: submitHarness.db,
     } as never);
 
     await expect(
@@ -147,6 +165,12 @@ describe('AdjustmentsService checkout supplemental protection', () => {
       ),
     ).rejects.toThrow('已作废合同不能提交账单调整');
     expect(create).not.toHaveBeenCalled();
+    expect(
+      submitHarness.client.$queryRaw.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      submitHarness.client.rentBill.findUniqueOrThrow.mock
+        .invocationCallOrder[0],
+    );
 
     const approveTx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
@@ -187,22 +211,29 @@ describe('AdjustmentsService checkout supplemental protection', () => {
     expect(approveTx.rentBill.update).not.toHaveBeenCalled();
 
     const rejectUpdate = jest.fn();
-    const rejectService = new AdjustmentsService({
-      db: {
-        billAdjustment: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 501,
-            approvalStatus: 'PENDING',
-            rentBill: { contract: { status: 'VOIDED' } },
-          }),
-          update: rejectUpdate,
-        },
+    const rejectHarness = transactional({
+      billAdjustment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 501,
+          approvalStatus: 'PENDING',
+          rentBill: { contract: { status: 'VOIDED' } },
+        }),
+        update: rejectUpdate,
       },
+    });
+    const rejectService = new AdjustmentsService({
+      db: rejectHarness.db,
     } as never);
 
     await expect(rejectService.reject(501, '信息有误', user)).rejects.toThrow(
       '已作废合同不能驳回账单调整',
     );
     expect(rejectUpdate).not.toHaveBeenCalled();
+    expect(
+      rejectHarness.client.$queryRaw.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      rejectHarness.client.billAdjustment.findUniqueOrThrow.mock
+        .invocationCallOrder[0],
+    );
   });
 });

@@ -439,22 +439,33 @@ describe('RefundsService adjustment decisions', () => {
     expect(approve.tx.paymentRefund.update).not.toHaveBeenCalled();
 
     const rejectUpdate = jest.fn();
+    const rejectTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 201 }]),
+      paymentRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 201,
+          approvalStatus: 'PENDING',
+          contract: { status: 'VOIDED' },
+        }),
+        update: rejectUpdate,
+      },
+    };
     const rejectService = new RefundsService({
       db: {
-        paymentRefund: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 201,
-            approvalStatus: 'PENDING',
-            contract: { status: 'VOIDED' },
-          }),
-          update: rejectUpdate,
-        },
+        $transaction: jest.fn(
+          (callback: (value: typeof rejectTx) => Promise<unknown>) =>
+            callback(rejectTx),
+        ),
       },
     } as never);
 
     await expect(rejectService.reject(201, '信息有误', user)).rejects.toThrow(
       '已作废合同不能驳回退款',
     );
+    expect(rejectTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      rejectTx.paymentRefund.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(rejectTx.$queryRaw).toHaveBeenCalledTimes(2);
     expect(rejectUpdate).not.toHaveBeenCalled();
   });
 });

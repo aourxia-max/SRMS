@@ -271,25 +271,36 @@ export class VoidRequestsService {
   async reject(id: number, reason: string, user: AuthUser) {
     if (user.role !== UserRole.SUPER_ADMIN)
       throw new ForbiddenException('只有超级管理员可以驳回作废申请');
-    const request = await this.prisma.db.paymentVoidRequest.findUniqueOrThrow({
-      where: { id },
-      include: {
-        payment: {
-          include: { contract: { select: { status: true } } },
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT p.contract_id FROM payments p JOIN payment_void_requests pvr ON pvr.payment_id = p.id WHERE pvr.id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payments WHERE id = (SELECT payment_id FROM payment_void_requests WHERE id = ${id}) FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM payment_void_requests WHERE id = ${id} FOR UPDATE`,
+      );
+      const request = await tx.paymentVoidRequest.findUniqueOrThrow({
+        where: { id },
+        include: {
+          payment: {
+            include: { contract: { select: { status: true } } },
+          },
         },
-      },
-    });
-    if (request.approvalStatus !== 'PENDING')
-      throw new BadRequestException('只有待审批作废申请可以驳回');
-    assertContractNotVoided(request.payment.contract.status, '驳回收款作废');
-    return this.prisma.db.paymentVoidRequest.update({
-      where: { id },
-      data: {
-        approvalStatus: 'REJECTED',
-        rejectedReason: reason,
-        approvedBy: user.id,
-        approvedAt: new Date(),
-      },
+      });
+      if (request.approvalStatus !== 'PENDING')
+        throw new BadRequestException('只有待审批作废申请可以驳回');
+      assertContractNotVoided(request.payment.contract.status, '驳回收款作废');
+      return tx.paymentVoidRequest.update({
+        where: { id },
+        data: {
+          approvalStatus: 'REJECTED',
+          rejectedReason: reason,
+          approvedBy: user.id,
+          approvedAt: new Date(),
+        },
+      });
     });
   }
   private async refreshContractPaymentSnapshot(

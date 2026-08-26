@@ -587,28 +587,18 @@ export class PaymentsService {
     )
       throw new BadRequestException('收款凭证不能重复');
     return this.prisma.db.$transaction(async (tx) => {
-      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id: dto.checkoutSettlementId },
-        include: { contract: true, items: true, supplementalBill: true },
-      });
-      assertContractNotVoided(settlement.contract.status, '登记退租补收款');
-      if (
-        settlement.status !== 'APPROVED' ||
-        settlement.contract.status !== 'PENDING_CHECKOUT' ||
-        !settlement.supplementalRequired
-      )
-        throw new BadRequestException('当前退租结算不允许登记补收款');
-      const contract = await tx.contract.findUniqueOrThrow({
-        where: { id: settlement.contractId },
+        select: { id: true, contractId: true },
       });
       await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM contracts WHERE id = ${contract.id} FOR UPDATE`,
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
       );
       await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${settlement.id} FOR UPDATE`,
+        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${identity.id} FOR UPDATE`,
       );
       await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contract.id} ORDER BY id FOR UPDATE`,
+        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${identity.contractId} ORDER BY id FOR UPDATE`,
       );
       const lockedSettlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id: dto.checkoutSettlementId },
@@ -629,7 +619,7 @@ export class PaymentsService {
         .map((item) => item.rentBillId!);
       const bills = await tx.rentBill.findMany({
         where: {
-          contractId: contract.id,
+          contractId: identity.contractId,
           status: { notIn: ['VOIDED', 'REFUNDED'] },
           outstandingAmount: { gt: 0 },
           OR: [
@@ -676,7 +666,7 @@ export class PaymentsService {
       const payment = await tx.payment.create({
         data: {
           receiptNo: await this.receiptNo(tx),
-          contractId: contract.id,
+          contractId: identity.contractId,
           paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
           paymentDate: new Date(dto.paymentDate),
           amount,
@@ -785,7 +775,7 @@ export class PaymentsService {
           operatorRole: user.role,
         },
       });
-      await this.refreshContractPaymentSnapshot(tx, contract.id);
+      await this.refreshContractPaymentSnapshot(tx, identity.contractId);
       return {
         id: payment.id,
         receiptNo: payment.receiptNo,
