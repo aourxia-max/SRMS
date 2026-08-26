@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'fs/promises';
+import { resolve } from 'path';
 import {
   BadRequestException,
   ForbiddenException,
@@ -628,5 +629,105 @@ describe('FilesService contract void proofs', () => {
         role: UserRole.VISITOR,
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('downloads only a proof linked to the requested void request and neutralizes stored-name traversal', async () => {
+    jest.mocked(readFile).mockResolvedValue(Buffer.from('void-proof'));
+    const findFirst = jest.fn().mockResolvedValue({
+      contractVoidRequestId: 901,
+      fileAssetId: 501,
+      fileAsset: {
+        id: 501,
+        category: 'CONTRACT_VOID_PROOF',
+        storedName: '../../outside.png',
+        originalName: '作废证明.png',
+        mimeType: 'image/png',
+      },
+    });
+    const service = new FilesService(
+      { db: { contractVoidRequestFile: { findFirst } } } as never,
+      {} as never,
+    );
+    const user = {
+      id: 2,
+      username: 'admin',
+      displayName: '管理员',
+      role: UserRole.ADMIN,
+    };
+
+    const result = await (
+      service as unknown as {
+        downloadContractVoidProof: (
+          requestId: number,
+          fileId: number,
+          user: typeof user,
+        ) => Promise<{ asset: { originalName: string }; content: Buffer }>;
+      }
+    ).downloadContractVoidProof(901, 501, user);
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        contractVoidRequestId: 901,
+        fileAssetId: 501,
+        fileAsset: { category: 'CONTRACT_VOID_PROOF' },
+      },
+      include: { fileAsset: true },
+    });
+    expect(readFile).toHaveBeenCalledWith(
+      resolve(
+        process.cwd(),
+        '..',
+        'uploads',
+        'contract-void-proofs',
+        'outside.png',
+      ),
+    );
+    expect(result.content.toString()).toBe('void-proof');
+    expect(result.asset.originalName).toBe('作废证明.png');
+  });
+
+  it('rejects an unlinked or wrong-category asset for the requested void request', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const service = new FilesService(
+      { db: { contractVoidRequestFile: { findFirst } } } as never,
+      {} as never,
+    );
+    const user = {
+      id: 2,
+      username: 'admin',
+      displayName: '管理员',
+      role: UserRole.ADMIN,
+    };
+
+    await expect(
+      (service as any).downloadContractVoidProof(901, 999, user),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contractVoidRequestId: 901,
+          fileAssetId: 999,
+          fileAsset: { category: 'CONTRACT_VOID_PROOF' },
+        }),
+      }),
+    );
+  });
+
+  it('rejects visitor proof downloads before querying file metadata', async () => {
+    const findFirst = jest.fn();
+    const service = new FilesService(
+      { db: { contractVoidRequestFile: { findFirst } } } as never,
+      {} as never,
+    );
+
+    await expect(
+      (service as any).downloadContractVoidProof(901, 501, {
+        id: 3,
+        username: 'visitor',
+        displayName: '访客',
+        role: UserRole.VISITOR,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(findFirst).not.toHaveBeenCalled();
   });
 });

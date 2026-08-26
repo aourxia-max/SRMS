@@ -1,5 +1,5 @@
 export type ContractRole = 'SUPER_ADMIN' | 'ADMIN' | 'VISITOR'
-export type ContractWorkspaceTab = 'list' | 'create' | 'detail' | 'fixed-rebate'
+export type ContractWorkspaceTab = 'list' | 'create' | 'detail' | 'fixed-rebate' | 'void-correction'
 
 export type ContractCommission = {
   id?: number
@@ -178,6 +178,7 @@ export type ContractVoidImpact = { contract: { id: number; status: string; roomI
 export type ContractVoidImpactSnapshot = Omit<ContractVoidImpact, 'impactHash'>
 export type ContractVoidReversal = { id: number; contractVoidRequestId: number; category: ContractVoidReversalCategory; originalEntityType: string; originalEntityId: number | null; amount: string; balanceBefore: string | null; balanceAfter: string | null; generatedEntityType: string | null; generatedEntityId: number | null; originalOccurredAt: string | null; correctionOccurredAt: string; idempotencyKey: string; metadata: Record<string, unknown> | null }
 export type ContractVoidExecutionResult = { requestId: number; requestNo: string; status: 'COMPLETED'; contractId: number; contractNo: string; contractStatus: 'VOIDED'; impactHash: string; executionBatchNo: string; reversalCount: number; categoryTotals: Partial<Record<ContractVoidReversalCategory, string>>; roomAction: 'KEEP_CURRENT_STATUS' | 'RECALCULATE'; roomStatusBefore: string; roomStatusAfter: string }
+export type ContractVoidProofFile = { id: number; originalName: string; mimeType: string; sizeBytes: string; uploadedAt: string }
 export type ContractVoidRequest = { id: number; requestNo: string; contractId: number; status: ContractVoidRequestStatus; reason: string; impactSnapshot: ContractVoidImpactSnapshot; impactHash: string; activeContractKey: string | null; completedContractKey: string | null; executionBatchNo: string | null; submissionIdempotencyKey: string; executionIdempotencyKey: string | null; resultSnapshot: ContractVoidExecutionResult | null; submittedBy: number; submittedAt: string; completedBy: number | null; completedAt: string | null; rejectedBy: number | null; rejectedAt: string | null; rejectedReason: string | null; cancelledBy: number | null; cancelledAt: string | null; createdAt: string; updatedAt: string; reversals?: ContractVoidReversal[]; files?: Array<{ contractVoidRequestId: number; fileAssetId: number; createdAt: string; fileAsset: { id: number; originalName: string; mimeType: string; uploadedAt: string } }>; contract?: { id: number; contractNo: string; roomId: number; status: string; room: ContractRoom; members: Array<{ id: number; tenantId: number; memberRole: string; isCurrent: boolean; tenant: ContractTenant }> } }
 export type ContractVoidRequestQuery = { status?: ContractVoidRequestStatus; contractId?: number; contractNo?: string; roomKeyword?: string; tenantKeyword?: string }
 export type SubmitContractVoidRequestInput = { contractId: number; reason: string; impactHash: string; fileAssetIds?: number[]; idempotencyKey: string }

@@ -18,15 +18,16 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; upload: [file: File]; commissionChanged: [] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; 'void-correction': [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; upload: [file: File]; commissionChanged: [] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
 const date = (value?: string | null) => value ? String(value).slice(0, 10) : '—'
 const paidBillCount = computed(() => props.bills.filter((item) => item.status === 'PAID').length)
+const canVoidContract = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.role) && props.contract?.status !== 'VOIDED')
 const canInitiateCheckout = computed(() => ['PENDING_START', 'ACTIVE'].includes(props.contract?.status || ''))
 const canRegisterPayment = computed(() => props.contract?.status === 'ACTIVE')
-const canUploadContractFile = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.role))
+const canUploadContractFile = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.role) && props.contract?.status !== 'VOIDED')
 const activeCommission = computed(() => props.contract?.commissions?.[0] ?? null)
 const commissionDialog = ref(false)
 const commissionSaving = ref(false)
@@ -99,6 +100,15 @@ async function removeCommission() {
         <div><h1>合同详情</h1><p>固定月租合同履行、账单、成员、附件和变更记录</p></div>
         <div class="actions">
           <el-button @click="emit('back')">返回列表</el-button>
+          <el-button
+            v-if="canVoidContract"
+            data-test="open-contract-void-correction"
+            type="danger"
+            plain
+            @click="emit('void-correction', contract.id)"
+          >
+            作废／纠错
+          </el-button>
           <el-button
             v-if="canRegisterPayment"
             data-test="open-payment-collect"
@@ -203,7 +213,7 @@ async function removeCommission() {
               <div><span>计价方式</span><b>固定月租</b></div>
               <div><span>固定月租</span><b class="money-blue">{{ money(contract.monthlyRent) }}</b></div>
               <div><span>已收押金</span><b>{{ money(contract.depositRequired) }}</b></div>
-              <div v-if="role === 'SUPER_ADMIN'" class="commission-row"><span>租房提成</span><div><b v-if="activeCommission" class="commission">{{ activeCommission.recipientName }} · {{ money(activeCommission.amount) }}</b><b v-else>未登记</b><el-button link type="primary" data-test="maintain-commission" @click="openCommission">{{ activeCommission ? '编辑提成' : '登记提成' }}</el-button></div></div>
+              <div v-if="role === 'SUPER_ADMIN'" class="commission-row"><span>租房提成</span><div><b v-if="activeCommission" class="commission">{{ activeCommission.recipientName }} · {{ money(activeCommission.amount) }}</b><b v-else>未登记</b><el-button v-if="contract.status !== 'VOIDED'" link type="primary" data-test="maintain-commission" @click="openCommission">{{ activeCommission ? '编辑提成' : '登记提成' }}</el-button></div></div>
             </div>
           </section>
           <section class="notice">已确认合同的关键金额和日期不能直接编辑。如需调整，请进入合同变更流程。</section>

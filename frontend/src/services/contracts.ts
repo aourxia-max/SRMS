@@ -15,6 +15,7 @@ import type {
   ApproveContractVoidRequestInput,
   ContractVoidExecutionResult,
   ContractVoidImpact,
+  ContractVoidProofFile,
   ContractVoidRequest,
   ContractVoidRequestQuery,
   SubmitContractVoidRequestInput,
@@ -238,4 +239,15 @@ export async function approveContractVoidRequest(id: number, payload: ApproveCon
 
 export async function rejectContractVoidRequest(id: number, reason: string) {
   return (await http.post<ApiResponse<ContractVoidRequest>>(`/contracts/void-requests/${id}/reject`, { reason })).data.data
+}
+export async function uploadContractVoidProof(file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return (await http.post<ApiResponse<ContractVoidProofFile>>('/contracts/void-request-files', body)).data.data
+}
+
+export async function downloadContractVoidProof(requestId: number, fileId: number) {
+  return (await http.get(`/contracts/void-requests/${requestId}/files/${fileId}/download`, {
+    responseType: 'blob',
+  })).data as Blob
 }

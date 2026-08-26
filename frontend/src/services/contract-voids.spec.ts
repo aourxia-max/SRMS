@@ -45,4 +45,29 @@ describe('合同作废 API 客户端', () => {
     expect(result.reversals[0].amount).toBe('-12.50')
     expect(http.get).toHaveBeenCalledWith('/contracts/void-requests/9')
   })
+
+  it('通过后端定义的 multipart 字段上传真实作废证明附件', async () => {
+    const file = new File(['proof-image'], '作废证明.png', { type: 'image/png' })
+    const asset = { id: 501, originalName: '作废证明.png', mimeType: 'image/png', sizeBytes: '11', uploadedAt: '2026-08-26T08:00:00.000Z' }
+    vi.mocked(http.post).mockResolvedValue({ data: { code: 200, message: 'success', data: asset } })
+
+    await expect((contracts as any).uploadContractVoidProof(file)).resolves.toEqual(asset)
+
+    expect(http.post).toHaveBeenCalledTimes(1)
+    const [url, body] = vi.mocked(http.post).mock.calls[0]
+    expect(url).toBe('/contracts/void-request-files')
+    expect(body).toBeInstanceOf(FormData)
+    expect((body as FormData).get('file')).toBe(file)
+  })
+
+  it('按申请和资产编号下载已关联的历史证明', async () => {
+    const blob = new Blob(['proof'], { type: 'image/png' })
+    vi.mocked(http.get).mockResolvedValue({ data: blob })
+
+    await expect((contracts as any).downloadContractVoidProof(901, 501)).resolves.toBe(blob)
+
+    expect(http.get).toHaveBeenCalledWith('/contracts/void-requests/901/files/501/download', {
+      responseType: 'blob',
+    })
+  })
 })

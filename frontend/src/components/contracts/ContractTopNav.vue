@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ContractWorkspaceTab } from '../../types/contracts'
+import type { ContractRole, ContractWorkspaceTab } from '../../types/contracts'
 
 const props = withDefaults(defineProps<{
   modelValue: ContractWorkspaceTab
   selectedContractId?: number | null
-}>(), { selectedContractId: null })
+  role?: ContractRole
+}>(), { selectedContractId: null, role: 'VISITOR' })
 
 const emit = defineEmits<{ 'update:modelValue': [value: ContractWorkspaceTab] }>()
 
@@ -14,7 +15,12 @@ const items: Array<{ value: ContractWorkspaceTab; label: string }> = [
   { value: 'create', label: '新增合同' },
   { value: 'detail', label: '合同详情' },
   { value: 'fixed-rebate', label: '固定月租退差' },
+  { value: 'void-correction', label: '合同作废／纠错' },
 ]
+
+const visibleItems = computed(() => items.filter((item) => (
+  item.value !== 'void-correction' || props.role === 'ADMIN' || props.role === 'SUPER_ADMIN'
+)))
 
 const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.modelValue) && !props.selectedContractId)
 </script>
@@ -23,7 +29,7 @@ const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.
   <div>
     <nav class="contract-top-nav" aria-label="合同工作区导航">
       <button
-        v-for="item in items"
+        v-for="item in visibleItems"
         :key="item.value"
         type="button"
         :class="{ active: modelValue === item.value }"

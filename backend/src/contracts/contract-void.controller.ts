@@ -10,6 +10,7 @@ import {
   PipeTransform,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseFilters,
   UseGuards,
@@ -196,5 +197,26 @@ export class ContractVoidController {
       message: 'success',
       data: await this.files.saveContractVoidProof(file, user),
     };
+  }
+
+  @Get('void-requests/:id/files/:fileId/download')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async downloadFile(
+    @Param('id', positiveIntPipe) id: number,
+    @Param('fileId', positiveIntPipe) fileId: number,
+    @CurrentUser() user: AuthUser,
+    @Res() response: Response,
+  ) {
+    const { asset, content } = await this.files.downloadContractVoidProof(
+      id,
+      fileId,
+      user,
+    );
+    response.setHeader('Content-Type', asset.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(asset.originalName)}`,
+    );
+    response.send(content);
   }
 }

@@ -25,5 +25,37 @@ export const contractVoidCategoryLabels: LabelMap = {
   ROOM_STATUS: '房态',
 }
 
+export const contractVoidRoomActionLabels: LabelMap = {
+  KEEP_CURRENT_STATUS: '保持当前房态',
+  RECALCULATE: '重新计算房态',
+}
+
+export const contractVoidSourceLabels: LabelMap = {
+  RentBill: '租金账单',
+  Payment: '收款',
+  PaymentAllocation: '收款分配',
+  PrepaymentLedger: '预收款台账',
+  DepositLedger: '押金台账',
+  PaymentRefund: '退款',
+  BillAdjustment: '账单调整',
+  PricingRebate: '租金退差',
+  CheckoutSettlement: '退租结算',
+  Commission: '租房提成',
+  Room: '房源',
+}
+
+export const contractVoidWorkflowLabels: LabelMap = {
+  adjustments: '待处理账单调整',
+  refunds: '待处理退款',
+  voidRequests: '待处理收款作废',
+  depositRefunds: '待处理押金退款',
+  changes: '待处理合同变更',
+  rebates: '待处理租金退差',
+  checkouts: '待处理退租',
+}
+
 export const contractVoidStatusLabel = (value?: ContractVoidRequestStatus | string | null) => contractVoidStatusLabels[value ?? ''] ?? unknownStatusLabel(value)
 export const contractVoidCategoryLabel = (value?: ContractVoidReversalCategory | string | null) => contractVoidCategoryLabels[value ?? ''] ?? unknownStatusLabel(value)
+export const contractVoidRoomActionLabel = (value?: string | null) => contractVoidRoomActionLabels[value ?? ''] ?? unknownStatusLabel(value)
+export const contractVoidSourceLabel = (value?: string | null) => contractVoidSourceLabels[value ?? ''] ?? unknownStatusLabel(value)
+export const contractVoidWorkflowLabel = (value?: string | null) => contractVoidWorkflowLabels[value ?? ''] ?? unknownStatusLabel(value)

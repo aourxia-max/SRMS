@@ -236,6 +236,32 @@ export class FilesService {
       uploadedAt: asset.uploadedAt,
     };
   }
+
+  async downloadContractVoidProof(
+    requestId: number,
+    fileId: number,
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('当前角色不能查看合同作废证明');
+    const item = await this.prisma.db.contractVoidRequestFile.findFirst({
+      where: {
+        contractVoidRequestId: requestId,
+        fileAssetId: fileId,
+        fileAsset: { category: 'CONTRACT_VOID_PROOF' },
+      },
+      include: { fileAsset: true },
+    });
+    if (!item) throw new NotFoundException('合同作废证明不存在');
+    const content = await readFile(
+      resolve(
+        this.contractVoidProofFolder(),
+        basename(item.fileAsset.storedName),
+      ),
+    );
+    return { asset: item.fileAsset, content };
+  }
+
   async savePaymentProof(file: UploadedFile, user: AuthUser) {
     if (!file || !file.buffer) throw new BadRequestException('请上传收款凭证');
     if (file.size > (await this.configLimit()))

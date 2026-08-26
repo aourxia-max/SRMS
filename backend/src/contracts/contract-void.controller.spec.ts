@@ -83,6 +83,59 @@ describe('ContractVoidController', () => {
   });
 });
 
+describe('ContractVoidController proof downloads', () => {
+  it('registers an admin-only request-owned download route with safe headers', async () => {
+    const prototype = ContractVoidController.prototype as unknown as Record<
+      string,
+      object | undefined
+    >;
+    const handler = prototype.downloadFile;
+    expect(handler).toBeDefined();
+    if (!handler) return;
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(
+      'void-requests/:id/files/:fileId/download',
+    );
+    expect(Reflect.getMetadata(ROLES_KEY, handler)).toEqual([
+      UserRole.SUPER_ADMIN,
+      UserRole.ADMIN,
+    ]);
+
+    const downloadContractVoidProof = jest.fn().mockResolvedValue({
+      asset: { originalName: '作废证明.png', mimeType: 'image/png' },
+      content: Buffer.from('proof'),
+    });
+    const controller = Reflect.construct(ContractVoidController, [
+      {},
+      {},
+      { downloadContractVoidProof },
+    ]) as ContractVoidController;
+    const response = { setHeader: jest.fn(), send: jest.fn() };
+    const download = (
+      controller as unknown as {
+        downloadFile: (
+          requestId: number,
+          fileId: number,
+          user: typeof admin,
+          response: typeof response,
+        ) => Promise<void>;
+      }
+    ).downloadFile;
+
+    await download.call(controller, 901, 501, admin, response);
+
+    expect(downloadContractVoidProof).toHaveBeenCalledWith(901, 501, admin);
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'Content-Type',
+      'image/png',
+    );
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'Content-Disposition',
+      "attachment; filename*=UTF-8''%E4%BD%9C%E5%BA%9F%E8%AF%81%E6%98%8E.png",
+    );
+    expect(response.send).toHaveBeenCalledWith(Buffer.from('proof'));
+  });
+});
+
 describe('ContractVoidController HTTP errors', () => {
   async function createApp(role: UserRole) {
     const requests = {

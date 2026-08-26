@@ -1,0 +1,541 @@
+<script setup lang="ts">
+import { ElMessage, ElMessageBox } from 'element-plus'
+import type { UploadFile } from 'element-plus'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import {
+  approveContractVoidRequest,
+  cancelContractVoidRequest,
+  downloadContractVoidProof,
+  getContractVoidRequest,
+  listContractVoidRequests,
+  previewContractVoid,
+  rejectContractVoidRequest,
+  submitContractVoidRequest,
+  uploadContractVoidProof,
+} from '../../../services/contracts'
+import type {
+  ContractListItem,
+  ContractRole,
+  ContractVoidImpact,
+  ContractVoidProofFile,
+  ContractVoidRequest,
+  ContractVoidRequestQuery,
+  ContractVoidRequestStatus,
+} from '../../../types/contracts'
+import { contractVoidConfirmationText } from '../../../types/contracts'
+import {
+  contractVoidCategoryLabel,
+  contractVoidSourceLabel,
+  contractVoidStatusLabel,
+} from './contract-void-presentation'
+import ContractVoidImpactCards from './ContractVoidImpactCards.vue'
+
+const props = withDefaults(defineProps<{
+  contracts: ContractListItem[]
+  role: ContractRole
+  selectedContractId?: number | null
+  currentUserId?: number | null
+}>(), { selectedContractId: null, currentUserId: null })
+
+type UploadedProof = ContractVoidProofFile & { previewUrl: string }
+type PreviewFile = { id: number; originalName: string; mimeType: string; previewUrl: string }
+
+const requests = ref<ContractVoidRequest[]>([])
+const requestsLoading = ref(false)
+const detailLoading = ref(false)
+const impactLoading = ref(false)
+const saving = ref(false)
+const attachmentUploading = ref(false)
+const selectedId = ref<number | null>(null)
+const impact = ref<ContractVoidImpact | null>(null)
+const selectedRequest = ref<ContractVoidRequest | null>(null)
+const reason = ref('')
+const uploadedProofs = ref<UploadedProof[]>([])
+const contractKeyword = ref('')
+const previewOpen = ref(false)
+const previewFile = ref<PreviewFile | null>(null)
+const previewOwnedUrl = ref(false)
+const filters = reactive<{
+  contractNo: string
+  roomKeyword: string
+  tenantKeyword: string
+  status: ContractVoidRequestStatus | ''
+}>({ contractNo: '', roomKeyword: '', tenantKeyword: '', status: '' })
+let previewGeneration = 0
+let idempotencySequence = 0
+
+const eligibleContracts = computed(() => props.contracts.filter((item) => item.status !== 'VOIDED'))
+const visibleContracts = computed(() => {
+  const keyword = contractKeyword.value.trim().toLocaleLowerCase('zh-CN')
+  if (!keyword) return eligibleContracts.value
+  return eligibleContracts.value.filter((item) => contractOptionLabel(item).toLocaleLowerCase('zh-CN').includes(keyword))
+})
+const selectedContract = computed(() => props.contracts.find((item) => item.id === selectedId.value) ?? null)
+const terminalRequest = computed(() => Boolean(selectedRequest.value && selectedRequest.value.status !== 'PENDING'))
+const canCancelRequest = computed(() => selectedRequest.value?.status === 'PENDING' && (
+  props.role === 'SUPER_ADMIN' || selectedRequest.value.submittedBy === props.currentUserId
+))
+const submitDisabled = computed(() => saving.value || attachmentUploading.value || !selectedContract.value || selectedContract.value.status === 'VOIDED' || !impact.value?.impactHash || !reason.value.trim())
+
+function primaryTenant(contract?: ContractListItem | ContractVoidRequest['contract'] | null) {
+  return contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant.name || '未记录租户'
+}
+
+function contractOptionLabel(contract: ContractListItem) {
+  return [contract.contractNo, contract.room?.fullHouseNo || `房源${contract.roomId}`, primaryTenant(contract)].filter((value, index, items) => !items.slice(0, index).some((previous) => previous.includes(value))).join('｜')
+}
+
+function date(value?: string | null) {
+  return value ? String(value).slice(0, 10) : '—'
+}
+
+function exactMoney(value?: string | null) {
+  if (!value) return '—'
+  const match = /^(-?)(\d+)(\.\d+)?$/.exec(value)
+  if (!match) return '金额格式异常'
+  return `${match[1]}¥${match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${match[3] ?? ''}`
+}
+
+function statusTagType(status?: string | null): 'warning' | 'success' | 'danger' | 'info' {
+  if (status === 'PENDING') return 'warning'
+  if (status === 'COMPLETED') return 'success'
+  if (status === 'REJECTED') return 'danger'
+  return 'info'
+}
+
+function errorDetails(error: unknown, fallback: string) {
+  const response = (error as { response?: { status?: number; data?: { code?: number; message?: string | string[] } } })?.response
+  const raw = response?.data?.message
+  return {
+    code: response?.data?.code ?? response?.status,
+    message: Array.isArray(raw) ? raw.join('；') : raw || fallback,
+  }
+}
+
+function isStale(error: unknown) {
+  const detail = errorDetails(error, '')
+  return (detail.code === 400 && detail.message === '合同关联数据已变化，请重新预览') ||
+    (detail.code === 409 && detail.message === '合同关联审批状态已并发变化，请重新预览')
+}
+
+function isPromptCancelled(error: unknown) {
+  return error === 'cancel' || error === 'close'
+}
+
+function idempotencyKey(kind: 'submit' | 'execute') {
+  idempotencySequence += 1
+  return `contract-void-${kind}-${Date.now()}-${idempotencySequence}`
+}
+
+function queryFromFilters(): ContractVoidRequestQuery {
+  return {
+    ...(filters.contractNo.trim() ? { contractNo: filters.contractNo.trim() } : {}),
+    ...(filters.roomKeyword.trim() ? { roomKeyword: filters.roomKeyword.trim() } : {}),
+    ...(filters.tenantKeyword.trim() ? { tenantKeyword: filters.tenantKeyword.trim() } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+  }
+}
+
+async function loadRequests() {
+  requestsLoading.value = true
+  try {
+    requests.value = await listContractVoidRequests(queryFromFilters())
+  } catch (error) {
+    ElMessage.error(errorDetails(error, '合同作废纠错申请加载失败').message)
+  } finally {
+    requestsLoading.value = false
+  }
+}
+
+function releaseUploadedProofs() {
+  uploadedProofs.value.forEach((file) => URL.revokeObjectURL(file.previewUrl))
+  uploadedProofs.value = []
+}
+
+function closeProofPreview() {
+  previewOpen.value = false
+  if (previewOwnedUrl.value && previewFile.value?.previewUrl) URL.revokeObjectURL(previewFile.value.previewUrl)
+  previewOwnedUrl.value = false
+  previewFile.value = null
+}
+
+async function loadImpact(contractId: number) {
+  const generation = ++previewGeneration
+  impactLoading.value = true
+  impact.value = null
+  try {
+    const result = await previewContractVoid(contractId)
+    if (generation === previewGeneration) impact.value = result
+  } catch (error) {
+    if (generation === previewGeneration) ElMessage.error(errorDetails(error, '合同关联影响预览失败').message)
+  } finally {
+    if (generation === previewGeneration) impactLoading.value = false
+  }
+}
+
+async function chooseContract(contractId: number | null) {
+  selectedRequest.value = null
+  selectedId.value = contractId
+  reason.value = ''
+  releaseUploadedProofs()
+  if (!contractId) {
+    previewGeneration += 1
+    impact.value = null
+    impactLoading.value = false
+    return
+  }
+  const contract = props.contracts.find((item) => item.id === contractId)
+  if (!contract || contract.status === 'VOIDED') {
+    impact.value = null
+    ElMessage.warning('已作废合同不能再次申请作废')
+    return
+  }
+  await loadImpact(contractId)
+}
+
+async function openRequest(row: ContractVoidRequest) {
+  if (saving.value) return
+  detailLoading.value = true
+  try {
+    selectedRequest.value = await getContractVoidRequest(row.id)
+    selectedId.value = selectedRequest.value.contractId
+    impact.value = null
+  } catch (error) {
+    ElMessage.error(errorDetails(error, '合同作废纠错申请详情加载失败').message)
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function startNewRequest() {
+  const contractId = selectedRequest.value?.contractId ?? selectedId.value
+  selectedRequest.value = null
+  reason.value = ''
+  releaseUploadedProofs()
+  if (contractId) await loadImpact(contractId)
+}
+
+async function refreshStale(contractId: number) {
+  selectedRequest.value = null
+  selectedId.value = contractId
+  await Promise.all([loadImpact(contractId), loadRequests()])
+  ElMessage.warning('合同关联数据已变化，已为你重新计算，请再次核对')
+}
+
+async function riskConfirmation(action: '直接执行' | '确认作废') {
+  const result = await ElMessageBox.prompt(
+    `请输入“${contractVoidConfirmationText}”后${action}`,
+    '合同作废风险确认',
+    {
+      confirmButtonText: action,
+      cancelButtonText: '取消',
+      inputPlaceholder: contractVoidConfirmationText,
+      inputValidator: (value) => value === contractVoidConfirmationText || `请输入“${contractVoidConfirmationText}”`,
+    },
+  )
+  return result.value
+}
+
+async function submit(direct: boolean) {
+  if (submitDisabled.value) return
+  saving.value = true
+  try {
+    const confirmation = direct ? await riskConfirmation('直接执行') : null
+    const created = await submitContractVoidRequest({
+      contractId: selectedContract.value!.id,
+      reason: reason.value.trim(),
+      impactHash: impact.value!.impactHash,
+      fileAssetIds: uploadedProofs.value.map((file) => file.id),
+      idempotencyKey: idempotencyKey('submit'),
+    })
+    if (confirmation) {
+      await approveContractVoidRequest(created.id, {
+        previewHash: created.impactHash,
+        confirmation: contractVoidConfirmationText,
+        idempotencyKey: idempotencyKey('execute'),
+      })
+      selectedRequest.value = await getContractVoidRequest(created.id)
+      impact.value = null
+      ElMessage.success('合同已作废并完成纠错冲销')
+    } else {
+      selectedRequest.value = created
+      impact.value = null
+      ElMessage.success('合同作废纠错申请已提交')
+    }
+    await loadRequests()
+  } catch (error) {
+    if (isPromptCancelled(error)) return
+    if (isStale(error) && selectedId.value) await refreshStale(selectedId.value)
+    else ElMessage.error(errorDetails(error, direct ? '合同作废直接执行失败' : '合同作废纠错申请提交失败').message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function approveRequest() {
+  if (saving.value || !selectedRequest.value || selectedRequest.value.status !== 'PENDING') return
+  saving.value = true
+  const current = selectedRequest.value
+  try {
+    await riskConfirmation('确认作废')
+    await approveContractVoidRequest(current.id, {
+      previewHash: current.impactHash,
+      confirmation: contractVoidConfirmationText,
+      idempotencyKey: idempotencyKey('execute'),
+    })
+    selectedRequest.value = await getContractVoidRequest(current.id)
+    await loadRequests()
+    ElMessage.success('合同作废申请已确认并完成冲销')
+  } catch (error) {
+    if (isPromptCancelled(error)) return
+    if (isStale(error)) await refreshStale(current.contractId)
+    else ElMessage.error(errorDetails(error, '合同作废申请确认失败').message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function rejectRequest() {
+  if (saving.value || props.role !== 'SUPER_ADMIN' || selectedRequest.value?.status !== 'PENDING') return
+  saving.value = true
+  const current = selectedRequest.value
+  try {
+    const result = await ElMessageBox.prompt('请输入驳回原因', '驳回合同作废申请', {
+      confirmButtonText: '确认驳回',
+      cancelButtonText: '取消',
+      inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因',
+    })
+    selectedRequest.value = await rejectContractVoidRequest(current.id, result.value.trim())
+    await loadRequests()
+    ElMessage.success('合同作废申请已驳回')
+  } catch (error) {
+    if (!isPromptCancelled(error)) ElMessage.error(errorDetails(error, '合同作废申请驳回失败').message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function cancelRequest() {
+  if (saving.value || !canCancelRequest.value || !selectedRequest.value) return
+  saving.value = true
+  try {
+    selectedRequest.value = await cancelContractVoidRequest(selectedRequest.value.id)
+    await loadRequests()
+    ElMessage.success('合同作废申请已取消')
+  } catch (error) {
+    ElMessage.error(errorDetails(error, '合同作废申请取消失败').message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function uploadProof(uploadFile: UploadFile) {
+  if (!uploadFile.raw || saving.value || attachmentUploading.value) return
+  attachmentUploading.value = true
+  try {
+    const asset = await uploadContractVoidProof(uploadFile.raw)
+    const previewUrl = URL.createObjectURL(uploadFile.raw)
+    uploadedProofs.value.push({ ...asset, previewUrl })
+    ElMessage.success(`证明附件“${asset.originalName}”上传成功`)
+  } catch (error) {
+    ElMessage.error(errorDetails(error, '证明附件上传失败，请重试').message)
+  } finally {
+    attachmentUploading.value = false
+  }
+}
+
+function previewUploadedProof(file: UploadedProof) {
+  closeProofPreview()
+  previewFile.value = file
+  previewOwnedUrl.value = false
+  previewOpen.value = true
+}
+
+async function previewRequestProof(file: NonNullable<ContractVoidRequest['files']>[number]) {
+  if (!selectedRequest.value || saving.value) return
+  const local = uploadedProofs.value.find((item) => item.id === file.fileAssetId)
+  if (local) {
+    previewUploadedProof(local)
+    return
+  }
+  saving.value = true
+  try {
+    const blob = await downloadContractVoidProof(selectedRequest.value.id, file.fileAssetId)
+    closeProofPreview()
+    previewFile.value = { ...file.fileAsset, previewUrl: URL.createObjectURL(blob) }
+    previewOwnedUrl.value = true
+    previewOpen.value = true
+  } catch (error) {
+    ElMessage.error(errorDetails(error, '证明附件预览失败，请稍后重试').message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function downloadRequestProof(file: NonNullable<ContractVoidRequest['files']>[number]) {
+  if (!selectedRequest.value || saving.value) return
+  saving.value = true
+  try {
+    const blob = await downloadContractVoidProof(selectedRequest.value.id, file.fileAssetId)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.fileAsset.originalName.replace(/[\\/:*?"<>|]/g, '_')
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    ElMessage.error(errorDetails(error, '证明附件下载失败，请稍后重试').message)
+  } finally {
+    saving.value = false
+  }
+}
+
+watch(() => props.selectedContractId, (contractId) => {
+  if (contractId !== selectedId.value) void chooseContract(contractId)
+}, { immediate: true })
+onMounted(loadRequests)
+onBeforeUnmount(() => {
+  previewGeneration += 1
+  closeProofPreview()
+  releaseUploadedProofs()
+})
+</script>
+
+<template>
+  <section data-test="contract-void-panel">
+    <header class="page-head">
+      <div><h1>合同作废／纠错</h1><p>先核对关联影响，再提交作废申请或执行纠错冲销</p></div>
+      <el-button v-if="selectedRequest" :disabled="saving" @click="startNewRequest">新建作废申请</el-button>
+    </header>
+
+    <div class="void-layout">
+      <section class="contract-card request-list-card">
+        <header class="card-head"><h2>作废纠错申请</h2><el-button :loading="requestsLoading" link type="primary" @click="loadRequests">刷新</el-button></header>
+        <div class="request-filters">
+          <el-input v-model="filters.contractNo" data-test="void-contract-no-filter" clearable placeholder="合同编号" />
+          <el-input v-model="filters.roomKeyword" data-test="void-room-filter" clearable placeholder="楼栋房号" />
+          <el-input v-model="filters.tenantKeyword" data-test="void-tenant-filter" clearable placeholder="租户姓名" />
+          <el-select v-model="filters.status" data-test="void-status-filter" clearable placeholder="全部状态">
+            <el-option label="待确认" value="PENDING" />
+            <el-option label="已完成" value="COMPLETED" />
+            <el-option label="已驳回" value="REJECTED" />
+            <el-option label="已取消" value="CANCELLED" />
+          </el-select>
+          <el-button data-test="search-void-requests" type="primary" :disabled="saving" @click="loadRequests">查询</el-button>
+        </div>
+        <small class="status-filter-help">状态筛选：待确认、已完成、已驳回、已取消</small>
+        <el-table v-loading="requestsLoading" :data="requests" stripe row-key="id" empty-text="暂无合同作废纠错申请" max-height="560">
+          <el-table-column prop="requestNo" label="申请编号" min-width="175" />
+          <el-table-column label="合同" min-width="210"><template #default="{ row }">{{ row.contract?.contractNo || `合同 #${row.contractId}` }}</template></el-table-column>
+          <el-table-column label="房号" min-width="105"><template #default="{ row }">{{ row.contract?.room?.fullHouseNo || `房源 #${row.contract?.roomId || row.contractId}` }}</template></el-table-column>
+          <el-table-column label="租户" min-width="90"><template #default="{ row }">{{ primaryTenant(row.contract) }}</template></el-table-column>
+          <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+          <el-table-column label="提交人" width="90"><template #default="{ row }">用户 #{{ row.submittedBy }}</template></el-table-column>
+          <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="statusTagType(row.status)">{{ contractVoidStatusLabel(row.status) }}</el-tag></template></el-table-column>
+          <el-table-column label="提交时间" width="120"><template #default="{ row }">{{ date(row.submittedAt) }}</template></el-table-column>
+          <el-table-column label="操作" width="70" fixed="right"><template #default="{ row }"><el-button :data-test="`void-request-detail-${row.id}`" link type="primary" @click="openRequest(row)">详情</el-button></template></el-table-column>
+        </el-table>
+      </section>
+
+      <section v-loading="detailLoading" class="right-column">
+        <template v-if="selectedRequest">
+          <section class="contract-card request-detail">
+            <header class="card-head"><div><h2>{{ selectedRequest.requestNo }}</h2><p>{{ selectedRequest.contract?.contractNo || `合同 #${selectedRequest.contractId}` }}</p></div><el-tag :type="statusTagType(selectedRequest.status)" effect="dark">{{ contractVoidStatusLabel(selectedRequest.status) }}</el-tag></header>
+            <el-alert v-if="terminalRequest" title="终态申请仅可查看" type="info" :closable="false" show-icon />
+            <el-descriptions :column="2" border>
+              <el-descriptions-item label="楼栋房号">{{ selectedRequest.contract?.room?.fullHouseNo || '未记录房号' }}</el-descriptions-item>
+              <el-descriptions-item label="租户姓名">{{ primaryTenant(selectedRequest.contract) }}</el-descriptions-item>
+              <el-descriptions-item label="提交人">用户 #{{ selectedRequest.submittedBy }}</el-descriptions-item>
+              <el-descriptions-item label="提交日期">{{ date(selectedRequest.submittedAt) }}</el-descriptions-item>
+              <el-descriptions-item label="作废原因" :span="2">{{ selectedRequest.reason }}</el-descriptions-item>
+              <el-descriptions-item v-if="selectedRequest.rejectedReason" label="驳回原因" :span="2">{{ selectedRequest.rejectedReason }}</el-descriptions-item>
+            </el-descriptions>
+          </section>
+          <ContractVoidImpactCards :impact="selectedRequest.impactSnapshot" />
+          <section class="contract-card evidence-card">
+            <header class="card-head"><h2>证明附件</h2></header>
+            <el-empty v-if="!selectedRequest.files?.length" :image-size="48" description="暂无证明附件" />
+            <div v-else class="evidence-list">
+              <div v-for="file in selectedRequest.files" :key="file.fileAssetId"><span>{{ file.fileAsset.originalName }}</span><div><el-button :data-test="`preview-void-request-file-${file.fileAssetId}`" link type="primary" :disabled="saving" @click="previewRequestProof(file)">预览</el-button><el-button link type="primary" :disabled="saving" @click="downloadRequestProof(file)">下载</el-button></div></div>
+            </div>
+          </section>
+          <section class="contract-card reversal-card-list">
+            <header class="card-head"><h2>纠错冲销明细</h2></header>
+            <el-empty v-if="!selectedRequest.reversals?.length" :image-size="48" description="暂无冲销明细" />
+            <article v-for="row in selectedRequest.reversals" :key="row.id" class="reversal-card">
+              <header><b>{{ contractVoidCategoryLabel(row.category) }}</b><span>原记录 #{{ row.originalEntityId ?? '未记录' }}</span></header>
+              <div><span>来源：{{ contractVoidSourceLabel(row.originalEntityType) }}</span><span>金额：{{ exactMoney(row.amount) }}</span></div>
+              <footer><span>原业务日期：{{ date(row.originalOccurredAt) }}</span><span>纠错日期：{{ date(row.correctionOccurredAt) }}</span></footer>
+            </article>
+          </section>
+          <div v-if="selectedRequest.status === 'PENDING'" class="request-actions">
+            <el-button v-if="canCancelRequest" data-test="cancel-void-request" :disabled="saving" @click="cancelRequest">取消申请</el-button>
+            <el-button v-if="role === 'SUPER_ADMIN'" data-test="reject-void-request" type="danger" plain :disabled="saving" @click="rejectRequest">驳回</el-button>
+            <el-button v-if="role === 'SUPER_ADMIN'" data-test="approve-void-request" type="danger" :loading="saving" @click="approveRequest">确认作废并冲销</el-button>
+          </div>
+        </template>
+
+        <template v-else>
+          <section class="contract-card form-card">
+            <header class="card-head"><div><h2>新建作废申请</h2><p>仅可选择尚未作废的合同</p></div></header>
+            <div class="form-body">
+              <el-form label-position="top">
+                <el-form-item label="选择合同" required>
+                  <el-select v-model="selectedId" data-test="void-contract-select" filterable :filter-method="(value: string) => contractKeyword = value" placeholder="搜索合同编号、楼栋房号或租户姓名" no-match-text="未找到可作废的合同" @change="chooseContract">
+                    <el-option v-for="item in visibleContracts" :key="item.id" :label="contractOptionLabel(item)" :value="item.id" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+              <el-empty v-if="!selectedContract" description="请选择需要作废纠错的合同" />
+              <template v-else>
+                <div class="selected-contract"><div><b>{{ selectedContract.contractNo }}</b><span>{{ selectedContract.room?.fullHouseNo || `房源${selectedContract.roomId}` }}｜{{ primaryTenant(selectedContract) }}</span></div><el-tag v-if="selectedContract.status === 'VOIDED'" type="danger">已作废</el-tag></div>
+                <el-skeleton v-if="impactLoading" :rows="5" animated />
+                <ContractVoidImpactCards v-else-if="impact" :impact="impact" />
+                <el-alert v-else title="尚未生成关联影响，不能提交申请" type="warning" :closable="false" />
+                <el-form label-position="top" class="void-form">
+                  <el-form-item label="作废原因" required><el-input v-model="reason" data-test="void-reason" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="请说明原合同错误及作废依据" /></el-form-item>
+                  <el-form-item label="证明附件（可选）">
+                    <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" :disabled="saving || attachmentUploading" :on-change="uploadProof"><el-button :loading="attachmentUploading" :disabled="saving">上传证明附件</el-button></el-upload>
+                    <span class="upload-tip">上传成功后才会加入申请；支持图片和 PDF 预览</span>
+                  </el-form-item>
+                  <div v-if="uploadedProofs.length" class="evidence-list uploaded-list"><div v-for="file in uploadedProofs" :key="file.id"><span>{{ file.originalName }}</span><el-button :data-test="`preview-void-proof-${file.id}`" link type="primary" @click="previewUploadedProof(file)">预览</el-button></div></div>
+                  <div class="submit-actions"><el-button data-test="submit-void-request" type="primary" :loading="saving" :disabled="submitDisabled" @click="submit(false)">{{ role === 'SUPER_ADMIN' ? '提交申请' : '提交作废申请' }}</el-button><el-button v-if="role === 'SUPER_ADMIN'" data-test="direct-execute-void" type="danger" :loading="saving" :disabled="submitDisabled" @click="submit(true)">直接执行作废</el-button></div>
+                </el-form>
+              </template>
+            </div>
+          </section>
+        </template>
+      </section>
+    </div>
+
+    <el-dialog v-model="previewOpen" :title="previewFile?.originalName || '证明附件预览'" width="820px" @closed="closeProofPreview">
+      <img v-if="previewFile?.mimeType.startsWith('image/')" data-test="void-proof-preview" :src="previewFile.previewUrl" :alt="previewFile.originalName" class="proof-preview" />
+      <iframe v-else-if="previewFile" data-test="void-proof-preview" :src="previewFile.previewUrl" :title="previewFile.originalName" class="proof-frame" />
+    </el-dialog>
+  </section>
+</template>
+
+<style scoped>
+.page-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
+.page-head h1 { margin: 0 0 5px; font-size: 22px; }
+.page-head p { margin: 0; color: #748196; }
+.void-layout { display: grid; grid-template-columns: minmax(560px, 1.05fr) minmax(520px, .95fr); gap: 15px; align-items: start; }
+.contract-card { overflow: hidden; background: #fff; border: 1px solid #e7ecf3; border-radius: 12px; box-shadow: 0 10px 28px rgb(28 52 84 / 7%); }
+.right-column { display: grid; gap: 13px; min-width: 0; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 16px; border-bottom: 1px solid #edf1f5; }
+.card-head h2, .card-head p { margin: 0; }.card-head h2 { font-size: 16px; }.card-head p { margin-top: 3px; color: #748196; font-size: 12px; }
+.request-filters { display: grid; grid-template-columns: 1fr 1fr 1fr 130px auto; gap: 8px; padding: 13px 15px 8px; }
+.status-filter-help { display: block; padding: 0 15px 10px; color: #8491a5; }
+.request-detail :deep(.el-alert) { margin: 12px 15px; width: auto; }.request-detail :deep(.el-descriptions) { padding: 0 15px 15px; }
+.form-body { padding: 15px; }.form-body :deep(.el-select) { width: 100%; }
+.selected-contract { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; margin-bottom: 12px; background: #f6f9ff; border: 1px solid #dce6f7; border-radius: 9px; }.selected-contract b, .selected-contract span { display: block; }.selected-contract span { margin-top: 3px; color: #748196; font-size: 12px; }
+.void-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid #edf1f5; }.upload-tip { margin-left: 10px; color: #8491a5; font-size: 12px; }
+.evidence-card, .reversal-card-list { padding-bottom: 12px; }.evidence-list { display: grid; gap: 7px; padding: 12px 15px 2px; }.evidence-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; background: #f7f9fc; border-radius: 7px; }.uploaded-list { padding: 0 0 12px; }
+.reversal-card { margin: 10px 15px 0; padding: 11px 12px; background: #f8faff; border: 1px solid #e3eaf4; border-radius: 8px; }.reversal-card header, .reversal-card div, .reversal-card footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; }.reversal-card div, .reversal-card footer { padding-top: 7px; margin-top: 7px; color: #66758b; border-top: 1px dashed #dfe6ef; }.reversal-card footer { font-size: 12px; }
+.request-actions, .submit-actions { display: flex; justify-content: flex-end; gap: 8px; }.request-actions { padding: 12px 15px; background: #fff; border: 1px solid #e7ecf3; border-radius: 10px; }
+.proof-preview { display: block; max-width: 100%; max-height: 68vh; margin: 0 auto; object-fit: contain; }.proof-frame { width: 100%; height: 68vh; border: 0; }
+@media (max-width: 1280px) { .void-layout { grid-template-columns: 1fr; }.request-filters { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .request-filters { grid-template-columns: 1fr; }.impact__cards { grid-template-columns: 1fr; } }
+</style>

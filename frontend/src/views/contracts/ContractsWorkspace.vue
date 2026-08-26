@@ -9,6 +9,7 @@ import ContractListPanel from '../../components/contracts/ContractListPanel.vue'
 import ContractSummaryPanel from '../../components/contracts/ContractSummaryPanel.vue'
 import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
 import FixedRentRebatePanel from '../../components/contracts/FixedRentRebatePanel.vue'
+import ContractVoidPanel from '../../components/contracts/voids/ContractVoidPanel.vue'
 import {
   appendContractFile,
   approveFixedRentRebate,
@@ -59,6 +60,7 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const role = session.user?.role || 'VISITOR'
+const canAccessVoidCorrection = role === 'ADMIN' || role === 'SUPER_ADMIN'
 const tab = ref<ContractWorkspaceTab>('list')
 const rooms = ref<ContractRoom[]>([])
 const tenants = ref<ContractTenant[]>([])
@@ -87,7 +89,7 @@ const previewRequests = createLatestRequestGuard()
 let previewRequest = 0
 let baseDataLoaded = false
 
-const workspaceTabs: ContractWorkspaceTab[] = ['list', 'create', 'detail', 'fixed-rebate']
+const workspaceTabs: ContractWorkspaceTab[] = ['list', 'create', 'detail', 'fixed-rebate', 'void-correction']
 
 function tabFromRoute(): ContractWorkspaceTab | null {
   const value = route.query.tab
@@ -110,6 +112,7 @@ async function writeWorkspaceRoute(nextTab: ContractWorkspaceTab, contractId = s
 }
 
 function setTab(nextTab: ContractWorkspaceTab) {
+  if (nextTab === 'void-correction' && !canAccessVoidCorrection) return
   tab.value = nextTab
   void writeWorkspaceRoute(nextTab)
 }
@@ -215,6 +218,10 @@ async function applyRouteState() {
   if (!baseDataLoaded) return
   const routeContractId = contractIdFromRoute()
   const routeTab = tabFromRoute()
+  if (routeTab === 'void-correction' && !canAccessVoidCorrection) {
+    tab.value = 'list'
+    return
+  }
   if (routeTab === 'fixed-rebate') {
     const summary = routeContractId
       ? contracts.value.find((item) => item.id === routeContractId && isFixedRentRebateEligible(item))
@@ -421,6 +428,11 @@ function openPaymentCollect(contractId: number) {
   void router.push({ path: '/payments/collect', query: { contractId: String(contractId) } })
 }
 
+function openContractVoidCorrection(contractId: number) {
+  selectedContractId.value = contractId
+  setTab('void-correction')
+}
+
 async function submitRebate(payload: Record<string, unknown>) {
   saving.value = true
   try {
@@ -470,14 +482,15 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
 <template>
   <el-config-provider :locale="zhCn">
     <main class="contracts-workspace">
-      <ContractTopNav :model-value="tab" :selected-contract-id="selectedContractId" @update:model-value="setTab" />
+      <ContractTopNav :model-value="tab" :selected-contract-id="selectedContractId" :role="role" @update:model-value="setTab" />
       <ContractListPanel v-if="tab === 'list'" :contracts="contracts" :selected-contract-id="selectedContractId" :draft-id="currentDraftId" :loading="loading" :initial-room-id="Number(route.query.roomId) || null" @select="selectContract" @create="startCreate" @continue-draft="setTab('create')" />
       <div v-else-if="tab === 'create'" class="create-grid">
         <ContractFormPanel v-model="form" :role="role" :rooms="rooms" :tenants="tenants" :saving="saving" @save-draft="saveDraft" @confirm="confirm" @cancel="setTab('list')" @upload-file="uploadFile" />
         <ContractSummaryPanel :form="form" :rooms="rooms" :tenants="tenants" :role="role" :preview="preview" :preview-loading="fixedPreviewLoading" />
       </div>
-      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @preview="previewFile" @download="downloadFile" @upload="appendSelectedContractFile" @commission-changed="reloadSelectedContract" />
-      <FixedRentRebatePanel v-else :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
+      <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @void-correction="openContractVoidCorrection" @preview="previewFile" @download="downloadFile" @upload="appendSelectedContractFile" @commission-changed="reloadSelectedContract" />
+      <FixedRentRebatePanel v-else-if="tab === 'fixed-rebate'" :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
+      <ContractVoidPanel v-else-if="tab === 'void-correction' && canAccessVoidCorrection" :contracts="contracts" :role="role" :current-user-id="session.user?.id ?? null" :selected-contract-id="selectedContractId" />
     </main>
       <el-dialog v-model="previewOpen" :title="previewName || '合同附件预览'" width="880px" @closed="closePreview">
         <el-skeleton v-if="previewLoading" :rows="6" animated />

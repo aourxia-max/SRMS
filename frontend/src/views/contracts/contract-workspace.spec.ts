@@ -15,6 +15,7 @@ import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
 import * as contractService from '../../services/contracts'
 import { http } from '../../services/http'
 import * as paymentService from '../../services/payments'
+import { useSessionStore } from '../../stores/session'
 import {
   buildFixedRentRebatePayload,
   contractConcessionError,
@@ -232,6 +233,89 @@ const activeContract = (): ContractDetail => ({
 })
 
 describe('合同工作区复审边界', () => {
+  it('详情事件打开作废纠错页并预选当前合同', async () => {
+    vi.spyOn(http, 'get').mockImplementation((url: string) => Promise.resolve({
+      data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+    }) as never)
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
+    vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'listContractVoidRequests').mockResolvedValue([])
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+    const previewVoid = vi.spyOn(contractService, 'previewContractVoid').mockResolvedValue({
+      contract: { id: 12, status: 'ACTIVE', roomId: 8 },
+      summary: { rentBillPayable: '2200.00', effectivePayment: '2200.00', depositBalance: '4400.00', prepaymentBalance: '0.00', refundNet: '0.00', currentNetImpact: '6600.00', plannedReversal: '-6600.00', postReversalNetImpact: '0.00' },
+      rows: [],
+      pending: { adjustments: [], refunds: [], voidRequests: [], depositRefunds: [], changes: [], rebates: [], checkouts: [] },
+      completedCheckoutIds: [],
+      room: { currentStatus: 'RENTED', hasLaterContract: false, action: 'RECALCULATE' },
+      flags: { hasPendingWorkflows: false, hasCompletedCheckout: false, hasLaterContract: false },
+      sourceSnapshot: { prepaymentBalanceSource: null, depositBalanceSource: null, contractMembers: [], paymentAllocations: [], adjustments: [], rebates: [], checkoutSettlements: [], commissions: [] },
+      impactHash: 'a'.repeat(64),
+    })
+
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = { id: 2, username: 'admin', displayName: '管理员', role: 'ADMIN' }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=detail&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-test="open-contract-void-correction"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="contract-void-panel"]').text()).toContain(activeContract().contractNo)
+    expect(previewVoid).toHaveBeenCalledWith(12)
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'void-correction', contractId: '12' })
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  it('访客不能通过查询参数强制进入合同作废纠错工作区', async () => {
+    vi.spyOn(http, 'get').mockImplementation((url: string) => Promise.resolve({
+      data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+    }) as never)
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
+    vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'listContractVoidRequests').mockResolvedValue([])
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = { id: 9, username: 'visitor', displayName: '访客', role: 'VISITOR' }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=void-correction&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="contract-void-panel"]').exists()).toBe(false)
+    expect(wrapper.findComponent(ContractListPanel).exists()).toBe(true)
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
   it('合同列表使用统一中文状态和标签颜色', async () => {
     const contracts = [
       ['DRAFT', '草稿'],
