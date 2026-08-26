@@ -36,6 +36,7 @@ import {
 } from './contract-number';
 import { contractBusinessDay } from './contract-business-day';
 import { ContractDepositService } from './contract-deposit.service';
+import { assertContractNotVoided } from './contract-operability';
 
 type FixedContractInput = {
   externalContractNo?: string;
@@ -173,6 +174,7 @@ export class ContractsService {
       },
     });
     this.validateChange(contract, dto);
+    assertContractNotVoided(contract.status, '提交合同变更');
     return this.prisma.db.contractChange.create({
       data: {
         contractId,
@@ -210,6 +212,7 @@ export class ContractsService {
       });
       if (change.approvalStatus !== 'PENDING')
         throw new BadRequestException('只有待审批变更可以确认');
+      assertContractNotVoided(change.contract.status, '确认合同变更');
       const dto: SubmitContractChangeDto = {
         changeType: change.changeType as SubmitContractChangeDto['changeType'],
         effectiveDate: change.effectiveDate.toISOString().slice(0, 10),
@@ -519,9 +522,11 @@ export class ContractsService {
   async rejectChange(changeId: number, reason: string, user: AuthUser) {
     const change = await this.prisma.db.contractChange.findUniqueOrThrow({
       where: { id: changeId },
+      include: { contract: true },
     });
     if (change.approvalStatus !== 'PENDING')
       throw new BadRequestException('只有待审批变更可以驳回');
+    assertContractNotVoided(change.contract.status, '驳回合同变更');
     return this.prisma.db.contractChange.update({
       where: { id: changeId },
       data: {

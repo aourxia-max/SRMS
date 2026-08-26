@@ -39,7 +39,11 @@ describe('PaymentsService.record', () => {
       contract: {
         findUniqueOrThrow: jest
           .fn()
-          .mockResolvedValueOnce({ id: 7, startDate: new Date('2026-08-01') })
+          .mockResolvedValueOnce({
+            id: 7,
+            status: 'ACTIVE',
+            startDate: new Date('2026-08-01'),
+          })
           .mockResolvedValueOnce({
             id: 7,
             startDate: new Date('2026-08-01'),
@@ -429,6 +433,57 @@ describe('PaymentsService.record', () => {
     expect(data.supplementalOutstandingAmount.toFixed(2)).toBe('0.00');
   });
 
+  it('rejects rent and checkout-supplemental collection for a voided contract', async () => {
+    const regular = fixture();
+    regular.tx.contract.findUniqueOrThrow.mockReset().mockResolvedValue({
+      id: 7,
+      status: 'VOIDED',
+      startDate: new Date('2026-08-01'),
+    });
+
+    await expect(
+      regular.service.record(
+        {
+          contractId: 7,
+          paymentDate: '2026-08-04',
+          amount: '100.00',
+          method: PaymentMethod.CASH,
+        },
+        user,
+      ),
+    ).rejects.toThrow('已作废合同不能登记收款');
+    expect(regular.tx.payment.create).not.toHaveBeenCalled();
+
+    const supplemental = fixture();
+    supplemental.tx.checkoutSettlement = {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 8,
+        contractId: 7,
+        status: 'APPROVED',
+        supplementalRequired: true,
+        supplementalOutstandingAmount: '100.00',
+        supplementalReceivedAmount: '0.00',
+        contract: { status: 'VOIDED' },
+        items: [{ itemType: 'RENT_ARREARS', rentBillId: 11 }],
+        supplementalBill: null,
+      }),
+      update: jest.fn(),
+    };
+
+    await expect(
+      supplemental.service.recordCheckoutSupplemental(
+        {
+          checkoutSettlementId: 8,
+          paymentDate: '2026-08-04',
+          amount: '100.00',
+          method: PaymentMethod.CASH,
+        },
+        user,
+      ),
+    ).rejects.toThrow('已作废合同不能登记退租补收款');
+    expect(supplemental.tx.payment.create).not.toHaveBeenCalled();
+  });
+
   it('rejects visitor payment registration in the service layer', async () => {
     const { service } = fixture();
 
@@ -680,6 +735,7 @@ describe('PaymentsService.edit', () => {
     paymentCategory = 'RENT',
     protectedAllocation: { id: number } | null = null,
     autoSourceKey: string | null = null,
+    contractStatus = 'ACTIVE',
   ) {
     const payment = {
       id: 81,
@@ -693,6 +749,7 @@ describe('PaymentsService.edit', () => {
       editReason: null,
       status: 'CONFIRMED',
       paymentCategory,
+      contract: { status: contractStatus },
       autoSourceKey,
       allocations: [
         {
@@ -774,6 +831,19 @@ describe('PaymentsService.edit', () => {
       ),
     ).rejects.toThrow('只有超级管理员可以修改已确认收款');
     expect(prisma.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects editing a payment for a voided contract', async () => {
+    const { tx, service } = editFixture([], 'RENT', null, null, 'VOIDED');
+
+    await expect(
+      service.edit(
+        81,
+        { amount: '600.00', editReason: '修正录入金额' },
+        superAdmin,
+      ),
+    ).rejects.toThrow('已作废合同不能修改收款');
+    expect(tx.payment.update).not.toHaveBeenCalled();
   });
 
   it('blocks editing a checkout supplemental payment', async () => {

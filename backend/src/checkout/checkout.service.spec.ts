@@ -479,6 +479,7 @@ describe('CheckoutService', () => {
             id: 1,
             status: 'REJECTED',
             items: [{ id: 1, amount: '500' }],
+            contract: { status: 'PENDING_CHECKOUT' },
           }),
           update,
         },
@@ -930,5 +931,207 @@ describe('CheckoutService', () => {
       prepaymentBalance: '500.00',
       futureBillCount: 1,
     });
+  });
+
+  it('rejects every checkout mutation for a voided contract', async () => {
+    const initiateCreate = jest.fn();
+    const initiateService = new CheckoutService({
+      db: {
+        $transaction: jest.fn((callback: (client: never) => Promise<unknown>) =>
+          callback({
+            contract: {
+              findUniqueOrThrow: jest.fn().mockResolvedValue({
+                id: 3,
+                status: 'VOIDED',
+                roomId: 7,
+                room: { id: 7, roomStatus: 'RENTED' },
+              }),
+              update: jest.fn(),
+            },
+            checkoutSettlement: {
+              findFirst: jest.fn().mockResolvedValue(null),
+              create: initiateCreate,
+            },
+          } as never),
+        ),
+      },
+    } as never);
+    const initiateDto = {
+      checkoutType: '正常退租',
+      plannedCheckoutDate: '2026-08-20',
+      handoverDate: '2026-08-20',
+      inspectionAt: '2026-08-20T09:00:00.000Z',
+      checkoutReason: '不应允许',
+      targetRoomStatus: 'EMPTY',
+    } as never;
+
+    await expect(
+      initiateService.initiate(3, initiateDto, user),
+    ).rejects.toThrow('已作废合同不能发起退租');
+    expect(initiateCreate).not.toHaveBeenCalled();
+
+    const submitDelete = jest.fn();
+    const submitTx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            status: 'VOIDED',
+            startDate: new Date('2026-08-01'),
+            bills: [],
+          },
+        }),
+        update: jest.fn(),
+      },
+      checkoutSettlementItem: { deleteMany: submitDelete },
+    };
+    const submitService = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof submitTx) => Promise<unknown>) =>
+            callback(submitTx),
+        ),
+      },
+    } as never);
+    await expect(
+      submitService.submit(
+        1,
+        {
+          actualCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          targetRoomStatus: 'EMPTY',
+          items: [],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('已作废合同不能提交退租结算');
+    expect(submitDelete).not.toHaveBeenCalled();
+
+    const approveSettlement = {
+      id: 1,
+      contractId: 3,
+      status: 'PENDING',
+      actualCheckoutDate: new Date('2026-08-20'),
+      items: [],
+      contract: { status: 'VOIDED', bills: [] },
+    };
+    const approveTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(approveSettlement),
+        update: jest.fn(),
+      },
+      rentBill: { update: jest.fn() },
+    };
+    const approveService = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof approveTx) => Promise<unknown>) =>
+            callback(approveTx),
+        ),
+      },
+    } as never);
+    await expect(approveService.approve(1, user)).rejects.toThrow(
+      '已作废合同不能确认退租结算',
+    );
+    expect(approveTx.checkoutSettlement.update).not.toHaveBeenCalled();
+
+    const completeUpdate = jest.fn();
+    const completeTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'APPROVED',
+          depositRefundableAmount: '0.00',
+          prepaymentRefundableAmount: '0.00',
+          finalReceivable: '0.00',
+          supplementalRequired: false,
+          contract: { status: 'VOIDED' },
+        }),
+        updateMany: completeUpdate,
+      },
+    };
+    const completeService = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof completeTx) => Promise<unknown>) =>
+            callback(completeTx),
+        ),
+      },
+    } as never);
+    await expect(completeService.completeZeroRefund(1, user)).rejects.toThrow(
+      '已作废合同不能完成退租结算',
+    );
+    expect(completeUpdate).not.toHaveBeenCalled();
+
+    const rejectUpdate = jest.fn();
+    const rejectService = new CheckoutService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 1,
+            status: 'PENDING',
+            contract: { status: 'VOIDED' },
+          }),
+          update: rejectUpdate,
+        },
+      },
+    } as never);
+    await expect(rejectService.reject(1, '信息有误', user)).rejects.toThrow(
+      '已作废合同不能驳回退租结算',
+    );
+    expect(rejectUpdate).not.toHaveBeenCalled();
+
+    const cancelUpdate = jest.fn();
+    const cancelTx = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'DRAFT',
+          contract: {
+            status: 'VOIDED',
+            roomId: 7,
+            room: { roomStatus: 'PENDING_CHECKOUT' },
+          },
+        }),
+        updateMany: cancelUpdate,
+      },
+    };
+    const cancelService = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof cancelTx) => Promise<unknown>) =>
+            callback(cancelTx),
+        ),
+      },
+    } as never);
+    await expect(cancelService.cancel(1, user)).rejects.toThrow(
+      '已作废合同不能取消退租结算',
+    );
+    expect(cancelUpdate).not.toHaveBeenCalled();
+
+    const draftUpdate = jest.fn();
+    const draftService = new CheckoutService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 1,
+            status: 'REJECTED',
+            contract: { status: 'VOIDED' },
+          }),
+          update: draftUpdate,
+        },
+      },
+    } as never);
+    await expect(draftService.returnToDraft(1, user)).rejects.toThrow(
+      '已作废合同不能退回退租结算草稿',
+    );
+    expect(draftUpdate).not.toHaveBeenCalled();
   });
 });

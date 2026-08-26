@@ -119,8 +119,17 @@ function harness() {
       findUnique: jest
         .fn()
         .mockResolvedValue({ contractNo: 'HT20260007', status: 'ACTIVE' }),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({ status: 'VOIDED' }),
     },
+    room: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 3,
+        roomStatus: 'RENTED',
+      }),
+      update: jest.fn().mockResolvedValue({ roomStatus: 'EMPTY' }),
+    },
+    roomStatusHistory: { create: jest.fn().mockResolvedValue({ id: 1 }) },
     operationLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const db = {
@@ -216,7 +225,7 @@ describe('ContractVoidExecutorService', () => {
       impactHash: hash,
       roomAction: 'RECALCULATE',
       roomStatusBefore: 'RENTED',
-      roomStatusAfter: 'RENTED',
+      roomStatusAfter: 'EMPTY',
     });
     const lockOrder = tx.$queryRaw.mock.calls.map(([query]) =>
       query.strings.join('?'),
@@ -265,6 +274,30 @@ describe('ContractVoidExecutorService', () => {
       where: { id: 7 },
       data: { status: 'VOIDED' },
     });
+    expect(tx.contract.findMany).toHaveBeenCalledWith({
+      where: {
+        roomId: 3,
+        id: { not: 7 },
+        status: { in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'] },
+      },
+      select: { status: true },
+    });
+    expect(tx.room.update).toHaveBeenCalledWith({
+      where: { id: 3 },
+      data: { roomStatus: 'EMPTY', statusChangedAt: expect.any(Date) },
+    });
+    expect(tx.roomStatusHistory.create).toHaveBeenCalledWith({
+      data: {
+        roomId: 3,
+        fromStatus: 'RENTED',
+        toStatus: 'EMPTY',
+        changeReason: '合同作废纠错后重算房态',
+        businessType: 'CONTRACT_VOID',
+        businessId: 9,
+        changedBy: 1,
+        changedAt: expect.any(Date),
+      },
+    });
     expect(tx.contractVoidRequest.update).toHaveBeenCalledWith({
       where: { id: 9 },
       data: expect.objectContaining({
@@ -288,11 +321,28 @@ describe('ContractVoidExecutorService', () => {
           impactHash: hash,
           categoryTotals: { PAYMENT: '-100.00' },
           roomAction: 'RECALCULATE',
+          roomStatusBefore: 'RENTED',
+          roomStatusAfter: 'EMPTY',
           beforeStatus: 'ACTIVE',
           afterStatus: 'VOIDED',
         }),
       }),
     );
+  });
+
+  it('keeps the current room status when another active contract exists', async () => {
+    const { service, tx, hash } = harness();
+    tx.contract.findMany.mockResolvedValue([{ status: 'ACTIVE' }]);
+
+    await expect(
+      service.execute(9, hash, '确认作废合同', executionKey, superAdmin),
+    ).resolves.toMatchObject({
+      roomAction: 'KEEP_CURRENT_STATUS',
+      roomStatusBefore: 'RENTED',
+      roomStatusAfter: 'RENTED',
+    });
+    expect(tx.room.update).not.toHaveBeenCalled();
+    expect(tx.roomStatusHistory.create).not.toHaveBeenCalled();
   });
 
   it('rolls back by propagating reversal failures before any terminal update', async () => {
@@ -304,7 +354,7 @@ describe('ContractVoidExecutorService', () => {
     ).rejects.toThrow('forced reversal failure');
     expect(tx.contract.update).not.toHaveBeenCalled();
     expect(tx.contractVoidRequest.update).not.toHaveBeenCalled();
-    expect(tx).not.toHaveProperty('room.update');
+    expect(tx.room.update).not.toHaveBeenCalled();
     expect(audit.append).not.toHaveBeenCalled();
   });
 

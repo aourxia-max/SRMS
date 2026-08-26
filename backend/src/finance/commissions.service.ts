@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCommissionDto, UpdateCommissionDto } from './dto/commission.dto';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 @Injectable()
 export class CommissionsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -18,7 +19,13 @@ export class CommissionsService {
     if (!amount.isFinite() || amount.lt(0))
       throw new BadRequestException('提成金额不能小于零');
     return this.prisma.db.$transaction(async (tx) => {
-      await tx.contract.findUniqueOrThrow({ where: { id: dto.contractId } });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${dto.contractId} FOR UPDATE`,
+      );
+      const contract = await tx.contract.findUniqueOrThrow({
+        where: { id: dto.contractId },
+      });
+      assertContractNotVoided(contract.status, '新增租房提成');
       const existing = await tx.contractCommission.findUnique({
         where: {
           contractId_recipientName: {
@@ -55,9 +62,21 @@ export class CommissionsService {
     if (!amount.isFinite() || amount.lt(0))
       throw new BadRequestException('提成金额不能小于零');
     return this.prisma.db.$transaction(async (tx) => {
+      const identity = await tx.contractCommission.findFirstOrThrow({
+        where: { id, deletedAt: null },
+        select: { contractId: true },
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contract_commissions WHERE id = ${id} FOR UPDATE`,
+      );
       const before = await tx.contractCommission.findFirstOrThrow({
         where: { id, deletedAt: null },
+        include: { contract: { select: { status: true } } },
       });
+      assertContractNotVoided(before.contract.status, '修改租房提成');
       const item = await tx.contractCommission.update({
         where: { id },
         data: { recipientName: dto.recipientName, amount, updatedBy: user.id },
@@ -68,9 +87,21 @@ export class CommissionsService {
   }
   async remove(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
+      const identity = await tx.contractCommission.findFirstOrThrow({
+        where: { id, deletedAt: null },
+        select: { contractId: true },
+      });
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contract_commissions WHERE id = ${id} FOR UPDATE`,
+      );
       const before = await tx.contractCommission.findFirstOrThrow({
         where: { id, deletedAt: null },
+        include: { contract: { select: { status: true } } },
       });
+      assertContractNotVoided(before.contract.status, '删除租房提成');
       const item = await tx.contractCommission.update({
         where: { id },
         data: { deletedAt: new Date(), deletedBy: user.id, updatedBy: user.id },

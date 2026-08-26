@@ -14,6 +14,7 @@ import {
   assertPaymentDoesNotTouchProtectedCheckoutArrears,
   reopenCheckoutSupplementalBalance,
 } from './checkout-supplemental-balance';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
 export class RefundsService {
@@ -59,11 +60,15 @@ export class RefundsService {
       );
       const payment = await tx.payment.findUniqueOrThrow({
         where: { id: dto.paymentId },
-        include: { allocations: true },
+        include: {
+          allocations: true,
+          contract: { select: { status: true } },
+        },
       });
       if (!['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(payment.status))
         throw new BadRequestException('该收款当前不能退款');
       await assertPaymentReversalRequestAllowed(tx, payment);
+      assertContractNotVoided(payment.contract.status, '发起退款');
       const original = new Map(
         payment.allocations.map((item) => [item.id, item]),
       );
@@ -132,6 +137,7 @@ export class RefundsService {
             include: { paymentAllocation: { include: { rentBill: true } } },
           },
           payment: { include: { adjustments: true } },
+          contract: { select: { status: true } },
         },
       });
       if (refund.approvalStatus !== 'PENDING')
@@ -143,6 +149,7 @@ export class RefundsService {
           tx,
           refund.paymentId,
         );
+      assertContractNotVoided(refund.contract.status, '确认退款');
 
       const affectedBillIds = new Set(
         refund.allocations.map((item) => item.paymentAllocation.rentBill.id),
@@ -329,9 +336,11 @@ export class RefundsService {
       throw new ForbiddenException('只有超级管理员可以驳回退款');
     const refund = await this.prisma.db.paymentRefund.findUniqueOrThrow({
       where: { id },
+      include: { contract: { select: { status: true } } },
     });
     if (refund.approvalStatus !== 'PENDING')
       throw new BadRequestException('只有待审批退款可以驳回');
+    assertContractNotVoided(refund.contract.status, '驳回退款');
     return this.prisma.db.paymentRefund.update({
       where: { id },
       data: {

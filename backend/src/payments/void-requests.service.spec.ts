@@ -29,6 +29,7 @@ describe('VoidRequestsService adjustment reversal', () => {
         contractId: 7,
         status: 'CONFIRMED',
         paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+        contract: { status: 'ACTIVE' },
         allocations: [
           {
             id: 101,
@@ -285,5 +286,102 @@ describe('VoidRequestsService adjustment reversal', () => {
     expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
       tx.payment.findUniqueOrThrow.mock.invocationCallOrder[0],
     );
+  });
+
+  it('rejects every payment-void mutation for a voided contract', async () => {
+    const user = {
+      id: 1,
+      username: 'admin',
+      displayName: '超级管理员',
+      role: UserRole.SUPER_ADMIN,
+    };
+    const submitCreate = jest.fn();
+    const submitTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'RENT',
+          status: 'CONFIRMED',
+          contract: { status: 'VOIDED' },
+        }),
+      },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentVoidRequest: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: submitCreate,
+      },
+    };
+    const submitService = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof submitTx) => Promise<unknown>) =>
+            callback(submitTx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      submitService.submit({ paymentId: 81, reason: '不应允许' }, user),
+    ).rejects.toThrow('已作废合同不能发起收款作废');
+    expect(submitCreate).not.toHaveBeenCalled();
+
+    const approveRequest = {
+      id: 301,
+      paymentId: 81,
+      reason: '不应允许',
+      approvalStatus: 'PENDING',
+      payment: {
+        id: 81,
+        contractId: 7,
+        status: 'CONFIRMED',
+        paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+        contract: { status: 'VOIDED' },
+        allocations: [],
+        prepaymentTransactions: [],
+        adjustments: [],
+      },
+    };
+    const approveTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 301 }]),
+      paymentVoidRequest: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(approveRequest),
+        update: jest.fn(),
+      },
+      payment: { update: jest.fn() },
+    };
+    const approveService = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof approveTx) => Promise<unknown>) =>
+            callback(approveTx),
+        ),
+      },
+    } as never);
+
+    await expect(approveService.approve(301, user)).rejects.toThrow(
+      '已作废合同不能确认收款作废',
+    );
+    expect(approveTx.payment.update).not.toHaveBeenCalled();
+
+    const rejectUpdate = jest.fn();
+    const rejectService = new VoidRequestsService({
+      db: {
+        paymentVoidRequest: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 301,
+            approvalStatus: 'PENDING',
+            payment: { contract: { status: 'VOIDED' } },
+          }),
+          update: rejectUpdate,
+        },
+      },
+    } as never);
+
+    await expect(rejectService.reject(301, '信息有误', user)).rejects.toThrow(
+      '已作废合同不能驳回收款作废',
+    );
+    expect(rejectUpdate).not.toHaveBeenCalled();
   });
 });

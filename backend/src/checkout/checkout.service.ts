@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { SubmitCheckoutSettlementDto } from './dto/submit-checkout-settlement.dto';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
 export class CheckoutService {
@@ -330,6 +331,7 @@ export class CheckoutService {
         where: { id: contractId },
         include: { room: true },
       });
+      assertContractNotVoided(contract.status, '发起退租');
       if (!['PENDING_START', 'ACTIVE'].includes(contract.status))
         throw new BadRequestException('只有待开始或履行中的合同可以发起退租');
       const existing = await tx.checkoutSettlement.findFirst({
@@ -381,6 +383,7 @@ export class CheckoutService {
       });
       if (settlement.status !== 'DRAFT')
         throw new BadRequestException('只有草稿结算单可以提交');
+      assertContractNotVoided(settlement.contract.status, '提交退租结算');
       if (settlement.contract.status !== 'PENDING_CHECKOUT')
         throw new BadRequestException('合同当前不处于待退房状态');
       if (
@@ -470,6 +473,7 @@ export class CheckoutService {
       });
       if (settlement.status !== 'PENDING')
         throw new BadRequestException('只有待确认结算单可以确认');
+      assertContractNotVoided(settlement.contract.status, '确认退租结算');
       if (!settlement.actualCheckoutDate)
         throw new BadRequestException('结算单缺少实际退房日期');
       const eligibleBills = settlement.contract.bills.filter(
@@ -670,6 +674,7 @@ export class CheckoutService {
         where: { id },
         include: { contract: true },
       });
+      assertContractNotVoided(settlement.contract.status, '完成退租结算');
       const supplementalOutstandingAmount = settlement.supplementalRequired
         ? settlement.supplementalOutstandingAmount
         : settlement.finalReceivable;
@@ -705,9 +710,11 @@ export class CheckoutService {
     const settlement =
       await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
         where: { id },
+        include: { contract: { select: { status: true } } },
       });
     if (settlement.status !== 'PENDING')
       throw new BadRequestException('只有待确认结算单可以驳回');
+    assertContractNotVoided(settlement.contract.status, '驳回退租结算');
     return this.prisma.db.checkoutSettlement.update({
       where: { id },
       data: {
@@ -728,6 +735,7 @@ export class CheckoutService {
         throw new BadRequestException(
           '只有草稿、待确认或已驳回的退租结算工单可以取消',
         );
+      assertContractNotVoided(settlement.contract.status, '取消退租结算');
       if (
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
         settlement.contract.room.roomStatus !== 'PENDING_CHECKOUT'
@@ -798,9 +806,11 @@ export class CheckoutService {
     const settlement =
       await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
         where: { id },
+        include: { contract: { select: { status: true } } },
       });
     if (settlement.status !== 'REJECTED')
       throw new BadRequestException('只有已驳回结算单可以退回草稿');
+    assertContractNotVoided(settlement.contract.status, '退回退租结算草稿');
     return this.prisma.db.checkoutSettlement.update({
       where: { id },
       data: { status: 'DRAFT' },

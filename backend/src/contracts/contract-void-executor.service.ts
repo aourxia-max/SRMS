@@ -14,6 +14,7 @@ import {
   computeContractVoidImpact,
   hashContractVoidImpact,
 } from './contract-void-impact';
+import { resolveRoomStatusAfterContractVoid } from './contract-room-reconciliation';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
 import {
   ContractVoidReversalWriter,
@@ -195,6 +196,45 @@ export class ContractVoidExecutorService {
             where: { id: request.contractId },
             data: { status: 'VOIDED' },
           });
+          const room = await tx.room.findUniqueOrThrow({
+            where: { id: impact.contract.roomId },
+            select: { id: true, roomStatus: true },
+          });
+          const laterContracts = await tx.contract.findMany({
+            where: {
+              roomId: room.id,
+              id: { not: request.contractId },
+              status: {
+                in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'],
+              },
+            },
+            select: { status: true },
+          });
+          const roomResolution = resolveRoomStatusAfterContractVoid({
+            currentStatus: room.roomStatus,
+            laterContracts,
+          });
+          if (roomResolution.targetStatus !== room.roomStatus) {
+            await tx.room.update({
+              where: { id: room.id },
+              data: {
+                roomStatus: roomResolution.targetStatus,
+                statusChangedAt: now,
+              },
+            });
+            await tx.roomStatusHistory.create({
+              data: {
+                roomId: room.id,
+                fromStatus: room.roomStatus,
+                toStatus: roomResolution.targetStatus,
+                changeReason: '合同作废纠错后重算房态',
+                businessType: 'CONTRACT_VOID',
+                businessId: request.id,
+                changedBy: user.id,
+                changedAt: now,
+              },
+            });
+          }
 
           const categoryTotals = this.categoryTotals(reversals);
           const result: ContractVoidResult = {
@@ -208,9 +248,9 @@ export class ContractVoidExecutorService {
             executionBatchNo,
             reversalCount: reversals.length,
             categoryTotals,
-            roomAction: impact.room.action,
-            roomStatusBefore: impact.room.currentStatus,
-            roomStatusAfter: impact.room.currentStatus,
+            roomAction: roomResolution.action,
+            roomStatusBefore: room.roomStatus,
+            roomStatusAfter: roomResolution.targetStatus,
           };
 
           await tx.contractVoidRequest.update({
@@ -257,9 +297,9 @@ export class ContractVoidExecutorService {
               impactHash: currentHash,
               executionBatchNo,
               categoryTotals,
-              roomAction: impact.room.action,
-              roomStatusBefore: impact.room.currentStatus,
-              roomStatusAfter: impact.room.currentStatus,
+              roomAction: roomResolution.action,
+              roomStatusBefore: room.roomStatus,
+              roomStatusAfter: roomResolution.targetStatus,
               beforeStatus: contract.status,
               afterStatus: 'VOIDED',
             },

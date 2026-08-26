@@ -21,6 +21,7 @@ import {
   assertPaymentDoesNotTouchProtectedCheckoutArrears,
   assertPaymentIsNotContractAutomaticDeposit,
 } from './checkout-supplemental-balance';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
 export class PaymentsService {
@@ -314,11 +315,13 @@ export class PaymentsService {
           prepaymentTransactions: { orderBy: { id: 'asc' } },
           refunds: true,
           voidRequests: true,
+          contract: { select: { status: true } },
         },
       });
       assertPaymentIsNotContractAutomaticDeposit(payment);
       if (payment.paymentCategory === 'CHECKOUT_SUPPLEMENTAL')
         throw new BadRequestException('退租补收款不能通过通用收款修改');
+      assertContractNotVoided(payment.contract.status, '修改收款');
       await assertPaymentDoesNotTouchProtectedCheckoutArrears(tx, payment.id);
       if (['VOIDED', 'FULLY_REFUNDED'].includes(payment.status))
         throw new BadRequestException('已作废或已全额退款的收款不能修改');
@@ -588,6 +591,7 @@ export class PaymentsService {
         where: { id: dto.checkoutSettlementId },
         include: { contract: true, items: true, supplementalBill: true },
       });
+      assertContractNotVoided(settlement.contract.status, '登记退租补收款');
       if (
         settlement.status !== 'APPROVED' ||
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
@@ -610,6 +614,10 @@ export class PaymentsService {
         where: { id: dto.checkoutSettlementId },
         include: { contract: true, items: true, supplementalBill: true },
       });
+      assertContractNotVoided(
+        lockedSettlement.contract.status,
+        '登记退租补收款',
+      );
       if (
         lockedSettlement.status !== 'APPROVED' ||
         lockedSettlement.contract.status !== 'PENDING_CHECKOUT' ||
@@ -797,12 +805,13 @@ export class PaymentsService {
     )
       throw new BadRequestException('收款凭证不能重复');
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${dto.contractId} FOR UPDATE`,
+      );
       const contract = await tx.contract.findUniqueOrThrow({
         where: { id: dto.contractId },
       });
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM contracts WHERE id = ${contract.id} FOR UPDATE`,
-      );
+      assertContractNotVoided(contract.status, '登记收款');
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contract.id} ORDER BY id FOR UPDATE`,
       );

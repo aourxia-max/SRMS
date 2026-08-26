@@ -41,6 +41,7 @@ describe('RefundsService adjustment decisions', () => {
       contractId: 7,
       refundAmount: '100.00',
       approvalStatus: 'PENDING',
+      contract: { status: 'ACTIVE' },
       allocations: [
         {
           reversedAmount: new Prisma.Decimal('100.00'),
@@ -372,5 +373,88 @@ describe('RefundsService adjustment decisions', () => {
     expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
       tx.payment.findUniqueOrThrow.mock.invocationCallOrder[0],
     );
+  });
+
+  it('rejects every refund mutation for a voided contract', async () => {
+    const submitCreate = jest.fn();
+    const submitTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'RENT',
+          status: 'CONFIRMED',
+          contract: { status: 'VOIDED' },
+          allocations: [
+            {
+              id: 101,
+              allocatedAmount: new Prisma.Decimal('100.00'),
+              reversedAmount: new Prisma.Decimal('0.00'),
+            },
+          ],
+        }),
+      },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentRefund: { create: submitCreate },
+    };
+    const submitService = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof submitTx) => Promise<unknown>) =>
+            callback(submitTx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      submitService.submit(
+        {
+          paymentId: 81,
+          refundAmount: '100.00',
+          refundDate: '2026-08-22',
+          refundMethod: 'BANK_TRANSFER',
+          reason: '不应允许',
+          allocations: [{ paymentAllocationId: 101, amount: '100.00' }],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('已作废合同不能发起退款');
+    expect(submitCreate).not.toHaveBeenCalled();
+
+    const approve = fixture();
+    const approval = await approve.tx.paymentRefund.findUniqueOrThrow();
+    approval.contract.status = 'VOIDED';
+    approve.tx.paymentRefund.findUniqueOrThrow.mockResolvedValue(approval);
+
+    await expect(
+      approve.service.approve(
+        201,
+        {
+          adjustmentDecisions: [{ billAdjustmentId: 501, decision: 'REVERSE' }],
+        },
+        user,
+      ),
+    ).rejects.toThrow('已作废合同不能确认退款');
+    expect(approve.tx.paymentRefund.update).not.toHaveBeenCalled();
+
+    const rejectUpdate = jest.fn();
+    const rejectService = new RefundsService({
+      db: {
+        paymentRefund: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 201,
+            approvalStatus: 'PENDING',
+            contract: { status: 'VOIDED' },
+          }),
+          update: rejectUpdate,
+        },
+      },
+    } as never);
+
+    await expect(rejectService.reject(201, '信息有误', user)).rejects.toThrow(
+      '已作废合同不能驳回退款',
+    );
+    expect(rejectUpdate).not.toHaveBeenCalled();
   });
 });

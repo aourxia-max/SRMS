@@ -246,6 +246,92 @@ describe('ContractsService', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('rejects every contract-change mutation for a voided contract', async () => {
+    const validContract = {
+      id: 1,
+      status: 'VOIDED',
+      contractNo: 'HT-1',
+      startDate: new Date('2026-01-01'),
+      endDate: new Date('2026-03-31'),
+      pricingMode: 'FIXED',
+      monthlyRent: '3000',
+      members: [],
+      concessions: [],
+      pricingTiers: [],
+      bills: [],
+    };
+    const dto = {
+      changeType: 'RENT' as const,
+      effectiveDate: '2026-02-01',
+      afterSnapshot: { monthlyRent: '3500' },
+      reason: '纠正月租',
+    };
+    const submitCreate = jest.fn();
+    const submitService = new ContractsService({
+      db: {
+        contract: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue(validContract),
+        },
+        contractChange: { create: submitCreate },
+      },
+    } as never);
+
+    await expect(submitService.submitChange(1, dto, admin)).rejects.toThrow(
+      '已作废合同不能提交合同变更',
+    );
+    expect(submitCreate).not.toHaveBeenCalled();
+
+    const approveUpdate = jest.fn();
+    const approveTx = {
+      contractChange: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 9,
+          contractId: 1,
+          changeType: 'RENT',
+          effectiveDate: new Date('2026-02-01'),
+          afterSnapshot: { monthlyRent: '3500' },
+          reason: '纠正月租',
+          approvalStatus: 'PENDING',
+          contract: validContract,
+        }),
+        update: approveUpdate,
+      },
+    };
+    const approveService = new ContractsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof approveTx) => Promise<unknown>) =>
+            callback(approveTx),
+        ),
+      },
+    } as never);
+
+    await expect(approveService.approveChange(9, superAdmin)).rejects.toThrow(
+      '已作废合同不能确认合同变更',
+    );
+    expect(approveUpdate).not.toHaveBeenCalled();
+
+    const rejectUpdate = jest.fn();
+    const rejectService = new ContractsService({
+      db: {
+        contractChange: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 9,
+            contractId: 1,
+            approvalStatus: 'PENDING',
+            contract: { status: 'VOIDED' },
+          }),
+          update: rejectUpdate,
+        },
+      },
+    } as never);
+
+    await expect(
+      rejectService.rejectChange(9, '信息有误', superAdmin),
+    ).rejects.toThrow('已作废合同不能驳回合同变更');
+    expect(rejectUpdate).not.toHaveBeenCalled();
+  });
+
   function confirmationTx() {
     const contractNo = 'HT202601010010 | 1栋101 | 李四';
     return {

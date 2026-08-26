@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { calculateAdjustedBill } from './adjustment-calculator';
 import { assertRentBillNotProtectedByCheckout } from './checkout-supplemental-balance';
 import { SubmitAdjustmentDto } from './dto/submit-adjustment.dto';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
 export class AdjustmentsService {
@@ -24,12 +25,14 @@ export class AdjustmentsService {
       throw new BadRequestException('调整金额必须大于零');
     const bill = await this.prisma.db.rentBill.findUniqueOrThrow({
       where: { id: dto.rentBillId },
+      include: { contract: true },
     });
     if (bill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
       throw new BadRequestException('退租补收账单不能优惠、减免或调整');
     await assertRentBillNotProtectedByCheckout(this.prisma.db, bill.id);
     if (bill.status === 'VOIDED')
       throw new BadRequestException('已作废账单不能提交调整');
+    assertContractNotVoided(bill.contract.status, '提交账单调整');
     const preview = calculateAdjustedBill({
       ...bill,
       currentAdjustmentAmount: bill.adjustmentAmount,
@@ -65,7 +68,7 @@ export class AdjustmentsService {
       );
       const adjustment = await tx.billAdjustment.findUniqueOrThrow({
         where: { id },
-        include: { rentBill: true },
+        include: { rentBill: { include: { contract: true } } },
       });
       if (adjustment.rentBill.billCategory === 'CHECKOUT_SUPPLEMENTAL')
         throw new BadRequestException('退租补收账单不能优惠、减免或调整');
@@ -74,6 +77,10 @@ export class AdjustmentsService {
         throw new BadRequestException('只有待审批调整可以确认');
       if (adjustment.rentBill.status === 'VOIDED')
         throw new BadRequestException('已作废账单不能确认调整');
+      assertContractNotVoided(
+        adjustment.rentBill.contract.status,
+        '确认账单调整',
+      );
       const next = calculateAdjustedBill({
         ...adjustment.rentBill,
         currentAdjustmentAmount: adjustment.rentBill.adjustmentAmount,
@@ -105,9 +112,14 @@ export class AdjustmentsService {
   async reject(id: number, reason: string, user: AuthUser) {
     const adjustment = await this.prisma.db.billAdjustment.findUniqueOrThrow({
       where: { id },
+      include: { rentBill: { include: { contract: true } } },
     });
     if (adjustment.approvalStatus !== 'PENDING')
       throw new BadRequestException('只有待审批调整可以驳回');
+    assertContractNotVoided(
+      adjustment.rentBill.contract.status,
+      '驳回账单调整',
+    );
     return this.prisma.db.billAdjustment.update({
       where: { id },
       data: {

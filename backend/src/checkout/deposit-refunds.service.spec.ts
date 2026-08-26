@@ -235,4 +235,84 @@ describe('DepositRefundsService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
     expect(ledgerCreate).not.toHaveBeenCalled();
   });
+
+  it('rejects deposit-refund submission and approval for a voided contract', async () => {
+    const submitCreate = jest.fn();
+    const submitService = new DepositRefundsService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 1,
+            contractId: 3,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '0.00',
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '0.00',
+            contract: { status: 'VOIDED' },
+          }),
+        },
+        depositRefund: { create: submitCreate },
+      },
+    } as never);
+
+    await expect(
+      submitService.submit(
+        {
+          checkoutSettlementId: 1,
+          refundAmount: '800.00',
+          refundDate: '2026-08-02',
+          refundMethod: 'BANK_TRANSFER',
+          proofFileIds: [4],
+        } as never,
+        { id: 2, username: 'admin', role: 'ADMIN' },
+      ),
+    ).rejects.toThrow('已作废合同不能登记押金退款');
+    expect(submitCreate).not.toHaveBeenCalled();
+
+    const approveUpdate = jest.fn();
+    const approveTx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      depositRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          refundAmount: '800.00',
+          approvalStatus: 'PENDING',
+          files: [{ fileAssetId: 4 }],
+          checkoutSettlement: {
+            id: 8,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '0.00',
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '0.00',
+            contract: {
+              status: 'VOIDED',
+              roomId: 7,
+              room: { roomStatus: 'PENDING_CHECKOUT' },
+            },
+          },
+        }),
+        updateMany: approveUpdate,
+      },
+    };
+    const approveService = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof approveTx) => Promise<unknown>) =>
+            callback(approveTx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      approveService.approve(1, {
+        id: 1,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).rejects.toThrow('已作废合同不能确认押金退款');
+    expect(approveUpdate).not.toHaveBeenCalled();
+  });
 });

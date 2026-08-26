@@ -18,13 +18,16 @@ const fixedManualDto = {
   actualAmount: '100',
   settlementMethod: 'PREPAYMENT_CREDIT' as const,
 };
-function serviceWithContract(pricingMode: 'FIXED' | 'TIERED_RETROACTIVE') {
+function serviceWithContract(
+  pricingMode: 'FIXED' | 'TIERED_RETROACTIVE',
+  status = 'ACTIVE',
+) {
   return new PricingRebatesService({
     db: {
       contract: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
-          status: 'ACTIVE',
+          status,
           pricingMode,
           bills: [{ id: 9, status: 'ISSUED' }],
           pricingTiers: [],
@@ -97,5 +100,65 @@ describe('PricingRebatesService', () => {
     ).resolves.toEqual(
       expect.objectContaining({ sourceType: 'FIXED_RENT_MANUAL' }),
     );
+  });
+
+  it('rejects every rebate mutation for a voided contract', async () => {
+    await expect(
+      serviceWithContract('FIXED', 'VOIDED').submit(fixedManualDto, admin),
+    ).rejects.toThrow('已作废合同不能提交租金退差');
+
+    const approveUpdate = jest.fn();
+    const approveTx = {
+      pricingRebate: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 21,
+          contractId: 1,
+          rebateNo: 'TC21',
+          approvalStatus: 'PENDING',
+          settlementMethod: 'PREPAYMENT_CREDIT',
+          actualAmount: '100.00',
+          files: [],
+          contract: { status: 'VOIDED' },
+        }),
+        update: approveUpdate,
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
+    };
+    const approveService = new PricingRebatesService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof approveTx) => Promise<unknown>) =>
+            callback(approveTx),
+        ),
+      },
+    } as never);
+
+    await expect(approveService.approve(21, admin)).rejects.toThrow(
+      '已作废合同不能确认租金退差',
+    );
+    expect(approveTx.prepaymentTransaction.create).not.toHaveBeenCalled();
+    expect(approveUpdate).not.toHaveBeenCalled();
+
+    const rejectUpdate = jest.fn();
+    const rejectService = new PricingRebatesService({
+      db: {
+        pricingRebate: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 21,
+            approvalStatus: 'PENDING',
+            contract: { status: 'VOIDED' },
+          }),
+          update: rejectUpdate,
+        },
+      },
+    } as never);
+
+    await expect(rejectService.reject(21, '信息有误', admin)).rejects.toThrow(
+      '已作废合同不能驳回租金退差',
+    );
+    expect(rejectUpdate).not.toHaveBeenCalled();
   });
 });

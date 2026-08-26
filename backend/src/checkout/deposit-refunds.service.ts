@@ -8,6 +8,7 @@ import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { SubmitDepositRefundDto } from './dto/submit-deposit-refund.dto';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 @Injectable()
 export class DepositRefundsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -36,6 +37,7 @@ export class DepositRefundsService {
         where: { id: dto.checkoutSettlementId },
         include: { contract: true },
       });
+    assertContractNotVoided(settlement.contract.status, '登记押金退款');
     if (
       settlement.status !== 'APPROVED' ||
       settlement.contract.status !== 'PENDING_CHECKOUT' ||
@@ -95,8 +97,10 @@ export class DepositRefundsService {
         },
       });
       const settlement = refund.checkoutSettlement;
+      if (refund.approvalStatus !== 'PENDING')
+        throw new BadRequestException('当前不满足确认押金退款并结束合同的条件');
+      assertContractNotVoided(settlement.contract.status, '确认押金退款');
       if (
-        refund.approvalStatus !== 'PENDING' ||
         settlement.status !== 'APPROVED' ||
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
         !settlement.handoverDate ||

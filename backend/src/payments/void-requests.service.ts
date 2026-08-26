@@ -14,6 +14,7 @@ import {
   assertPaymentDoesNotTouchProtectedCheckoutArrears,
   reopenCheckoutSupplementalBalance,
 } from './checkout-supplemental-balance';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
 export class VoidRequestsService {
@@ -36,10 +37,12 @@ export class VoidRequestsService {
       );
       const payment = await tx.payment.findUniqueOrThrow({
         where: { id: dto.paymentId },
+        include: { contract: { select: { status: true } } },
       });
       if (payment.status !== 'CONFIRMED')
         throw new BadRequestException('只有未退款的已确认收款可以申请作废');
       await assertPaymentReversalRequestAllowed(tx, payment);
+      assertContractNotVoided(payment.contract.status, '发起收款作废');
       const pending = await tx.paymentVoidRequest.findFirst({
         where: { paymentId: dto.paymentId, approvalStatus: 'PENDING' },
       });
@@ -88,6 +91,7 @@ export class VoidRequestsService {
               allocations: { include: { rentBill: true } },
               prepaymentTransactions: true,
               adjustments: true,
+              contract: { select: { status: true } },
             },
           },
         },
@@ -101,6 +105,7 @@ export class VoidRequestsService {
           tx,
           request.paymentId,
         );
+      assertContractNotVoided(request.payment.contract.status, '确认收款作废');
 
       const billStates = new Map(
         request.payment.allocations.map((allocation) => {
@@ -268,9 +273,15 @@ export class VoidRequestsService {
       throw new ForbiddenException('只有超级管理员可以驳回作废申请');
     const request = await this.prisma.db.paymentVoidRequest.findUniqueOrThrow({
       where: { id },
+      include: {
+        payment: {
+          include: { contract: { select: { status: true } } },
+        },
+      },
     });
     if (request.approvalStatus !== 'PENDING')
       throw new BadRequestException('只有待审批作废申请可以驳回');
+    assertContractNotVoided(request.payment.contract.status, '驳回收款作废');
     return this.prisma.db.paymentVoidRequest.update({
       where: { id },
       data: {

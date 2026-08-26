@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubmitPricingRebateDto } from './dto/submit-pricing-rebate.dto';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 const addMonths = (date: Date, months: number) => {
   const result = new Date(date);
@@ -49,6 +50,7 @@ export class PricingRebatesService {
     const contract = await this.loadContract(dto.contractId);
     if (contract.pricingMode !== 'FIXED')
       throw new BadRequestException('固定月租人工退差仅适用于固定月租合同');
+    assertContractNotVoided(contract.status, '提交租金退差');
     if (contract.status !== 'ACTIVE')
       throw new BadRequestException('仅生效中的合同可以提交退差');
     if (
@@ -169,10 +171,11 @@ export class PricingRebatesService {
     return this.prisma.db.$transaction(async (tx) => {
       const rebate = await tx.pricingRebate.findUniqueOrThrow({
         where: { id },
-        include: { files: true },
+        include: { files: true, contract: { select: { status: true } } },
       });
       if (rebate.approvalStatus !== 'PENDING')
         throw new BadRequestException('只有待确认退差单可以确认');
+      assertContractNotVoided(rebate.contract.status, '确认租金退差');
       if (rebate.settlementMethod === 'PREPAYMENT_CREDIT') {
         const latest = await tx.prepaymentTransaction.findFirst({
           where: { contractId: rebate.contractId },
@@ -211,9 +214,11 @@ export class PricingRebatesService {
   async reject(id: number, reason: string, user: AuthUser) {
     const rebate = await this.prisma.db.pricingRebate.findUniqueOrThrow({
       where: { id },
+      include: { contract: { select: { status: true } } },
     });
     if (rebate.approvalStatus !== 'PENDING')
       throw new BadRequestException('只有待确认退差单可以驳回');
+    assertContractNotVoided(rebate.contract.status, '驳回租金退差');
     return this.prisma.db.pricingRebate.update({
       where: { id },
       data: {

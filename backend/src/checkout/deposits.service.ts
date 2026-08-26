@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecordDepositDto } from './dto/record-deposit.dto';
+import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
 export class DepositsService {
@@ -19,9 +20,13 @@ export class DepositsService {
     if (!amount.isFinite() || amount.lte(0))
       throw new BadRequestException('押金收取金额必须大于零');
     return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${dto.contractId} FOR UPDATE`,
+      );
       const contract = await tx.contract.findUniqueOrThrow({
         where: { id: dto.contractId },
       });
+      assertContractNotVoided(contract.status, '登记押金收取');
       if (!['PENDING_START', 'ACTIVE'].includes(contract.status))
         throw new BadRequestException('当前合同不能登记押金收取');
       const latest = await tx.depositTransaction.findFirst({
