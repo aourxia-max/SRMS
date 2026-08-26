@@ -23,6 +23,7 @@ describe('contract void correction schema', () => {
     const fileAsset = modelBlock(schema, 'FileAsset');
     const request = modelBlock(schema, 'ContractVoidRequest');
     const reversal = modelBlock(schema, 'ContractVoidReversal');
+    const auditHead = modelBlock(schema, 'SecurityAuditChainHead');
     const file = modelBlock(schema, 'ContractVoidRequestFile');
 
     expect(schema).toContain('enum ContractVoidRequestStatus');
@@ -55,6 +56,10 @@ describe('contract void correction schema', () => {
     expect(file).toMatch(/@@id\(\[contractVoidRequestId, fileAssetId\]\)/);
     expect(file).toMatch(
       /request\s+ContractVoidRequest\s+@relation\(fields: \[contractVoidRequestId\], references: \[id\], onDelete: Restrict\)/,
+    );
+    expect(auditHead).toMatch(/id\s+Int\s+@id\s+@db\.UnsignedTinyInt/);
+    expect(auditHead).toMatch(
+      /latestRecordHash\s+String\?\s+@map\("latest_record_hash"\)\s+@db\.Char\(64\)/,
     );
     expect(file).toMatch(
       /fileAsset\s+FileAsset\s+@relation\(fields: \[fileAssetId\], references: \[id\], onDelete: Restrict\)/,
@@ -96,6 +101,7 @@ describe('contract void correction schema', () => {
     expect(migration).toMatch(
       /UNIQUE KEY `contract_void_requests_execution_idempotency_key_key` \(`execution_idempotency_key`\)/,
     );
+    expect(migration).toMatch(/CREATE TABLE `security_audit_chain_heads`/);
     expect(migration).toMatch(
       /UNIQUE KEY `contract_void_requests_submission_idempotency_key_key` \(`submission_idempotency_key`\)/,
     );
@@ -115,5 +121,9 @@ describe('contract void correction schema', () => {
       /CONSTRAINT `contract_void_request_files_file_asset_id_fkey`\s+FOREIGN KEY \(`file_asset_id`\) REFERENCES `file_assets`\(`id`\) ON DELETE RESTRICT ON UPDATE CASCADE/,
     );
     expect(migration).not.toMatch(/^\s*(?:UPDATE|DELETE)\s+`?contracts`?/im);
+    expect(migration).toMatch(
+      /INSERT INTO `security_audit_chain_heads`[\s\S]*SELECT 1,[\s\S]*FROM `security_audit_logs`[\s\S]*ORDER BY `id` DESC[\s\S]*LIMIT 1/,
+    );
+    expect(migration).toMatch(/`latest_record_hash` CHAR\(64\) NULL/);
   });
 });

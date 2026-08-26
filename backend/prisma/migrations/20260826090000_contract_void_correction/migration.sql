@@ -1,5 +1,27 @@
 ALTER TABLE `file_assets`
   MODIFY `category` ENUM('TENANT_ID','CONTRACT','PAYMENT_PROOF','CONTRACT_VOID_PROOF','DEPOSIT_REFUND_PROOF','PRICING_REBATE_PROOF','IMPORT','EXPORT','BACKUP','FINANCE_EXPORT') NOT NULL;
+CREATE TABLE `security_audit_chain_heads` (
+  `id` TINYINT UNSIGNED NOT NULL,
+  `latest_record_hash` CHAR(64) NULL,
+  `updated_at` DATETIME(3) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `security_audit_chain_heads` (
+  `id`,
+  `latest_record_hash`,
+  `updated_at`
+)
+SELECT 1,
+  (
+    SELECT `record_hash`
+    FROM `security_audit_logs`
+    WHERE `record_hash` IS NOT NULL
+    ORDER BY `id` DESC
+    LIMIT 1
+  ),
+  CURRENT_TIMESTAMP(3);
+
 
 CREATE TABLE `contract_void_requests` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,

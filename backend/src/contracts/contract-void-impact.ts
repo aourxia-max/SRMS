@@ -52,6 +52,7 @@ export type ContractVoidPendingWorkflows = {
   adjustments: number[];
   refunds: number[];
   voidRequests: number[];
+  depositRefunds: number[];
   changes: number[];
   rebates: number[];
   checkouts: number[];
@@ -198,6 +199,11 @@ function pendingRows(pending: ContractVoidPendingWorkflows) {
       category: 'CHECKOUT',
       entityType: 'CheckoutSettlement',
     },
+    {
+      ids: pending.depositRefunds,
+      category: 'DEPOSIT',
+      entityType: 'DepositRefund',
+    },
   ];
 
   return definitions.flatMap(({ ids, category, entityType }) =>
@@ -210,17 +216,19 @@ function pendingRows(pending: ContractVoidPendingWorkflows) {
 export function computeContractVoidImpact(
   input: ContractVoidImpactInput,
 ): ContractVoidImpact {
-  const activePayments = input.payments.filter(
-    (payment) => !['VOIDED', 'FULLY_REFUNDED'].includes(payment.status),
+  const traceablePayments = input.payments.filter(
+    (payment) => payment.status !== 'VOIDED',
   );
-  const activePaymentIds = new Set(activePayments.map((payment) => payment.id));
+  const traceablePaymentIds = new Set(
+    traceablePayments.map((payment) => payment.id),
+  );
   const approvedRefunds = input.refunds
     ? input.refunds.filter(
         (refund) =>
           refund.approvalStatus === 'APPROVED' &&
-          activePaymentIds.has(refund.paymentId),
+          traceablePaymentIds.has(refund.paymentId),
       )
-    : activePayments
+    : traceablePayments
         .filter((payment) => !decimal(payment.refundedAmount).isZero())
         .map((payment) => ({
           id: payment.id,
@@ -234,7 +242,7 @@ export function computeContractVoidImpact(
     (total, bill) => total.plus(decimal(bill.payableAmount)),
     zero,
   );
-  const grossPayment = activePayments.reduce(
+  const grossPayment = traceablePayments.reduce(
     (total, payment) => total.plus(decimal(payment.amount)),
     zero,
   );
@@ -265,7 +273,7 @@ export function computeContractVoidImpact(
         },
       ),
     ),
-    ...activePayments.map((payment) =>
+    ...traceablePayments.map((payment) =>
       monetaryRow(
         'PAYMENT',
         'Payment',
@@ -336,6 +344,7 @@ export function computeContractVoidImpact(
     voidRequests: sortedIds(input.pending.voidRequests),
     changes: sortedIds(input.pending.changes),
     rebates: sortedIds(input.pending.rebates),
+    depositRefunds: sortedIds(input.pending.depositRefunds),
     checkouts: sortedIds(input.pending.checkouts),
   };
   const hasPendingWorkflows = Object.values(pending).some(

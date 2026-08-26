@@ -39,6 +39,7 @@ function inputFixture(
       changes: [],
       rebates: [],
       checkouts: [],
+      depositRefunds: [],
     },
     completedCheckoutIds: [],
     laterContractIds: [],
@@ -123,7 +124,7 @@ describe('contract void impact', () => {
     );
   });
 
-  it('excludes fully refunded and voided payments from effective payment', () => {
+  it('keeps fully refunded payment/refund traces net-zero while excluding voided payments', () => {
     const impact = computeContractVoidImpact(
       inputFixture({
         payments: [
@@ -156,14 +157,24 @@ describe('contract void impact', () => {
     );
 
     expect(impact.summary.effectivePayment).toBe('50.00');
-    expect(impact.summary.refundNet).toBe('0.00');
-    expect(impact.rows.filter((row) => row.category === 'PAYMENT')).toEqual([
-      expect.objectContaining({ originalEntityId: 24, amount: '-50.00' }),
+    expect(impact.summary.refundNet).toBe('200.00');
+    expect(impact.rows.filter((row) => row.category === 'PAYMENT')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ originalEntityId: 22, amount: '-200.00' }),
+        expect.objectContaining({ originalEntityId: 24, amount: '-50.00' }),
+      ]),
+    );
+    expect(impact.rows.filter((row) => row.category === 'REFUND')).toEqual([
+      expect.objectContaining({ originalEntityId: 22, amount: '200.00' }),
     ]);
-    expect(impact.rows.filter((row) => row.category === 'REFUND')).toEqual([]);
+    expect(impact.rows).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ originalEntityId: 23 }),
+      ]),
+    );
   });
 
-  it('excludes approved refund records attached to fully refunded payments', () => {
+  it('keeps an explicit approved refund paired with its fully refunded payment', () => {
     const impact = computeContractVoidImpact(
       inputFixture({
         payments: [
@@ -188,8 +199,19 @@ describe('contract void impact', () => {
     );
 
     expect(impact.summary.effectivePayment).toBe('0.00');
-    expect(impact.summary.refundNet).toBe('0.00');
-    expect(impact.rows.filter((row) => row.category === 'REFUND')).toEqual([]);
+    expect(impact.summary.refundNet).toBe('200.00');
+    const paired = impact.rows.filter(
+      (row) =>
+        (row.category === 'PAYMENT' && row.originalEntityId === 22) ||
+        (row.category === 'REFUND' && row.originalEntityId === 43),
+    );
+    expect(paired).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: 'PAYMENT', amount: '-200.00' }),
+        expect.objectContaining({ category: 'REFUND', amount: '200.00' }),
+      ]),
+    );
+    expect(paired.reduce((sum, row) => sum + Number(row.amount), 0)).toBe(0);
   });
   it('uses the payment amount, rather than bill allocation, for a partial payment', () => {
     const impact = computeContractVoidImpact(
@@ -269,6 +291,7 @@ describe('contract void impact', () => {
           changes: [61],
           rebates: [71],
           checkouts: [81],
+          depositRefunds: [82],
         },
         completedCheckoutIds: [91],
         laterContractIds: [101],
@@ -292,6 +315,13 @@ describe('contract void impact', () => {
           category: 'ADJUSTMENT',
           originalEntityType: 'BillAdjustment',
           originalEntityId: 31,
+          amount: '0.00',
+          affectsNetImpact: false,
+        }),
+        expect.objectContaining({
+          category: 'DEPOSIT',
+          originalEntityType: 'DepositRefund',
+          originalEntityId: 82,
           amount: '0.00',
           affectsNetImpact: false,
         }),
@@ -341,6 +371,7 @@ describe('contract void impact', () => {
           changes: [],
           rebates: [],
           checkouts: [],
+          depositRefunds: [82, 81],
         },
       }),
     );
@@ -371,6 +402,7 @@ describe('contract void impact', () => {
           changes: [],
           rebates: [],
           checkouts: [],
+          depositRefunds: [81, 82],
         },
       }),
     );
@@ -378,6 +410,21 @@ describe('contract void impact', () => {
     expect(hashContractVoidImpact(left)).toBe(hashContractVoidImpact(right));
   });
 
+  it('changes the impact hash when a pending deposit refund is created', () => {
+    const without = computeContractVoidImpact(inputFixture());
+    const withPending = computeContractVoidImpact(
+      inputFixture({
+        pending: {
+          ...inputFixture().pending,
+          depositRefunds: [901],
+        },
+      }),
+    );
+
+    expect(hashContractVoidImpact(withPending)).not.toBe(
+      hashContractVoidImpact(without),
+    );
+  });
   it('hashes equal when nested metadata relation arrays are reordered', () => {
     const impact = computeContractVoidImpact(
       inputFixture({ laterContractIds: [101, 102] }),

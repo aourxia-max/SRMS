@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import {
   ContractVoidReversalCategory,
   Prisma,
@@ -167,7 +167,6 @@ export class ContractVoidReversalWriter {
 
     await this.cancelApprovalWorkflows(tx, request, impact, now, add);
     await this.cancelCheckoutWorkflows(tx, request, impact, now, add);
-    await this.cancelDepositRefunds(tx, request, now, add);
 
     const paymentIds = impact.rows
       .filter(
@@ -434,6 +433,12 @@ export class ContractVoidReversalWriter {
         category: 'PRICING_REBATE',
         entityType: 'PricingRebate',
       },
+      {
+        ids: impact.pending.depositRefunds,
+        delegate: tx.depositRefund,
+        category: 'DEPOSIT',
+        entityType: 'DepositRefund',
+      },
     ];
     for (const workflow of workflows) {
       if (!workflow.ids.length) continue;
@@ -445,15 +450,24 @@ export class ContractVoidReversalWriter {
         select: { id: true, approvalStatus: true },
         orderBy: { id: 'asc' },
       });
-      if (!rows.length) continue;
+      const expectedIds = [...workflow.ids].sort((left, right) => left - right);
+      if (
+        rows.length !== expectedIds.length ||
+        rows.some((row, index) => row.id !== expectedIds[index])
+      ) {
+        throw new ConflictException('合同关联审批状态已并发变化，请重新预览');
+      }
       const ids = rows.map((row) => row.id);
-      await workflow.delegate.updateMany({
+      const updated = await workflow.delegate.updateMany({
         where: {
           id: { in: ids },
           approvalStatus: { in: ['DRAFT', 'PENDING'] },
         },
         data: { approvalStatus: 'CANCELLED' },
       });
+      if (updated.count !== rows.length) {
+        throw new ConflictException('合同关联审批状态已并发变化，请重新预览');
+      }
       for (const row of rows) {
         add(
           indicatorRow({
@@ -490,12 +504,23 @@ export class ContractVoidReversalWriter {
       select: { id: true, status: true },
       orderBy: { id: 'asc' },
     });
-    if (!rows.length) return;
+    const expectedIds = [...impact.pending.checkouts].sort(
+      (left, right) => left - right,
+    );
+    if (
+      rows.length !== expectedIds.length ||
+      rows.some((row, index) => row.id !== expectedIds[index])
+    ) {
+      throw new ConflictException('合同关联审批状态已并发变化，请重新预览');
+    }
     const ids = rows.map((row) => row.id);
-    await delegate.updateMany({
+    const updated = await delegate.updateMany({
       where: { id: { in: ids }, status: { in: ['DRAFT', 'PENDING'] } },
       data: { status: 'CANCELLED' },
     });
+    if (updated.count !== rows.length) {
+      throw new ConflictException('合同关联审批状态已并发变化，请重新预览');
+    }
     for (const row of rows) {
       add(
         indicatorRow({
@@ -506,47 +531,6 @@ export class ContractVoidReversalWriter {
           correctionOccurredAt: now,
           metadata: {
             previousStatus: row.status,
-            nextStatus: 'CANCELLED',
-          },
-        }),
-      );
-    }
-  }
-
-  private async cancelDepositRefunds(
-    tx: Prisma.TransactionClient,
-    request: ContractVoidExecutionRequest,
-    now: Date,
-    add: (row: PlannedRow) => void,
-  ) {
-    const delegate = tx.depositRefund as unknown as WorkflowDelegate;
-    const rows = await delegate.findMany({
-      where: {
-        contractId: request.contractId,
-        approvalStatus: { in: ['DRAFT', 'PENDING'] },
-      },
-      select: { id: true, approvalStatus: true },
-      orderBy: { id: 'asc' },
-    });
-    if (!rows.length) return;
-    const ids = rows.map((row) => row.id);
-    await delegate.updateMany({
-      where: {
-        id: { in: ids },
-        approvalStatus: { in: ['DRAFT', 'PENDING'] },
-      },
-      data: { approvalStatus: 'CANCELLED' },
-    });
-    for (const row of rows) {
-      add(
-        indicatorRow({
-          requestId: request.id,
-          category: 'DEPOSIT',
-          entityType: 'DepositRefund',
-          entityId: row.id,
-          correctionOccurredAt: now,
-          metadata: {
-            previousStatus: row.approvalStatus,
             nextStatus: 'CANCELLED',
           },
         }),

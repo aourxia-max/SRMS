@@ -47,6 +47,15 @@ type LockedRequest = {
   resultSnapshot: Prisma.JsonValue | null;
 };
 
+type RawLockedRequest = Omit<
+  LockedRequest,
+  'id' | 'contractId' | 'resultSnapshot'
+> & {
+  id: number | bigint;
+  contractId: number | bigint;
+  resultSnapshot: Prisma.JsonValue | string | null;
+};
+
 function isCompletedResult(
   value: Prisma.JsonValue | null,
 ): value is Prisma.JsonObject {
@@ -58,6 +67,41 @@ function isCompletedResult(
   );
 }
 
+function normalizeLockedRequest(request: RawLockedRequest): LockedRequest {
+  let resultSnapshot = request.resultSnapshot;
+  if (typeof resultSnapshot === 'string') {
+    try {
+      resultSnapshot = JSON.parse(resultSnapshot) as Prisma.JsonValue;
+    } catch {
+      // A JSON string is itself a valid Prisma JsonValue.
+    }
+  }
+  return {
+    ...request,
+    id: Number(request.id),
+    contractId: Number(request.contractId),
+    resultSnapshot,
+  };
+}
+
+function uniqueTargets(error: unknown): string[] {
+  const target = (error as { meta?: { target?: unknown } })?.meta?.target;
+  if (typeof target === 'string') return [target];
+  if (Array.isArray(target)) {
+    return target.filter((item): item is string => typeof item === 'string');
+  }
+  return [];
+}
+
+function targetsField(targets: string[], field: string) {
+  const normalizedField = field.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return targets.some((target) =>
+    target
+      .replace(/[^a-z0-9]/gi, '')
+      .toLowerCase()
+      .includes(normalizedField),
+  );
+}
 @Injectable()
 export class ContractVoidExecutorService {
   constructor(
@@ -88,145 +132,166 @@ export class ContractVoidExecutorService {
     }
 
     try {
-      return await this.prisma.db.$transaction(async (tx) => {
-        await tx.$queryRaw(
-          Prisma.sql`SELECT id FROM contract_void_requests WHERE id = ${requestId} FOR UPDATE`,
-        );
-        const request = (await tx.contractVoidRequest.findUnique({
-          where: { id: requestId },
-        })) as LockedRequest | null;
-        if (!request) throw new NotFoundException('合同作废申请不存在');
-
-        if (request.status === 'COMPLETED') {
-          if (request.executionIdempotencyKey !== idempotencyKey) {
-            throw new ConflictException('合同已作废，不能重复冲销');
+      return await this.prisma.db.$transaction(
+        async (tx) => {
+          const requests = await tx.$queryRaw<RawLockedRequest[]>(
+            Prisma.sql`SELECT id, request_no AS requestNo, contract_id AS contractId, status, impact_hash AS impactHash, execution_batch_no AS executionBatchNo, execution_idempotency_key AS executionIdempotencyKey, result_snapshot AS resultSnapshot FROM contract_void_requests WHERE id = ${requestId} FOR UPDATE`,
+          );
+          if (requests.length !== 1) {
+            throw new NotFoundException('合同作废申请不存在');
           }
-          return this.storedResult(request);
-        }
-        if (request.status !== 'PENDING') {
-          throw new BadRequestException('只有待确认的作废申请可以确认');
-        }
-        if (previewHash !== request.impactHash) {
-          throw new BadRequestException('合同关联数据已变化，请重新预览');
-        }
+          const request = normalizeLockedRequest(requests[0]);
 
-        await this.lockRelatedRows(tx, request.contractId);
-        const contract = await tx.contract.findUnique({
-          where: { id: request.contractId },
-          select: { contractNo: true, status: true },
-        });
-        if (!contract) throw new NotFoundException('合同不存在');
+          if (request.status === 'COMPLETED') {
+            if (request.executionIdempotencyKey !== idempotencyKey) {
+              throw new ConflictException('合同已作废，不能重复冲销');
+            }
+            return this.storedResult(request);
+          }
+          if (request.status !== 'PENDING') {
+            throw new BadRequestException('只有待确认的作废申请可以确认');
+          }
+          if (previewHash !== request.impactHash) {
+            throw new BadRequestException('合同关联数据已变化，请重新预览');
+          }
 
-        const input = await this.previews.loadInput(tx, request.contractId);
-        const computed = computeContractVoidImpact(input);
-        const impact: ContractVoidExecutionImpact = {
-          ...computed,
-          sourceSnapshot: input.sourceSnapshot,
-        };
-        const currentHash = hashContractVoidImpact(impact);
-        if (currentHash !== request.impactHash || currentHash !== previewHash) {
-          throw new BadRequestException('合同关联数据已变化，请重新预览');
-        }
-        assertBalancedContractVoidImpact(impact);
+          await this.lockRelatedRows(tx, request.contractId);
+          const contract = await tx.contract.findUnique({
+            where: { id: request.contractId },
+            select: { contractNo: true, status: true },
+          });
+          if (!contract) throw new NotFoundException('合同不存在');
 
-        const now = new Date();
-        const executionBatchNo =
-          request.executionBatchNo ?? `HTZFZX-${request.id}`;
-        const reversals = await this.reversalWriter.write(
-          tx,
-          {
-            id: request.id,
-            requestNo: request.requestNo,
-            contractId: request.contractId,
-            operatorId: user.id,
-          },
-          impact,
-          now,
-        );
-        await tx.contract.update({
-          where: { id: request.contractId },
-          data: { status: 'VOIDED' },
-        });
+          const input = await this.previews.loadInput(tx, request.contractId);
+          const computed = computeContractVoidImpact(input);
+          const impact: ContractVoidExecutionImpact = {
+            ...computed,
+            sourceSnapshot: input.sourceSnapshot,
+          };
+          const currentHash = hashContractVoidImpact(impact);
+          if (
+            currentHash !== request.impactHash ||
+            currentHash !== previewHash
+          ) {
+            throw new BadRequestException('合同关联数据已变化，请重新预览');
+          }
+          assertBalancedContractVoidImpact(impact);
 
-        const categoryTotals = this.categoryTotals(reversals);
-        const result: ContractVoidResult = {
-          requestId: request.id,
-          requestNo: request.requestNo,
-          status: 'COMPLETED',
-          contractId: request.contractId,
-          contractNo: contract.contractNo,
-          contractStatus: 'VOIDED',
-          impactHash: currentHash,
-          executionBatchNo,
-          reversalCount: reversals.length,
-          categoryTotals,
-          roomAction: impact.room.action,
-          roomStatusBefore: impact.room.currentStatus,
-          roomStatusAfter: impact.room.currentStatus,
-        };
-
-        await tx.contractVoidRequest.update({
-          where: { id: request.id },
-          data: {
-            status: 'COMPLETED',
-            activeContractKey: null,
-            completedContractKey: `contract:${request.contractId}`,
-            executionBatchNo,
-            executionIdempotencyKey: idempotencyKey,
-            resultSnapshot: result,
-            completedBy: user.id,
-            completedAt: now,
-          },
-        });
-        await tx.operationLog.create({
-          data: {
-            module: 'CONTRACT',
-            action: 'VOID_CORRECTION',
-            entityType: 'CONTRACT_VOID_REQUEST',
-            entityId: request.id,
-            entityNo: request.requestNo,
-            summary: `完成合同作废纠错 ${request.requestNo}`,
-            beforeData: {
-              requestStatus: 'PENDING',
-              contractStatus: contract.status,
+          const now = new Date();
+          const executionBatchNo =
+            request.executionBatchNo ?? `HTZFZX-${request.id}`;
+          const reversals = await this.reversalWriter.write(
+            tx,
+            {
+              id: request.id,
+              requestNo: request.requestNo,
+              contractId: request.contractId,
+              operatorId: user.id,
             },
-            afterData: result,
-            reason: `合同纠错单 ${request.requestNo}`,
-            operatorId: user.id,
-            operatorRole: user.role,
-            occurredAt: now,
-          },
-        });
-        await this.auditChain.append(tx, {
-          eventType: 'CONTRACT_VOID_COMPLETED',
-          entityType: 'CONTRACT_VOID_REQUEST',
-          entityId: request.id,
-          operatorId: user.id,
-          occurredAt: now,
-          eventData: {
+            impact,
+            now,
+          );
+          await tx.contract.update({
+            where: { id: request.contractId },
+            data: { status: 'VOIDED' },
+          });
+
+          const categoryTotals = this.categoryTotals(reversals);
+          const result: ContractVoidResult = {
+            requestId: request.id,
             requestNo: request.requestNo,
+            status: 'COMPLETED',
+            contractId: request.contractId,
             contractNo: contract.contractNo,
+            contractStatus: 'VOIDED',
             impactHash: currentHash,
             executionBatchNo,
+            reversalCount: reversals.length,
             categoryTotals,
             roomAction: impact.room.action,
             roomStatusBefore: impact.room.currentStatus,
             roomStatusAfter: impact.room.currentStatus,
-            beforeStatus: contract.status,
-            afterStatus: 'VOIDED',
-          },
-        });
-        return result;
-      });
+          };
+
+          await tx.contractVoidRequest.update({
+            where: { id: request.id },
+            data: {
+              status: 'COMPLETED',
+              activeContractKey: null,
+              completedContractKey: `contract:${request.contractId}`,
+              executionBatchNo,
+              executionIdempotencyKey: idempotencyKey,
+              resultSnapshot: result,
+              completedBy: user.id,
+              completedAt: now,
+            },
+          });
+          await tx.operationLog.create({
+            data: {
+              module: 'CONTRACT',
+              action: 'VOID_CORRECTION',
+              entityType: 'CONTRACT_VOID_REQUEST',
+              entityId: request.id,
+              entityNo: request.requestNo,
+              summary: `完成合同作废纠错 ${request.requestNo}`,
+              beforeData: {
+                requestStatus: 'PENDING',
+                contractStatus: contract.status,
+              },
+              afterData: result,
+              reason: `合同纠错单 ${request.requestNo}`,
+              operatorId: user.id,
+              operatorRole: user.role,
+              occurredAt: now,
+            },
+          });
+          await this.auditChain.append(tx, {
+            eventType: 'CONTRACT_VOID_COMPLETED',
+            entityType: 'CONTRACT_VOID_REQUEST',
+            entityId: request.id,
+            operatorId: user.id,
+            occurredAt: now,
+            eventData: {
+              requestNo: request.requestNo,
+              contractNo: contract.contractNo,
+              impactHash: currentHash,
+              executionBatchNo,
+              categoryTotals,
+              roomAction: impact.room.action,
+              roomStatusBefore: impact.room.currentStatus,
+              roomStatusAfter: impact.room.currentStatus,
+              beforeStatus: contract.status,
+              afterStatus: 'VOIDED',
+            },
+          });
+          return result;
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        },
+      );
     } catch (error) {
       if ((error as { code?: unknown })?.code !== 'P2002') throw error;
-      const completed = await this.prisma.db.contractVoidRequest.findUnique({
-        where: { executionIdempotencyKey: idempotencyKey },
-      });
-      if (completed?.id === requestId && completed.status === 'COMPLETED') {
-        return this.storedResult(completed);
+      const targets = uniqueTargets(error);
+      if (targetsField(targets, 'executionIdempotencyKey')) {
+        const completed = await this.prisma.db.contractVoidRequest.findUnique({
+          where: { executionIdempotencyKey: idempotencyKey },
+        });
+        if (completed?.id === requestId && completed.status === 'COMPLETED') {
+          return this.storedResult(completed);
+        }
+        throw new ConflictException('执行幂等键已用于其他合同作废申请');
       }
-      throw new ConflictException('执行幂等键已用于其他合同作废申请');
+      if (targetsField(targets, 'completedContractKey')) {
+        throw new ConflictException('合同已作废，不能重复冲销');
+      }
+      if (targetsField(targets, 'executionBatchNo')) {
+        throw new ConflictException('合同作废执行批次号冲突，请重试');
+      }
+      if (targetsField(targets, 'transactionNo')) {
+        throw new ConflictException('合同作废冲销编号冲突，请联系系统管理员');
+      }
+      throw new ConflictException('合同作废执行遇到唯一性冲突，请重试');
     }
   }
 
@@ -234,8 +299,19 @@ export class ContractVoidExecutorService {
     tx: Prisma.TransactionClient,
     contractId: number,
   ) {
+    // Deterministic parent-before-child order closes FK insert windows for every
+    // mutable table contributing to the combined impact/sourceSnapshot hash.
     await tx.$queryRaw(
       Prisma.sql`SELECT id FROM contracts WHERE id = ${contractId} FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT room_id FROM contracts WHERE id = ${contractId}) FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT related.id FROM contracts related JOIN contracts source ON source.room_id = related.room_id WHERE source.id = ${contractId} ORDER BY related.id FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM contract_members WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
     );
     await tx.$queryRaw(
       Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
@@ -244,16 +320,22 @@ export class ContractVoidExecutorService {
       Prisma.sql`SELECT id FROM payments WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
     );
     await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM payment_refunds WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM prepayment_transactions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM deposit_transactions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
+      Prisma.sql`SELECT id FROM contract_changes WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
     );
     await tx.$queryRaw(
       Prisma.sql`SELECT ba.id FROM bill_adjustments ba JOIN rent_bills rb ON rb.id = ba.rent_bill_id WHERE rb.contract_id = ${contractId} ORDER BY ba.id FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT pa.id FROM payment_allocations pa JOIN payments p ON p.id = pa.payment_id WHERE p.contract_id = ${contractId} ORDER BY pa.id FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM payment_refunds WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT pvr.id FROM payment_void_requests pvr JOIN payments p ON p.id = pvr.payment_id WHERE p.contract_id = ${contractId} ORDER BY pvr.id FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM prepayment_transactions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
     );
     await tx.$queryRaw(
       Prisma.sql`SELECT id FROM pricing_rebates WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
@@ -265,7 +347,10 @@ export class ContractVoidExecutorService {
       Prisma.sql`SELECT id FROM deposit_refunds WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
     );
     await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT room_id FROM contracts WHERE id = ${contractId}) FOR UPDATE`,
+      Prisma.sql`SELECT id FROM deposit_transactions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM contract_commissions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
     );
   }
 

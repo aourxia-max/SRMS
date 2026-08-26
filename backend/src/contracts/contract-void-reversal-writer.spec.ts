@@ -74,6 +74,7 @@ function executionImpact(overrides: Record<string, unknown> = {}) {
       changes: [],
       rebates: [],
       checkouts: [],
+      depositRefunds: [],
     },
     completedCheckoutIds: [81],
     laterContractIds: [],
@@ -188,7 +189,13 @@ function txFixture() {
   let inserted: Array<Record<string, unknown>> = [];
   const emptyWorkflow = () => ({
     findMany: jest.fn().mockResolvedValue([]),
-    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    updateMany: jest
+      .fn()
+      .mockImplementation(({ where }: { where: { id?: { in?: number[] } } }) =>
+        Promise.resolve({
+          count: where.id?.in?.length ?? 0,
+        }),
+      ),
   });
   const tx = {
     contractChange: emptyWorkflow(),
@@ -231,6 +238,7 @@ describe('ContractVoidReversalWriter', () => {
         changes: [61],
         rebates: [71],
         checkouts: [81],
+        depositRefunds: [82],
       },
       completedCheckoutIds: [],
     });
@@ -290,6 +298,14 @@ describe('ContractVoidReversalWriter', () => {
         data: { status: 'CANCELLED' },
       }),
     );
+    expect(tx.depositRefund.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: [82] },
+        approvalStatus: { in: ['DRAFT', 'PENDING'] },
+      },
+      select: { id: true, approvalStatus: true },
+      orderBy: { id: 'asc' },
+    });
     const cancellationRows = inserted().filter(
       (row) =>
         (row.metadata as { nextStatus?: string }).nextStatus === 'CANCELLED',
@@ -311,6 +327,30 @@ describe('ContractVoidReversalWriter', () => {
       ]),
     );
   });
+  it('throws and writes no reversal trace when a cancellation count mismatches', async () => {
+    const impact = executionImpact({
+      pending: {
+        adjustments: [],
+        refunds: [],
+        voidRequests: [],
+        changes: [61],
+        rebates: [],
+        checkouts: [],
+        depositRefunds: [],
+      },
+    });
+    const { tx } = txFixture();
+    tx.contractChange.findMany.mockResolvedValue([
+      { id: 61, approvalStatus: 'PENDING' },
+    ]);
+    tx.contractChange.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      new ContractVoidReversalWriter().write(tx as never, request, impact, now),
+    ).rejects.toThrow('合同关联审批状态已并发变化，请重新预览');
+    expect(tx.contractVoidReversal.createMany).not.toHaveBeenCalled();
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+  });
 
   it('writes balanced append-only source reversals without double counting refunded payments', async () => {
     const { tx, inserted } = txFixture();
@@ -325,7 +365,7 @@ describe('ContractVoidReversalWriter', () => {
 
     expect(tx.payment.updateMany).toHaveBeenCalledWith({
       where: {
-        id: { in: [21] },
+        id: { in: [21, 22] },
         status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] },
       },
       data: {
@@ -385,6 +425,22 @@ describe('ContractVoidReversalWriter', () => {
           id: 21,
           amount: '-300.00',
           before: '300.00',
+          after: '0.00',
+        },
+        {
+          category: 'PAYMENT',
+          type: 'Payment',
+          id: 22,
+          amount: '-200.00',
+          before: '200.00',
+          after: '0.00',
+        },
+        {
+          category: 'REFUND',
+          type: 'PaymentRefund',
+          id: 42,
+          amount: '200.00',
+          before: '-200.00',
           after: '0.00',
         },
         {
@@ -455,9 +511,7 @@ describe('ContractVoidReversalWriter', () => {
     );
     expect(values).not.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ category: 'PAYMENT', id: 22 }),
         expect.objectContaining({ category: 'PAYMENT', id: 23 }),
-        expect.objectContaining({ category: 'REFUND', id: 42 }),
         expect.objectContaining({ category: 'COMMISSION', id: 92 }),
       ]),
     );

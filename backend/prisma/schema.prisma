@@ -407,6 +407,14 @@ model SecurityAuditLog {
   @@map("security_audit_logs")
 }
 
+model SecurityAuditChainHead {
+  id               Int      @id @db.UnsignedTinyInt
+  latestRecordHash String?  @map("latest_record_hash") @db.Char(64)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@map("security_audit_chain_heads")
+}
+
 model SystemSetting {
   id           Int              @id @default(autoincrement()) @db.UnsignedInt
   settingKey   String           @unique @map("setting_key") @db.VarChar(80)
@@ -632,33 +640,33 @@ model ContractFile {
 }
 
 model ContractVoidRequest {
-  id                      Int                       @id @default(autoincrement()) @db.UnsignedInt
-  requestNo               String                    @unique @map("request_no") @db.VarChar(40)
-  contractId              Int                       @map("contract_id") @db.UnsignedInt
-  status                  ContractVoidRequestStatus @default(PENDING)
-  reason                  String                    @db.VarChar(500)
-  impactSnapshot          Json                      @map("impact_snapshot")
-  impactHash              String                    @map("impact_hash") @db.Char(64)
-  activeContractKey       String?                   @unique @map("active_contract_key") @db.VarChar(80)
-  completedContractKey    String?                   @unique @map("completed_contract_key") @db.VarChar(80)
-  executionBatchNo        String?                   @unique @map("execution_batch_no") @db.VarChar(40)
+  id                       Int                       @id @default(autoincrement()) @db.UnsignedInt
+  requestNo                String                    @unique @map("request_no") @db.VarChar(40)
+  contractId               Int                       @map("contract_id") @db.UnsignedInt
+  status                   ContractVoidRequestStatus @default(PENDING)
+  reason                   String                    @db.VarChar(500)
+  impactSnapshot           Json                      @map("impact_snapshot")
+  impactHash               String                    @map("impact_hash") @db.Char(64)
+  activeContractKey        String?                   @unique @map("active_contract_key") @db.VarChar(80)
+  completedContractKey     String?                   @unique @map("completed_contract_key") @db.VarChar(80)
+  executionBatchNo         String?                   @unique @map("execution_batch_no") @db.VarChar(40)
   submissionIdempotencyKey String                    @unique @map("submission_idempotency_key") @db.VarChar(100)
-  executionIdempotencyKey String?                   @unique @map("execution_idempotency_key") @db.VarChar(100)
-  resultSnapshot          Json?                     @map("result_snapshot")
-  submittedBy             Int                       @map("submitted_by") @db.UnsignedInt
-  submittedAt             DateTime                  @default(now()) @map("submitted_at") @db.DateTime(3)
-  completedBy             Int?                      @map("completed_by") @db.UnsignedInt
-  completedAt             DateTime?                 @map("completed_at") @db.DateTime(3)
-  rejectedBy              Int?                      @map("rejected_by") @db.UnsignedInt
-  rejectedAt              DateTime?                 @map("rejected_at") @db.DateTime(3)
-  rejectedReason          String?                   @map("rejected_reason") @db.VarChar(500)
-  cancelledBy             Int?                      @map("cancelled_by") @db.UnsignedInt
-  cancelledAt             DateTime?                 @map("cancelled_at") @db.DateTime(3)
-  createdAt               DateTime                  @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt               DateTime                  @updatedAt @map("updated_at") @db.DateTime(3)
-  contract                Contract                  @relation(fields: [contractId], references: [id], onDelete: Restrict)
-  reversals               ContractVoidReversal[]
-  files                   ContractVoidRequestFile[]
+  executionIdempotencyKey  String?                   @unique @map("execution_idempotency_key") @db.VarChar(100)
+  resultSnapshot           Json?                     @map("result_snapshot")
+  submittedBy              Int                       @map("submitted_by") @db.UnsignedInt
+  submittedAt              DateTime                  @default(now()) @map("submitted_at") @db.DateTime(3)
+  completedBy              Int?                      @map("completed_by") @db.UnsignedInt
+  completedAt              DateTime?                 @map("completed_at") @db.DateTime(3)
+  rejectedBy               Int?                      @map("rejected_by") @db.UnsignedInt
+  rejectedAt               DateTime?                 @map("rejected_at") @db.DateTime(3)
+  rejectedReason           String?                   @map("rejected_reason") @db.VarChar(500)
+  cancelledBy              Int?                      @map("cancelled_by") @db.UnsignedInt
+  cancelledAt              DateTime?                 @map("cancelled_at") @db.DateTime(3)
+  createdAt                DateTime                  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt                DateTime                  @updatedAt @map("updated_at") @db.DateTime(3)
+  contract                 Contract                  @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  reversals                ContractVoidReversal[]
+  files                    ContractVoidRequestFile[]
 
   @@index([contractId, status, submittedAt])
   @@map("contract_void_requests")
@@ -1090,45 +1098,45 @@ model DepositTransaction {
 }
 
 model CheckoutSettlement {
-  id                         Int                      @id @default(autoincrement()) @db.UnsignedInt
-  settlementNo               String                   @unique @map("settlement_no") @db.VarChar(40)
-  contractId                 Int                      @map("contract_id") @db.UnsignedInt
-  checkoutType               String                   @map("checkout_type") @db.VarChar(50)
-  originContractStatus       ContractStatus           @default(ACTIVE) @map("origin_contract_status")
-  plannedCheckoutDate        DateTime                 @map("planned_checkout_date") @db.Date
-  actualCheckoutDate         DateTime?                @map("actual_checkout_date") @db.Date
-  handoverDate               DateTime?                @map("handover_date") @db.Date
-  inspectionAt               DateTime?                @map("inspection_at") @db.DateTime(3)
-  checkoutReason             String                   @map("checkout_reason") @db.VarChar(500)
-  rentReceivable             Decimal                  @default(0) @map("rent_receivable") @db.Decimal(14, 2)
-  rentReceived               Decimal                  @default(0) @map("rent_received") @db.Decimal(14, 2)
-  rentOutstanding            Decimal                  @default(0) @map("rent_outstanding") @db.Decimal(14, 2)
-  prepaymentBalance          Decimal                  @default(0) @map("prepayment_balance") @db.Decimal(14, 2)
-  depositBalance             Decimal                  @default(0) @map("deposit_balance") @db.Decimal(14, 2)
-  depositOffsetAmount        Decimal                  @default(0) @map("deposit_offset_amount") @db.Decimal(14, 2)
-  otherDeductionAmount       Decimal                  @default(0) @map("other_deduction_amount") @db.Decimal(14, 2)
-  depositRefundableAmount    Decimal                  @default(0) @map("deposit_refundable_amount") @db.Decimal(14, 2)
-  prepaymentRefundableAmount Decimal                  @default(0) @map("prepayment_refundable_amount") @db.Decimal(14, 2)
-  finalReceivable              Decimal                  @default(0) @map("final_receivable") @db.Decimal(14, 2)
-  supplementalRequired         Boolean                  @default(false) @map("supplemental_required")
-  supplementalArrearsAmount    Decimal                  @default(0) @map("supplemental_arrears_amount") @db.Decimal(14, 2)
-  supplementalInspectionAmount Decimal                  @default(0) @map("supplemental_inspection_amount") @db.Decimal(14, 2)
-  supplementalReceivedAmount   Decimal                  @default(0) @map("supplemental_received_amount") @db.Decimal(14, 2)
-  supplementalOutstandingAmount Decimal                 @default(0) @map("supplemental_outstanding_amount") @db.Decimal(14, 2)
-  supplementalCollectedAt      DateTime?                @map("supplemental_collected_at") @db.DateTime(3)
-  targetRoomStatus           RoomStatus               @map("target_room_status")
-  status                     CheckoutSettlementStatus @default(DRAFT)
-  submittedBy                Int                      @map("submitted_by") @db.UnsignedInt
-  submittedAt                DateTime?                @map("submitted_at") @db.DateTime(3)
-  approvedBy                 Int?                     @map("approved_by") @db.UnsignedInt
-  approvedAt                 DateTime?                @map("approved_at") @db.DateTime(3)
-  rejectedReason             String?                  @map("rejected_reason") @db.VarChar(500)
-  remark                     String?                  @db.VarChar(1000)
-  contract                   Contract                 @relation(fields: [contractId], references: [id], onDelete: Restrict)
-  items                      CheckoutSettlementItem[]
-  depositTransactions        DepositTransaction[]
-  depositRefunds             DepositRefund[]
-  supplementalBill           RentBill?                @relation("CheckoutSupplementalRentBill")
+  id                            Int                      @id @default(autoincrement()) @db.UnsignedInt
+  settlementNo                  String                   @unique @map("settlement_no") @db.VarChar(40)
+  contractId                    Int                      @map("contract_id") @db.UnsignedInt
+  checkoutType                  String                   @map("checkout_type") @db.VarChar(50)
+  originContractStatus          ContractStatus           @default(ACTIVE) @map("origin_contract_status")
+  plannedCheckoutDate           DateTime                 @map("planned_checkout_date") @db.Date
+  actualCheckoutDate            DateTime?                @map("actual_checkout_date") @db.Date
+  handoverDate                  DateTime?                @map("handover_date") @db.Date
+  inspectionAt                  DateTime?                @map("inspection_at") @db.DateTime(3)
+  checkoutReason                String                   @map("checkout_reason") @db.VarChar(500)
+  rentReceivable                Decimal                  @default(0) @map("rent_receivable") @db.Decimal(14, 2)
+  rentReceived                  Decimal                  @default(0) @map("rent_received") @db.Decimal(14, 2)
+  rentOutstanding               Decimal                  @default(0) @map("rent_outstanding") @db.Decimal(14, 2)
+  prepaymentBalance             Decimal                  @default(0) @map("prepayment_balance") @db.Decimal(14, 2)
+  depositBalance                Decimal                  @default(0) @map("deposit_balance") @db.Decimal(14, 2)
+  depositOffsetAmount           Decimal                  @default(0) @map("deposit_offset_amount") @db.Decimal(14, 2)
+  otherDeductionAmount          Decimal                  @default(0) @map("other_deduction_amount") @db.Decimal(14, 2)
+  depositRefundableAmount       Decimal                  @default(0) @map("deposit_refundable_amount") @db.Decimal(14, 2)
+  prepaymentRefundableAmount    Decimal                  @default(0) @map("prepayment_refundable_amount") @db.Decimal(14, 2)
+  finalReceivable               Decimal                  @default(0) @map("final_receivable") @db.Decimal(14, 2)
+  supplementalRequired          Boolean                  @default(false) @map("supplemental_required")
+  supplementalArrearsAmount     Decimal                  @default(0) @map("supplemental_arrears_amount") @db.Decimal(14, 2)
+  supplementalInspectionAmount  Decimal                  @default(0) @map("supplemental_inspection_amount") @db.Decimal(14, 2)
+  supplementalReceivedAmount    Decimal                  @default(0) @map("supplemental_received_amount") @db.Decimal(14, 2)
+  supplementalOutstandingAmount Decimal                  @default(0) @map("supplemental_outstanding_amount") @db.Decimal(14, 2)
+  supplementalCollectedAt       DateTime?                @map("supplemental_collected_at") @db.DateTime(3)
+  targetRoomStatus              RoomStatus               @map("target_room_status")
+  status                        CheckoutSettlementStatus @default(DRAFT)
+  submittedBy                   Int                      @map("submitted_by") @db.UnsignedInt
+  submittedAt                   DateTime?                @map("submitted_at") @db.DateTime(3)
+  approvedBy                    Int?                     @map("approved_by") @db.UnsignedInt
+  approvedAt                    DateTime?                @map("approved_at") @db.DateTime(3)
+  rejectedReason                String?                  @map("rejected_reason") @db.VarChar(500)
+  remark                        String?                  @db.VarChar(1000)
+  contract                      Contract                 @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  items                         CheckoutSettlementItem[]
+  depositTransactions           DepositTransaction[]
+  depositRefunds                DepositRefund[]
+  supplementalBill              RentBill?                @relation("CheckoutSupplementalRentBill")
 
   @@index([contractId, status])
   @@map("checkout_settlements")

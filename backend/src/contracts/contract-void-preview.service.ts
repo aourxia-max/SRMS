@@ -286,6 +286,9 @@ export class ContractVoidPreviewService {
             approvedAt: true,
           },
         },
+        depositRefunds: {
+          select: { id: true, approvalStatus: true },
+        },
         commissions: {
           select: { id: true, amount: true, createdAt: true, deletedAt: true },
         },
@@ -394,6 +397,9 @@ export class ContractVoidPreviewService {
           .map((item) => item.id),
         checkouts: contract.checkoutSettlements
           .filter((item) => ['DRAFT', 'PENDING'].includes(item.status))
+          .map((item) => item.id),
+        depositRefunds: contract.depositRefunds
+          .filter((item) => ['DRAFT', 'PENDING'].includes(item.approvalStatus))
           .map((item) => item.id),
       },
       completedCheckoutIds: contract.checkoutSettlements

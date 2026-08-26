@@ -4,7 +4,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ROLES_KEY } from '../authorization/roles.decorator';
@@ -60,6 +60,7 @@ function snapshotInput() {
       changes: [],
       rebates: [],
       checkouts: [],
+      depositRefunds: [],
     },
     completedCheckoutIds: [],
     laterContractIds: [],
@@ -97,7 +98,19 @@ function harness() {
     contract: { contractNo: 'HT20260007', status: 'ACTIVE' },
   };
   const tx = {
-    $queryRaw: jest.fn().mockResolvedValue([]),
+    $queryRaw: jest.fn((query: { strings: string[] }) =>
+      Promise.resolve(
+        query.strings.join('?').includes('contract_void_requests')
+          ? [
+              {
+                ...request,
+                id: BigInt(request.id),
+                contractId: BigInt(request.contractId),
+              },
+            ]
+          : [],
+      ),
+    ),
     contractVoidRequest: {
       findUnique: jest.fn().mockImplementation(() => Promise.resolve(request)),
       update: jest.fn().mockResolvedValue({}),
@@ -192,7 +205,7 @@ describe('contract void approval input and endpoint', () => {
 
 describe('ContractVoidExecutorService', () => {
   it('executes the whole correction atomically after ordered row locks', async () => {
-    const { service, tx, writer, audit, hash } = harness();
+    const { service, tx, db, previews, writer, audit, hash } = harness();
 
     await expect(
       service.execute(9, hash, '确认作废合同', executionKey, superAdmin),
@@ -206,28 +219,41 @@ describe('ContractVoidExecutorService', () => {
       roomStatusAfter: 'RENTED',
     });
     const lockOrder = tx.$queryRaw.mock.calls.map(([query]) =>
-      (query as { strings: string[] }).strings.join('?'),
+      query.strings.join('?'),
     );
     expect(lockOrder).toEqual([
       expect.stringContaining('contract_void_requests'),
       expect.stringContaining('contracts'),
+      expect.stringContaining('rooms'),
+      expect.stringContaining('contracts'),
+      expect.stringContaining('contract_members'),
       expect.stringContaining('rent_bills'),
       expect.stringContaining('payments'),
-      expect.stringContaining('payment_refunds'),
-      expect.stringContaining('prepayment_transactions'),
-      expect.stringContaining('deposit_transactions'),
+      expect.stringContaining('contract_changes'),
       expect.stringContaining('bill_adjustments'),
+      expect.stringContaining('payment_allocations'),
+      expect.stringContaining('payment_refunds'),
+      expect.stringContaining('payment_void_requests'),
+      expect.stringContaining('prepayment_transactions'),
       expect.stringContaining('pricing_rebates'),
       expect.stringContaining('checkout_settlements'),
       expect.stringContaining('deposit_refunds'),
-      expect.stringContaining('rooms'),
+      expect.stringContaining('deposit_transactions'),
+      expect.stringContaining('contract_commissions'),
     ]);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
+    expect(tx.contractVoidRequest.findUnique).not.toHaveBeenCalled();
     expect(tx.contract.findUnique).toHaveBeenCalledWith({
       where: { id: 7 },
       select: { contractNo: true, status: true },
     });
     expect(tx.contract.findUnique.mock.invocationCallOrder[0]).toBeGreaterThan(
-      tx.$queryRaw.mock.invocationCallOrder[1],
+      tx.$queryRaw.mock.invocationCallOrder.at(-1)!,
+    );
+    expect(previews.loadInput.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.$queryRaw.mock.invocationCallOrder.at(-1)!,
     );
     expect(writer.write).toHaveBeenCalledWith(
       tx,
@@ -401,4 +427,57 @@ describe('ContractVoidExecutorService', () => {
     expect(writer.write).toHaveBeenCalledTimes(1);
     expect(tx.contract.update).toHaveBeenCalledTimes(1);
   });
+  it('recovers only an execution-idempotency unique collision as a replay', async () => {
+    const { service, db, hash, request } = harness();
+    const stored = {
+      status: 'COMPLETED',
+      requestId: 9,
+      requestNo: request.requestNo,
+    };
+    db.$transaction.mockRejectedValue({
+      code: 'P2002',
+      meta: {
+        target: 'contract_void_requests_execution_idempotency_key_key',
+      },
+    });
+    db.contractVoidRequest.findUnique.mockResolvedValue({
+      ...request,
+      status: 'COMPLETED',
+      resultSnapshot: stored,
+    });
+
+    await expect(
+      service.execute(9, hash, '确认作废合同', executionKey, superAdmin),
+    ).resolves.toEqual(stored);
+    expect(db.contractVoidRequest.findUnique).toHaveBeenCalledWith({
+      where: { executionIdempotencyKey: executionKey },
+    });
+  });
+
+  it.each([
+    [
+      'contract_void_requests_completed_contract_key_key',
+      '合同已作废，不能重复冲销',
+    ],
+    [
+      'contract_void_requests_execution_batch_no_key',
+      '合同作废执行批次号冲突，请重试',
+    ],
+    [
+      'prepayment_transactions_transaction_no_key',
+      '合同作废冲销编号冲突，请联系系统管理员',
+    ],
+    ['unexpected_unique_key', '合同作废执行遇到唯一性冲突，请重试'],
+  ])(
+    'maps non-idempotency P2002 target %s accurately',
+    async (target, message) => {
+      const { service, db, hash } = harness();
+      db.$transaction.mockRejectedValue({ code: 'P2002', meta: { target } });
+
+      await expect(
+        service.execute(9, hash, '确认作废合同', executionKey, superAdmin),
+      ).rejects.toThrow(message);
+      expect(db.contractVoidRequest.findUnique).not.toHaveBeenCalled();
+    },
+  );
 });

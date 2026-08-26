@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import type { Prisma, SecurityAuditLog } from '@prisma/client';
+import { Prisma, type SecurityAuditLog } from '@prisma/client';
 
 type JsonObject = { [key: string]: JsonLike };
 type JsonLike = null | boolean | number | string | JsonLike[] | JsonObject;
@@ -57,12 +57,16 @@ export class SecurityAuditChainService {
     tx: Prisma.TransactionClient,
     event: SecurityAuditChainEvent,
   ): Promise<SecurityAuditLog> {
-    const last = await tx.securityAuditLog.findFirst({
-      where: { recordHash: { not: null } },
-      orderBy: { id: 'desc' },
-    });
+    const heads = await tx.$queryRaw<
+      Array<{ latestRecordHash: string | null }>
+    >(
+      Prisma.sql`SELECT latest_record_hash AS latestRecordHash FROM security_audit_chain_heads WHERE id = 1 FOR UPDATE`,
+    );
+    if (heads.length !== 1) {
+      throw new Error('安全审计链头不存在，请先完成数据库迁移');
+    }
     const occurredAt = event.occurredAt ?? new Date();
-    const previousHash = last?.recordHash ?? null;
+    const previousHash = heads[0].latestRecordHash;
     const reason = event.reason ?? null;
     const recordHash = hashSecurityAuditRecord({
       ...event,
@@ -70,7 +74,7 @@ export class SecurityAuditChainService {
       occurredAt,
       previousHash,
     });
-    return tx.securityAuditLog.create({
+    const created = await tx.securityAuditLog.create({
       data: {
         eventType: event.eventType,
         entityType: event.entityType,
@@ -83,5 +87,10 @@ export class SecurityAuditChainService {
         recordHash,
       },
     });
+    await tx.securityAuditChainHead.update({
+      where: { id: 1 },
+      data: { latestRecordHash: recordHash },
+    });
+    return created;
   }
 }

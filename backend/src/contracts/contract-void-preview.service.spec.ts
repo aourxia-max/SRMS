@@ -186,6 +186,10 @@ function contractFixture() {
         approvedAt: null,
       },
     ],
+    depositRefunds: [
+      { id: 103, approvalStatus: 'PENDING' },
+      { id: 104, approvalStatus: 'APPROVED' },
+    ],
     commissions: [
       {
         id: 111,
@@ -226,6 +230,7 @@ describe('ContractVoidPreviewService', () => {
         changes: [81],
         rebates: [91],
         checkouts: [102],
+        depositRefunds: [103],
       },
       completedCheckoutIds: [101],
       room: { hasLaterContract: true, action: 'KEEP_CURRENT_STATUS' },
@@ -303,6 +308,7 @@ describe('ContractVoidPreviewService', () => {
           changes: expect.any(Object),
           pricingRebates: expect.any(Object),
           checkoutSettlements: expect.any(Object),
+          depositRefunds: expect.any(Object),
           commissions: expect.any(Object),
         }),
       }),
@@ -311,6 +317,27 @@ describe('ContractVoidPreviewService', () => {
       where: { roomId: 3, id: { not: 7 }, status: { not: 'VOIDED' } },
       select: { id: true },
     });
+  });
+  it('changes the preview hash when a new pending deposit refund appears', async () => {
+    const withoutFixture = contractFixture();
+    const withFixture = contractFixture();
+    withoutFixture.depositRefunds = [];
+    withFixture.depositRefunds = [{ id: 105, approvalStatus: 'DRAFT' }];
+
+    const without = new ContractVoidPreviewService({
+      db: buildDb(withoutFixture),
+    } as never);
+    const withPending = new ContractVoidPreviewService({
+      db: buildDb(withFixture),
+    } as never);
+
+    const [left, right] = await Promise.all([
+      without.preview(7, admin),
+      withPending.preview(7, admin),
+    ]);
+
+    expect(right.pending.depositRefunds).toEqual([105]);
+    expect(right.impactHash).not.toBe(left.impactHash);
   });
 
   it('hashes equivalent source snapshots identically regardless of relation order', async () => {
