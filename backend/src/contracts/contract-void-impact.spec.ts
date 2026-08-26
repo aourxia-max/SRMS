@@ -378,6 +378,48 @@ describe('contract void impact', () => {
     expect(hashContractVoidImpact(left)).toBe(hashContractVoidImpact(right));
   });
 
+  it('hashes equal when nested metadata relation arrays are reordered', () => {
+    const impact = computeContractVoidImpact(
+      inputFixture({ laterContractIds: [101, 102] }),
+    );
+    const left: ContractVoidImpact = {
+      ...impact,
+      rows: impact.rows.map((row) =>
+        row.category === 'ROOM_STATUS'
+          ? {
+              ...row,
+              metadata: {
+                ...row.metadata,
+                linkedContracts: [
+                  { id: 201, state: 'ACTIVE' },
+                  { id: 202, state: 'ENDED' },
+                ],
+              },
+            }
+          : row,
+      ),
+    };
+    const right: ContractVoidImpact = {
+      ...left,
+      rows: left.rows.map((row) =>
+        row.category === 'ROOM_STATUS'
+          ? {
+              ...row,
+              metadata: {
+                ...row.metadata,
+                laterContractIds: [102, 101],
+                linkedContracts: [
+                  { id: 202, state: 'ENDED' },
+                  { id: 201, state: 'ACTIVE' },
+                ],
+              },
+            }
+          : row,
+      ),
+    };
+
+    expect(hashContractVoidImpact(left)).toBe(hashContractVoidImpact(right));
+  });
   it('throws the category of the first unbalanced monetary row', () => {
     const impact = computeContractVoidImpact(inputFixture());
     const unbalanced: ContractVoidImpact = {
