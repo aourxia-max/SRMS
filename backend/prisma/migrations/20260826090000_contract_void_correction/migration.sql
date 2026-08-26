@@ -12,6 +12,7 @@ CREATE TABLE `contract_void_requests` (
   `active_contract_key` VARCHAR(80) NULL,
   `completed_contract_key` VARCHAR(80) NULL,
   `execution_batch_no` VARCHAR(40) NULL,
+  `submission_idempotency_key` VARCHAR(100) NOT NULL,
   `execution_idempotency_key` VARCHAR(100) NULL,
   `result_snapshot` JSON NULL,
   `submitted_by` INT UNSIGNED NOT NULL,
@@ -30,6 +31,7 @@ CREATE TABLE `contract_void_requests` (
   UNIQUE KEY `contract_void_requests_active_contract_key_key` (`active_contract_key`),
   UNIQUE KEY `contract_void_requests_completed_contract_key_key` (`completed_contract_key`),
   UNIQUE KEY `contract_void_requests_execution_batch_no_key` (`execution_batch_no`),
+  UNIQUE KEY `contract_void_requests_submission_idempotency_key_key` (`submission_idempotency_key`),
   UNIQUE KEY `contract_void_requests_execution_idempotency_key_key` (`execution_idempotency_key`),
   KEY `contract_void_requests_contract_id_status_submitted_at_idx` (`contract_id`, `status`, `submitted_at`),
   CONSTRAINT `contract_void_requests_contract_id_fkey`

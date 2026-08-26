@@ -41,6 +41,9 @@ describe('contract void correction schema', () => {
       /executionIdempotencyKey\s+String\?\s+@unique\s+@map\("execution_idempotency_key"\)\s+@db\.VarChar\(100\)/,
     );
     expect(request).toMatch(
+      /submissionIdempotencyKey\s+String\s+@unique\s+@map\("submission_idempotency_key"\)\s+@db\.VarChar\(100\)/,
+    );
+    expect(request).toMatch(
       /contract\s+Contract\s+@relation\(fields: \[contractId\], references: \[id\], onDelete: Restrict\)/,
     );
     expect(reversal).toMatch(
@@ -92,6 +95,9 @@ describe('contract void correction schema', () => {
     expect(migration).toMatch(/CREATE TABLE `contract_void_request_files`/);
     expect(migration).toMatch(
       /UNIQUE KEY `contract_void_requests_execution_idempotency_key_key` \(`execution_idempotency_key`\)/,
+    );
+    expect(migration).toMatch(
+      /UNIQUE KEY `contract_void_requests_submission_idempotency_key_key` \(`submission_idempotency_key`\)/,
     );
     expect(migration).toMatch(
       /UNIQUE KEY `contract_void_reversals_idempotency_key_key` \(`idempotency_key`\)/,

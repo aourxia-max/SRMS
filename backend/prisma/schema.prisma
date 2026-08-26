@@ -642,6 +642,7 @@ model ContractVoidRequest {
   activeContractKey       String?                   @unique @map("active_contract_key") @db.VarChar(80)
   completedContractKey    String?                   @unique @map("completed_contract_key") @db.VarChar(80)
   executionBatchNo        String?                   @unique @map("execution_batch_no") @db.VarChar(40)
+  submissionIdempotencyKey String                    @unique @map("submission_idempotency_key") @db.VarChar(100)
   executionIdempotencyKey String?                   @unique @map("execution_idempotency_key") @db.VarChar(100)
   resultSnapshot          Json?                     @map("result_snapshot")
   submittedBy             Int                       @map("submitted_by") @db.UnsignedInt
