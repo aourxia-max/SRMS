@@ -1,15 +1,21 @@
 import {
+  ArgumentsHost,
   Body,
+  Catch,
   Controller,
+  ExceptionFilter,
   Get,
+  HttpException,
   Param,
-  ParseIntPipe,
+  PipeTransform,
   Post,
   Query,
   UploadedFile,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
@@ -29,8 +35,50 @@ import {
 
 const contractVoidUploadBufferLimit = 100 * 1024 * 1024;
 
+class ContractVoidPositiveIntPipe implements PipeTransform<string, number> {
+  transform(value: string) {
+    if (!/^[1-9]\d*$/.test(value))
+      throw new HttpException('编号必须为正整数', 400);
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed))
+      throw new HttpException('编号必须为正整数', 400);
+    return parsed;
+  }
+}
+
+const positiveIntPipe = new ContractVoidPositiveIntPipe();
+
+@Catch(HttpException)
+class ContractVoidHttpExceptionFilter implements ExceptionFilter {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const status = exception.getStatus();
+    const response = exception.getResponse();
+    const rawMessage =
+      typeof response === 'string'
+        ? response
+        : (response as { message?: string | string[] }).message;
+    const messages = Array.isArray(rawMessage)
+      ? rawMessage
+      : [rawMessage ?? exception.message];
+    const message = messages.map((item) => this.toChinese(item)).join('；');
+    const httpResponse = host.switchToHttp().getResponse<Response>();
+    httpResponse.status(status).json({
+      code: status,
+      message,
+      data: null,
+    });
+  }
+
+  private toChinese(message: string) {
+    const unknownProperty = /^property (.+) should not exist$/.exec(message);
+    if (unknownProperty) return `不允许提交字段：${unknownProperty[1]}`;
+    return /[\u4e00-\u9fff]/.test(message) ? message : '请求参数无效';
+  }
+}
+
 @Controller('contracts')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@UseFilters(ContractVoidHttpExceptionFilter)
 export class ContractVoidController {
   constructor(
     private readonly requests: ContractVoidRequestsService,
@@ -54,7 +102,7 @@ export class ContractVoidController {
   @Get('void-requests/:id')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async detail(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id', positiveIntPipe) id: number,
     @CurrentUser() user: AuthUser,
   ) {
     return {
@@ -67,7 +115,7 @@ export class ContractVoidController {
   @Get(':id/void-preview')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async preview(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id', positiveIntPipe) id: number,
     @CurrentUser() user: AuthUser,
   ) {
     return {
@@ -93,7 +141,7 @@ export class ContractVoidController {
   @Post('void-requests/:id/cancel')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async cancel(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id', positiveIntPipe) id: number,
     @CurrentUser() user: AuthUser,
   ) {
     return {
@@ -106,7 +154,7 @@ export class ContractVoidController {
   @Post('void-requests/:id/reject')
   @Roles(UserRole.SUPER_ADMIN)
   async reject(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id', positiveIntPipe) id: number,
     @Body() dto: RejectContractVoidRequestDto,
     @CurrentUser() user: AuthUser,
   ) {

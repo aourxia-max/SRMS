@@ -33,7 +33,11 @@ const requestInclude = {
       room: true,
       members: {
         where: { memberRole: 'PRIMARY' as const, isCurrent: true },
-        include: { tenant: true },
+        include: {
+          tenant: {
+            select: { id: true, name: true, phone: true },
+          },
+        },
       },
     },
   },
@@ -113,18 +117,24 @@ export class ContractVoidRequestsService {
     try {
       return await this.prisma.db.$transaction(async (tx) => {
         if (fileAssetIds.length) {
+          const claimWhere = {
+            id: { in: fileAssetIds },
+            category: 'CONTRACT_VOID_PROOF' as const,
+            uploadedBy: user.id,
+            lockedAt: null,
+          };
           const files = await tx.fileAsset.findMany({
-            where: {
-              id: { in: fileAssetIds },
-              category: 'CONTRACT_VOID_PROOF',
-              ...(user.role === UserRole.SUPER_ADMIN
-                ? {}
-                : { uploadedBy: user.id }),
-            },
+            where: claimWhere,
             select: { id: true },
           });
           if (files.length !== fileAssetIds.length)
-            throw new BadRequestException('证明附件不存在或无权使用');
+            throw new BadRequestException('证明附件不存在、已被使用或无权使用');
+          const claimed = await tx.fileAsset.updateMany({
+            where: claimWhere,
+            data: { lockedAt: new Date() },
+          });
+          if (claimed.count !== fileAssetIds.length)
+            throw new ConflictException('证明附件已被使用，请重新上传');
         }
 
         const request = await tx.contractVoidRequest.create({
@@ -167,9 +177,17 @@ export class ContractVoidRequestsService {
       });
     } catch (error) {
       if ((error as { code?: unknown })?.code !== 'P2002') throw error;
-      const retry = await this.findBySubmissionKey(dto.idempotencyKey);
-      if (retry) return this.resolveIdempotentRetry(retry, dto);
-      throw new ConflictException('该合同已有待确认的作废申请');
+      const target = this.uniqueTarget(error);
+      if (target.includes('submissionidempotencykey')) {
+        const retry = await this.findBySubmissionKey(dto.idempotencyKey);
+        if (retry) return this.resolveIdempotentRetry(retry, dto);
+        throw new ConflictException('提交幂等键冲突，请重试');
+      }
+      if (target.includes('activecontractkey'))
+        throw new ConflictException('该合同已有待确认的作废申请');
+      if (target.includes('requestno'))
+        throw new ConflictException('作废申请编号冲突，请重试');
+      throw new ConflictException('合同作废申请唯一键冲突，请重试');
     }
   }
 
@@ -185,8 +203,8 @@ export class ContractVoidRequestsService {
       if (user.role !== UserRole.SUPER_ADMIN && request.submittedBy !== user.id)
         throw new ForbiddenException('只能取消本人提交的作废申请');
       const cancelledAt = new Date();
-      const result = await tx.contractVoidRequest.update({
-        where: { id },
+      const changed = await tx.contractVoidRequest.updateMany({
+        where: { id, status: 'PENDING' },
         data: {
           status: 'CANCELLED',
           activeContractKey: null,
@@ -194,6 +212,8 @@ export class ContractVoidRequestsService {
           cancelledAt,
         },
       });
+      if (changed.count !== 1)
+        throw new ConflictException('申请状态已变化，请刷新后重试');
       await tx.operationLog.create({
         data: {
           module: 'CONTRACT',
@@ -208,7 +228,13 @@ export class ContractVoidRequestsService {
           operatorRole: user.role,
         },
       });
-      return result;
+      return {
+        ...request,
+        status: 'CANCELLED' as const,
+        activeContractKey: null,
+        cancelledBy: user.id,
+        cancelledAt,
+      };
     });
   }
 
@@ -224,8 +250,8 @@ export class ContractVoidRequestsService {
       if (request.status !== 'PENDING')
         throw new BadRequestException('只有待确认的作废申请可以驳回');
       const rejectedAt = new Date();
-      const result = await tx.contractVoidRequest.update({
-        where: { id },
+      const changed = await tx.contractVoidRequest.updateMany({
+        where: { id, status: 'PENDING' },
         data: {
           status: 'REJECTED',
           activeContractKey: null,
@@ -234,6 +260,8 @@ export class ContractVoidRequestsService {
           rejectedReason: reason,
         },
       });
+      if (changed.count !== 1)
+        throw new ConflictException('申请状态已变化，请刷新后重试');
       await tx.operationLog.create({
         data: {
           module: 'CONTRACT',
@@ -249,7 +277,14 @@ export class ContractVoidRequestsService {
           operatorRole: user.role,
         },
       });
-      return result;
+      return {
+        ...request,
+        status: 'REJECTED' as const,
+        activeContractKey: null,
+        rejectedBy: user.id,
+        rejectedAt,
+        rejectedReason: reason,
+      };
     });
   }
 
@@ -289,6 +324,16 @@ export class ContractVoidRequestsService {
     if (!samePayload)
       throw new ConflictException('幂等键已用于其他合同作废申请');
     return existing;
+  }
+
+  private uniqueTarget(error: unknown) {
+    const value = (error as { meta?: { target?: unknown } })?.meta?.target;
+    const targets = Array.isArray(value) ? value : [value];
+    return targets
+      .filter((item): item is string => typeof item === 'string')
+      .join(',')
+      .replaceAll('_', '')
+      .toLowerCase();
   }
 
   private buildRequestNo() {

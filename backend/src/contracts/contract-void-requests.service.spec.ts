@@ -39,15 +39,21 @@ describe('contract void DTO validation', () => {
       idempotencyKey: '',
     });
 
-    expect(
-      (await validate(submit)).map((item) => item.property).sort(),
-    ).toEqual([
+    const errors = await validate(submit);
+    expect(errors.map((item) => item.property).sort()).toEqual([
       'contractId',
       'fileAssetIds',
       'idempotencyKey',
       'impactHash',
       'reason',
     ]);
+    const messages = errors.flatMap((item) =>
+      Object.values(item.constraints ?? {}),
+    );
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages.every((message) => /[\u4e00-\u9fff]/.test(message))).toBe(
+      true,
+    );
   });
 
   it('accepts unique positive proof ids and exact boundaries', async () => {
@@ -83,10 +89,11 @@ describe('ContractVoidRequestsService', () => {
             ),
           }),
         ),
-        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       fileAsset: {
         findMany: jest.fn().mockResolvedValue([{ id: 31 }, { id: 32 }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       },
       operationLog: { create: jest.fn().mockResolvedValue({}) },
       ...overrides,
@@ -119,8 +126,24 @@ describe('ContractVoidRequestsService', () => {
   it('returns JSON-safe attachment metadata from request detail', async () => {
     const findUnique = jest.fn().mockImplementation(({ include }) => {
       const fileAsset = include.files.include.fileAsset;
+      const tenant = include.contract.include.members.include.tenant;
       return Promise.resolve({
         id: 9,
+        contract: {
+          members: [
+            {
+              tenant:
+                tenant === true
+                  ? {
+                      id: 5,
+                      name: '张三',
+                      idNoCiphertext: 'secret',
+                      idNoHash: 'hash',
+                    }
+                  : { id: 5, name: '张三', phone: '13800000000' },
+            },
+          ],
+        },
         files: [
           {
             fileAssetId: 61,
@@ -148,6 +171,14 @@ describe('ContractVoidRequestsService', () => {
 
     const result = await service.detail(9, admin);
     expect(() => JSON.stringify(result)).not.toThrow();
+    expect(
+      findUnique.mock.calls[0][0].include.contract.include.members.include
+        .tenant,
+    ).toEqual({
+      select: { id: true, name: true, phone: true },
+    });
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(JSON.stringify(result)).not.toContain('idNoHash');
   });
 
   it('stores the latest preview and links staged proof assets', async () => {
@@ -170,6 +201,24 @@ describe('ContractVoidRequestsService', () => {
         },
       }),
       include: expect.objectContaining({ files: expect.anything() }),
+    });
+    expect(tx.fileAsset.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: [31, 32] },
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: admin.id,
+        lockedAt: null,
+      },
+      select: { id: true },
+    });
+    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: [31, 32] },
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: admin.id,
+        lockedAt: null,
+      },
+      data: { lockedAt: expect.any(Date) },
     });
     expect(tx.operationLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -205,6 +254,7 @@ describe('ContractVoidRequestsService', () => {
       expect.objectContaining({ id: 9 }),
     );
     expect(preview.preview).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   it('rejects an idempotency key reused for a different payload', async () => {
@@ -225,7 +275,10 @@ describe('ContractVoidRequestsService', () => {
 
   it('converts a pending-contract unique collision to a Chinese conflict', async () => {
     const { service, tx } = transactionService();
-    tx.contractVoidRequest.create.mockRejectedValue({ code: 'P2002' });
+    tx.contractVoidRequest.create.mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['activeContractKey'] },
+    });
 
     await expect(service.submit(dto, admin)).rejects.toEqual(
       expect.objectContaining({
@@ -233,6 +286,74 @@ describe('ContractVoidRequestsService', () => {
           '\u8be5\u5408\u540c\u5df2\u6709\u5f85\u786e\u8ba4\u7684\u4f5c\u5e9f\u7533\u8bf7',
       }),
     );
+  });
+
+  it('routes a submission-key collision through idempotent retry logic', async () => {
+    const { service, tx } = transactionService();
+    tx.contractVoidRequest.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 9,
+        contractId: dto.contractId,
+        reason: dto.reason,
+        impactHash: dto.impactHash,
+        files: [{ fileAssetId: 31 }, { fileAssetId: 32 }],
+      });
+    tx.contractVoidRequest.create.mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['submissionIdempotencyKey'] },
+    });
+
+    await expect(service.submit(dto, admin)).resolves.toEqual(
+      expect.objectContaining({ id: 9 }),
+    );
+  });
+
+  it('reports a request-number collision distinctly', async () => {
+    const { service, tx } = transactionService();
+    tx.contractVoidRequest.create.mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['requestNo'] },
+    });
+
+    await expect(service.submit(dto, admin)).rejects.toEqual(
+      expect.objectContaining({ message: '作废申请编号冲突，请重试' }),
+    );
+  });
+
+  it.each([
+    ['foreign', superAdmin],
+    ['locked', admin],
+  ])(
+    'rejects a %s staged proof before request creation',
+    async (_case, submittingUser) => {
+      const { service, tx } = transactionService();
+      tx.fileAsset.findMany.mockResolvedValue([]);
+
+      await expect(service.submit(dto, submittingUser)).rejects.toThrow(
+        '证明附件不存在、已被使用或无权使用',
+      );
+      expect(tx.fileAsset.findMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: [31, 32] },
+          category: 'CONTRACT_VOID_PROOF',
+          uploadedBy: submittingUser.id,
+          lockedAt: null,
+        },
+        select: { id: true },
+      });
+      expect(tx.contractVoidRequest.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects proof reuse lost during the transactional claim', async () => {
+    const { service, tx } = transactionService();
+    tx.fileAsset.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.submit(dto, admin)).rejects.toThrow(
+      '证明附件已被使用，请重新上传',
+    );
+    expect(tx.contractVoidRequest.create).not.toHaveBeenCalled();
   });
 
   it('enforces submit permissions in the service layer', async () => {
@@ -251,20 +372,18 @@ describe('ContractVoidRequestsService', () => {
       status: 'PENDING',
       submittedBy: admin.id,
     };
-    const update = jest
-      .fn()
-      .mockResolvedValue({ ...request, status: 'CANCELLED' });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const { service, tx } = transactionService({
       contractVoidRequest: {
         findUnique: jest.fn().mockResolvedValue(request),
-        update,
+        updateMany,
       },
     });
 
     await service.cancel(9, admin);
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 9 },
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 9, status: 'PENDING' },
       data: expect.objectContaining({
         status: 'CANCELLED',
         activeContractKey: null,
@@ -292,7 +411,7 @@ describe('ContractVoidRequestsService', () => {
   });
 
   it('rejects cancellation of another submitter pending request', async () => {
-    const update = jest.fn();
+    const updateMany = jest.fn();
     const { service } = transactionService({
       contractVoidRequest: {
         findUnique: jest.fn().mockResolvedValue({
@@ -300,14 +419,33 @@ describe('ContractVoidRequestsService', () => {
           status: 'PENDING',
           submittedBy: 99,
         }),
-        update,
+        updateMany,
       },
     });
 
     await expect(service.cancel(9, admin)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
-    expect(update).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not log when cancellation loses the pending-state race', async () => {
+    const { service, tx } = transactionService({
+      contractVoidRequest: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 9,
+          requestNo: 'HTZF20260826000009',
+          status: 'PENDING',
+          submittedBy: admin.id,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    });
+
+    await expect(service.cancel(9, admin)).rejects.toThrow(
+      '申请状态已变化，请刷新后重试',
+    );
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
   });
 
   it('only lets a super admin reject pending and logs the transition', async () => {
@@ -317,13 +455,11 @@ describe('ContractVoidRequestsService', () => {
       status: 'PENDING',
       submittedBy: admin.id,
     };
-    const update = jest
-      .fn()
-      .mockResolvedValue({ ...request, status: 'REJECTED' });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const { service, tx } = transactionService({
       contractVoidRequest: {
         findUnique: jest.fn().mockResolvedValue(request),
-        update,
+        updateMany,
       },
     });
 
@@ -332,8 +468,8 @@ describe('ContractVoidRequestsService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
     await service.reject(9, 'invalid proof', superAdmin);
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 9 },
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 9, status: 'PENDING' },
       data: expect.objectContaining({
         status: 'REJECTED',
         activeContractKey: null,
@@ -342,5 +478,24 @@ describe('ContractVoidRequestsService', () => {
       }),
     });
     expect(tx.operationLog.create).toHaveBeenCalled();
+  });
+
+  it('does not log when rejection loses the pending-state race', async () => {
+    const { service, tx } = transactionService({
+      contractVoidRequest: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 9,
+          requestNo: 'HTZF20260826000009',
+          status: 'PENDING',
+          submittedBy: admin.id,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    });
+
+    await expect(service.reject(9, '资料不符', superAdmin)).rejects.toThrow(
+      '申请状态已变化，请刷新后重试',
+    );
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
   });
 });

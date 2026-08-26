@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { UserRole } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { basename, extname, resolve } from 'path';
@@ -190,6 +192,8 @@ export class FilesService {
   }
 
   async saveContractVoidProof(file: UploadedFile, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('当前角色不能上传合同作废证明');
     if (!file || !file.buffer)
       throw new BadRequestException('请上传合同作废证明');
     const limit = await this.configLimit();

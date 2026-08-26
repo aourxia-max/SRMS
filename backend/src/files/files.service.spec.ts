@@ -1,5 +1,9 @@
 import { readFile, writeFile } from 'fs/promises';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { FilesService } from './files.service';
 
@@ -611,5 +615,18 @@ describe('FilesService contract void proofs', () => {
         sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
       }),
     });
+  });
+
+  it('rejects visitor uploads in the service layer before file handling', async () => {
+    const service = new FilesService({ db: {} } as never, {} as never);
+
+    await expect(
+      service.saveContractVoidProof(undefined as never, {
+        id: 3,
+        username: 'visitor',
+        displayName: '访客',
+        role: UserRole.VISITOR,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
