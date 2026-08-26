@@ -1,6 +1,32 @@
 import { Prisma, UserRole } from '@prisma/client';
 import { VoidRequestsService } from './void-requests.service';
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('VoidRequestsService adjustment reversal', () => {
   it('keeps the original discount and appends an approved reversal', async () => {
     const bill = {
@@ -144,6 +170,89 @@ describe('VoidRequestsService adjustment reversal', () => {
       where: { contractId: 7, billCategory: 'RENT' },
       orderBy: { periodSeq: 'asc' },
     });
+    expectContractMutationOrder(
+      'paymentVoid.approve',
+      tx.$queryRaw,
+      tx.paymentVoidRequest.findUniqueOrThrow,
+      tx.billAdjustment.create,
+    );
+  });
+
+  it('orders payment void submit as contract lock, payment reload, then request write', async () => {
+    const firstWrite = jest.fn().mockResolvedValue({ id: 301 });
+    const reload = jest.fn().mockResolvedValue({
+      id: 81,
+      contractId: 7,
+      paymentCategory: 'RENT',
+      status: 'CONFIRMED',
+      contract: { status: 'ACTIVE' },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: { findUniqueOrThrow: reload },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentVoidRequest: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: firstWrite,
+      },
+    };
+    const service = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+    const user = {
+      id: 1,
+      username: 'admin',
+      displayName: '超级管理员',
+      role: UserRole.SUPER_ADMIN,
+    };
+
+    await service.submit({ paymentId: 81, reason: '录入错误' }, user);
+
+    expectContractMutationOrder(
+      'paymentVoid.submit',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders payment void reject as contract lock, request reload, then reject write', async () => {
+    const firstWrite = jest.fn().mockResolvedValue({ id: 301 });
+    const reload = jest.fn().mockResolvedValue({
+      id: 301,
+      approvalStatus: 'PENDING',
+      payment: { contract: { status: 'ACTIVE' } },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 301 }]),
+      paymentVoidRequest: { findUniqueOrThrow: reload, update: firstWrite },
+    };
+    const service = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+    const user = {
+      id: 1,
+      username: 'admin',
+      displayName: '超级管理员',
+      role: UserRole.SUPER_ADMIN,
+    };
+
+    await service.reject(301, '信息有误', user);
+
+    expectContractMutationOrder(
+      'paymentVoid.reject',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
   });
 
   it('enforces super admin approval in the service layer', async () => {

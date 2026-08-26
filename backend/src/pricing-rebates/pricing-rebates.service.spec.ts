@@ -2,6 +2,32 @@ import { BadRequestException, GoneException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PricingRebatesService } from './pricing-rebates.service';
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 const admin = {
   id: 7,
   role: UserRole.ADMIN,
@@ -109,10 +135,92 @@ describe('PricingRebatesService', () => {
   });
 
   it('continues to submit a fixed-rent manual rebate', async () => {
-    await expect(
-      serviceWithContract('FIXED').submit(fixedManualDto, admin),
-    ).resolves.toEqual(
+    const submit = rebateFixture('FIXED');
+    await expect(submit.service.submit(fixedManualDto, admin)).resolves.toEqual(
       expect.objectContaining({ sourceType: 'FIXED_RENT_MANUAL' }),
+    );
+    expectContractMutationOrder(
+      'pricingRebate.submit',
+      submit.tx.$queryRaw,
+      submit.tx.contract.findUniqueOrThrow,
+      submit.tx.pricingRebate.create,
+    );
+  });
+
+  it('orders rebate approve as contract lock, rebate reload, then prepayment write', async () => {
+    const firstWriteError = new Error('pricing rebate approve write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 21,
+      contractId: 1,
+      rebateNo: 'TC21',
+      approvalStatus: 'PENDING',
+      settlementMethod: 'PREPAYMENT_CREDIT',
+      actualAmount: '100.00',
+      files: [],
+      contract: { status: 'ACTIVE' },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      pricingRebate: {
+        findUniqueOrThrow: reload,
+        update: jest.fn(),
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: firstWrite,
+      },
+    };
+    const service = new PricingRebatesService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.approve(21, admin)).rejects.toBe(firstWriteError);
+
+    expectContractMutationOrder(
+      'pricingRebate.approve',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders rebate reject as contract lock, rebate reload, then rejection write', async () => {
+    const firstWriteError = new Error('pricing rebate reject write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 21,
+      approvalStatus: 'PENDING',
+      contract: { status: 'ACTIVE' },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      pricingRebate: {
+        findUniqueOrThrow: reload,
+        update: firstWrite,
+      },
+    };
+    const service = new PricingRebatesService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.reject(21, '信息有误', admin)).rejects.toBe(
+      firstWriteError,
+    );
+
+    expectContractMutationOrder(
+      'pricingRebate.reject',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
     );
   });
 

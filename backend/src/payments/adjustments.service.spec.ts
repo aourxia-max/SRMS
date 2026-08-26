@@ -18,6 +18,32 @@ function transactional<T extends object>(tx: T) {
   };
 }
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('AdjustmentsService checkout supplemental protection', () => {
   const user = {
     id: 1,
@@ -25,6 +51,139 @@ describe('AdjustmentsService checkout supplemental protection', () => {
     displayName: '超级管理员',
     role: UserRole.SUPER_ADMIN,
   };
+
+  const activeBill = {
+    id: 11,
+    contractId: 7,
+    status: 'PENDING',
+    billCategory: 'RENT',
+    baseRentAmount: '100.00',
+    rentFreeAmount: '0.00',
+    discountAmount: '0.00',
+    adjustmentAmount: '0.00',
+    payableAmount: '100.00',
+    receivedAmount: '0.00',
+    outstandingAmount: '100.00',
+    periodEnd: new Date('2026-08-31'),
+    dueDate: new Date('2026-08-01'),
+    contract: { status: 'ACTIVE' },
+  };
+
+  it('orders adjustment submit as contract lock, bill reload, then adjustment write', async () => {
+    const firstWriteError = new Error('adjustment submit write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue(activeBill);
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      rentBill: { findUniqueOrThrow: reload },
+      checkoutSettlementItem: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      billAdjustment: { create: firstWrite },
+    };
+    const service = new AdjustmentsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          rentBillId: 11,
+          adjustmentType: 'DISCOUNT',
+          direction: 'DECREASE',
+          amount: '10.00',
+          reason: '测试调整',
+        } as never,
+        user,
+      ),
+    ).rejects.toBe(firstWriteError);
+
+    expectContractMutationOrder(
+      'adjustment.submit',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders adjustment approve as contract lock, adjustment reload, then bill write', async () => {
+    const firstWriteError = new Error('adjustment approve write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 501,
+      approvalStatus: 'PENDING',
+      rentBillId: 11,
+      direction: 'DECREASE',
+      amount: new Prisma.Decimal('10.00'),
+      rentBill: activeBill,
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      billAdjustment: {
+        findUniqueOrThrow: reload,
+        update: jest.fn(),
+      },
+      checkoutSettlementItem: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      rentBill: { update: firstWrite },
+    };
+    const service = new AdjustmentsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.approve(501, user)).rejects.toBe(firstWriteError);
+
+    expectContractMutationOrder(
+      'adjustment.approve',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders adjustment reject as contract lock, adjustment reload, then rejection write', async () => {
+    const firstWriteError = new Error('adjustment reject write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 501,
+      approvalStatus: 'PENDING',
+      rentBill: { contract: { status: 'ACTIVE' } },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      billAdjustment: {
+        findUniqueOrThrow: reload,
+        update: firstWrite,
+      },
+    };
+    const service = new AdjustmentsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.reject(501, '信息有误', user)).rejects.toBe(
+      firstWriteError,
+    );
+
+    expectContractMutationOrder(
+      'adjustment.reject',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
 
   it('rejects submitting an adjustment for a checkout supplemental bill', async () => {
     const create = jest.fn();

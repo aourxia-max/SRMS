@@ -1,6 +1,32 @@
 import { Prisma, UserRole } from '@prisma/client';
 import { CommissionsService } from './commissions.service';
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('CommissionsService', () => {
   const user = {
     id: 7,
@@ -78,6 +104,101 @@ describe('CommissionsService', () => {
       }),
     });
     expect(result).toEqual(restored);
+    expectContractMutationOrder(
+      'commission.create',
+      tx.$queryRaw,
+      tx.contract.findUniqueOrThrow,
+      update,
+    );
+  });
+
+  it('orders commission update as contract lock, status reload, then update', async () => {
+    const firstWrite = jest.fn().mockResolvedValue({
+      id: 31,
+      contractId: 8,
+      recipientName: '招商主管',
+      amount: new Prisma.Decimal('900.00'),
+    });
+    const reload = jest
+      .fn()
+      .mockResolvedValueOnce({ contractId: 8 })
+      .mockResolvedValueOnce({
+        id: 31,
+        contractId: 8,
+        recipientName: '招商主管',
+        amount: new Prisma.Decimal('800.00'),
+        contract: { status: 'ACTIVE' },
+      });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 8 }]),
+      contractCommission: {
+        findFirstOrThrow: reload,
+        update: firstWrite,
+      },
+      securityAuditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new CommissionsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.update(
+      31,
+      { recipientName: '招商主管', amount: '900.00' },
+      user,
+    );
+
+    expectContractMutationOrder(
+      'commission.update',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders commission delete as contract lock, status reload, then soft-delete update', async () => {
+    const firstWrite = jest.fn().mockResolvedValue({
+      id: 31,
+      contractId: 8,
+      deletedAt: new Date(),
+    });
+    const reload = jest
+      .fn()
+      .mockResolvedValueOnce({ contractId: 8 })
+      .mockResolvedValueOnce({
+        id: 31,
+        contractId: 8,
+        recipientName: '招商主管',
+        amount: new Prisma.Decimal('800.00'),
+        contract: { status: 'ACTIVE' },
+      });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 8 }]),
+      contractCommission: {
+        findFirstOrThrow: reload,
+        update: firstWrite,
+      },
+      securityAuditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new CommissionsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.remove(31, user);
+
+    expectContractMutationOrder(
+      'commission.remove',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
   });
 
   it('rejects commission create, update, and delete for a voided contract', async () => {

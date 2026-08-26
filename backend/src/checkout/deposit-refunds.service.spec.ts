@@ -18,6 +18,36 @@ function transactional<T extends object>(tx: T) {
   };
 }
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+  reloadCallIndex = -1,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder =
+    reloadCallIndex === -1
+      ? reload.mock.invocationCallOrder.at(-1)
+      : reload.mock.invocationCallOrder[reloadCallIndex];
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('DepositRefundsService', () => {
   it('serializes refund proof file sizes for JSON responses', async () => {
     const service = new DepositRefundsService({
@@ -54,14 +84,15 @@ describe('DepositRefundsService', () => {
       contract: { status: 'PENDING_CHECKOUT' },
     };
     const create = jest.fn().mockResolvedValue({ id: 9 });
+    const harness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
+      },
+      fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
+      depositRefund: { create },
+    });
     const service = new DepositRefundsService({
-      db: transactional({
-        checkoutSettlement: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
-        },
-        fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
-        depositRefund: { create },
-      }).db,
+      db: harness.db,
     } as never);
     const dto = {
       checkoutSettlementId: 1,
@@ -81,6 +112,13 @@ describe('DepositRefundsService', () => {
       ),
     ).rejects.toThrow('退款金额必须等于结算单锁定的合计应退金额');
     expect(create).toHaveBeenCalledTimes(1);
+    expectContractMutationOrder(
+      'depositRefund.submit',
+      harness.client.$queryRaw,
+      harness.client.checkoutSettlement.findUniqueOrThrow,
+      create,
+      0,
+    );
   });
 
   it('allows refund registration after a required supplemental receivable is fully collected', async () => {
@@ -185,9 +223,6 @@ describe('DepositRefundsService', () => {
       depositTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('800');
     expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
-    expect(tx.$queryRaw.mock.invocationCallOrder[3]).toBeLessThan(
-      tx.depositRefund.findUniqueOrThrow.mock.invocationCallOrder[0],
-    );
     expect(prepaymentTransactionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ transactionType: 'REFUND' }),
@@ -196,6 +231,12 @@ describe('DepositRefundsService', () => {
     expect(
       prepaymentTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('500');
+    expectContractMutationOrder(
+      'depositRefund.approve',
+      tx.$queryRaw,
+      tx.depositRefund.findUniqueOrThrow,
+      tx.depositRefund.updateMany,
+    );
   });
 
   it('rejects duplicate refund approval before creating any ledger transaction', async () => {

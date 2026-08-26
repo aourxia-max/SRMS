@@ -7,6 +7,32 @@ import { UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { ContractsService } from './contracts.service';
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('ContractsService', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2025-12-01T00:00:00.000Z'));
@@ -191,6 +217,141 @@ describe('ContractsService', () => {
       ),
     ).rejects.toThrow();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('orders contract change submit as contract lock, reload, then change write', async () => {
+    const firstWriteError = new Error('contract change submit write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 1,
+      status: 'ACTIVE',
+      startDate: new Date('2026-01-01'),
+      endDate: new Date('2026-03-31'),
+      pricingMode: 'FIXED',
+      members: [],
+      concessions: [],
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      contract: { findUniqueOrThrow: reload },
+      contractChange: { create: firstWrite },
+    };
+    const service = new ContractsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submitChange(
+        1,
+        {
+          changeType: 'RENT',
+          effectiveDate: '2026-02-01',
+          afterSnapshot: { monthlyRent: '3500' },
+          reason: '调整月租',
+        },
+        admin,
+      ),
+    ).rejects.toBe(firstWriteError);
+
+    expectContractMutationOrder(
+      'contractChange.submit',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders contract change approve as contract lock, reload, then contract write', async () => {
+    const firstWriteError = new Error('contract change approve write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 9,
+      contractId: 1,
+      changeType: 'RENT',
+      effectiveDate: new Date('2026-02-01'),
+      afterSnapshot: { monthlyRent: '3500' },
+      reason: '调整月租',
+      approvalStatus: 'PENDING',
+      contract: {
+        id: 1,
+        status: 'ACTIVE',
+        contractNo: 'HT-1',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-03-31'),
+        pricingMode: 'FIXED',
+        monthlyRent: '3000',
+        members: [],
+        concessions: [],
+        pricingTiers: [],
+        bills: [],
+      },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      contractChange: {
+        findUniqueOrThrow: reload,
+        update: jest.fn(),
+      },
+      contract: { update: firstWrite },
+    };
+    const service = new ContractsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.approveChange(9, superAdmin)).rejects.toBe(
+      firstWriteError,
+    );
+
+    expectContractMutationOrder(
+      'contractChange.approve',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders contract change reject as contract lock, reload, then rejection write', async () => {
+    const firstWriteError = new Error('contract change reject write reached');
+    const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
+    const reload = jest.fn().mockResolvedValue({
+      id: 9,
+      contractId: 1,
+      approvalStatus: 'PENDING',
+      contract: { status: 'ACTIVE' },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      contractChange: {
+        findUniqueOrThrow: reload,
+        update: firstWrite,
+      },
+    };
+    const service = new ContractsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(service.rejectChange(9, '信息有误', superAdmin)).rejects.toBe(
+      firstWriteError,
+    );
+
+    expectContractMutationOrder(
+      'contractChange.reject',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
   });
 
   it('does not approve a change when a later bill already has a receipt', async () => {

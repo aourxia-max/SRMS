@@ -1,6 +1,32 @@
 import { Prisma, RefundAdjustmentDecision, UserRole } from '@prisma/client';
 import { RefundsService } from './refunds.service';
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('RefundsService adjustment decisions', () => {
   const user = {
     id: 1,
@@ -153,6 +179,91 @@ describe('RefundsService adjustment decisions', () => {
         outstandingAmount: expect.anything(),
       }),
     });
+    expectContractMutationOrder(
+      'refund.approve',
+      tx.$queryRaw,
+      tx.paymentRefund.findUniqueOrThrow,
+      tx.billAdjustment.create,
+    );
+  });
+
+  it('orders refund submit as contract lock, payment reload, then refund write', async () => {
+    const firstWrite = jest.fn().mockResolvedValue({ id: 201 });
+    const reload = jest.fn().mockResolvedValue({
+      id: 81,
+      contractId: 7,
+      paymentCategory: 'RENT',
+      status: 'CONFIRMED',
+      contract: { status: 'ACTIVE' },
+      allocations: [
+        {
+          id: 101,
+          allocatedAmount: new Prisma.Decimal('100.00'),
+          reversedAmount: new Prisma.Decimal('0.00'),
+        },
+      ],
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: { findUniqueOrThrow: reload },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentRefund: { create: firstWrite },
+    };
+    const service = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.submit(
+      {
+        paymentId: 81,
+        refundAmount: '100.00',
+        refundDate: '2026-08-22',
+        refundMethod: 'BANK_TRANSFER',
+        reason: '测试退款',
+        allocations: [{ paymentAllocationId: 101, amount: '100.00' }],
+      } as never,
+      user,
+    );
+
+    expectContractMutationOrder(
+      'refund.submit',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
+  });
+
+  it('orders refund reject as contract lock, refund reload, then reject write', async () => {
+    const firstWrite = jest.fn().mockResolvedValue({ id: 201 });
+    const reload = jest.fn().mockResolvedValue({
+      id: 201,
+      approvalStatus: 'PENDING',
+      contract: { status: 'ACTIVE' },
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 201 }]),
+      paymentRefund: { findUniqueOrThrow: reload, update: firstWrite },
+    };
+    const service = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.reject(201, '信息有误', user);
+
+    expectContractMutationOrder(
+      'refund.reject',
+      tx.$queryRaw,
+      reload,
+      firstWrite,
+    );
   });
 
   it('requires a reason to keep an affected discount', async () => {

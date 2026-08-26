@@ -1,6 +1,36 @@
 import { BillAdjustmentType, PaymentMethod, UserRole } from '@prisma/client';
 import { PaymentsService } from './payments.service';
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+  reloadCallIndex = -1,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder =
+    reloadCallIndex === -1
+      ? reload.mock.invocationCallOrder.at(-1)
+      : reload.mock.invocationCallOrder[reloadCallIndex];
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('PaymentsService.record', () => {
   const user = {
     id: 3,
@@ -173,12 +203,13 @@ describe('PaymentsService.record', () => {
         },
       }),
     );
-    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    expectContractMutationOrder(
+      'payment.record',
+      tx.$queryRaw,
+      tx.contract.findUniqueOrThrow,
+      tx.payment.create,
+      0,
     );
-    expect(
-      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
-    ).toBeLessThan(tx.payment.create.mock.invocationCallOrder[0]);
   });
 
   it('audits a super administrator manual allocation with its reason', async () => {
@@ -329,12 +360,12 @@ describe('PaymentsService.record', () => {
         }),
       }),
     );
-    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[1],
+    expectContractMutationOrder(
+      'payment.recordCheckoutSupplemental',
+      tx.$queryRaw,
+      tx.checkoutSettlement.findUniqueOrThrow,
+      tx.payment.create,
     );
-    expect(
-      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[1],
-    ).toBeLessThan(tx.payment.create.mock.invocationCallOrder[0]);
   });
   it('rejects a checkout proof claimed concurrently before binding it to the payment', async () => {
     const { tx, service } = fixture();
@@ -964,12 +995,12 @@ describe('PaymentsService.edit', () => {
         }),
       }),
     );
-    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[1],
+    expectContractMutationOrder(
+      'payment.edit',
+      tx.$queryRaw,
+      tx.payment.findUniqueOrThrow,
+      tx.paymentAllocation.update,
     );
-    expect(
-      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[1],
-    ).toBeLessThan(tx.paymentAllocation.update.mock.invocationCallOrder[0]);
     expect(tx.securityAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         eventType: 'PAYMENT_CORRECTED',

@@ -19,6 +19,32 @@ function transactional<T extends object>(tx: T) {
   };
 }
 
+function expectContractMutationOrder(
+  entry: string,
+  contractLock: jest.Mock,
+  reload: jest.Mock,
+  firstWrite: jest.Mock,
+) {
+  const sql = contractLock.mock.calls[0]?.[0] as
+    { strings?: readonly string[] } | undefined;
+  const statement = sql?.strings?.join('?') ?? '';
+  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const writeOrder = firstWrite.mock.invocationCallOrder[0];
+  expect({
+    entry,
+    locksContractForUpdate:
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+    lockBeforeReload: lockOrder < reloadOrder!,
+    reloadBeforeFirstWrite: reloadOrder! < writeOrder,
+  }).toEqual({
+    entry,
+    locksContractForUpdate: true,
+    lockBeforeReload: true,
+    reloadBeforeFirstWrite: true,
+  });
+}
+
 describe('CheckoutService', () => {
   const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
@@ -91,12 +117,12 @@ describe('CheckoutService', () => {
         toStatus: 'PENDING_CHECKOUT',
       }),
     });
-    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+    expectContractMutationOrder(
+      'checkout.initiate',
+      tx.$queryRaw,
+      tx.contract.findUniqueOrThrow,
+      settlementCreate,
     );
-    expect(
-      tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
-    ).toBeLessThan(settlementCreate.mock.invocationCallOrder[0]);
   });
 
   it('lists only completed settlements whose contracts are ended', async () => {
@@ -329,6 +355,12 @@ describe('CheckoutService', () => {
         changedBy: user.id,
       }),
     });
+    expectContractMutationOrder(
+      'checkout.cancel',
+      tx.$queryRaw,
+      tx.checkoutSettlement.findUniqueOrThrow,
+      settlementUpdateMany,
+    );
   });
 
   it('rejects cancelling an approved settlement before restoring contract or room', async () => {
@@ -493,22 +525,29 @@ describe('CheckoutService', () => {
         }),
       }),
     );
+    expectContractMutationOrder(
+      'checkout.submit',
+      tx.$queryRaw,
+      tx.checkoutSettlement.findUniqueOrThrow,
+      tx.checkoutSettlementItem.deleteMany,
+    );
   });
 
   it('returns a rejected settlement to draft without deleting its items', async () => {
     const update = jest.fn().mockResolvedValue({ id: 1, status: 'DRAFT' });
+    const harness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          status: 'REJECTED',
+          items: [{ id: 1, amount: '500' }],
+          contract: { status: 'PENDING_CHECKOUT' },
+        }),
+        update,
+      },
+    });
     const service = new CheckoutService({
-      db: transactional({
-        checkoutSettlement: {
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            id: 1,
-            status: 'REJECTED',
-            items: [{ id: 1, amount: '500' }],
-            contract: { status: 'PENDING_CHECKOUT' },
-          }),
-          update,
-        },
-      }).db,
+      db: harness.db,
     } as never);
 
     await expect(service.returnToDraft(1, user)).resolves.toEqual({
@@ -519,6 +558,42 @@ describe('CheckoutService', () => {
       where: { id: 1 },
       data: { status: 'DRAFT' },
     });
+    expectContractMutationOrder(
+      'checkout.returnToDraft',
+      harness.client.$queryRaw,
+      harness.client.checkoutSettlement.findUniqueOrThrow,
+      update,
+    );
+  });
+
+  it('orders checkout reject as contract lock, settlement reload, then rejection write', async () => {
+    const firstWrite = jest
+      .fn()
+      .mockResolvedValue({ id: 1, status: 'REJECTED' });
+    const reload = jest.fn().mockResolvedValue({
+      id: 1,
+      status: 'PENDING',
+      contract: { status: 'PENDING_CHECKOUT' },
+    });
+    const harness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: reload,
+        update: firstWrite,
+      },
+    });
+    const service = new CheckoutService({ db: harness.db } as never);
+
+    await expect(service.reject(1, '信息有误', user)).resolves.toEqual({
+      id: 1,
+      status: 'REJECTED',
+    });
+
+    expectContractMutationOrder(
+      'checkout.reject',
+      harness.client.$queryRaw,
+      reload,
+      firstWrite,
+    );
   });
 
   it('rejects returning a settlement that was not rejected', async () => {
@@ -548,7 +623,11 @@ describe('CheckoutService', () => {
           status: 'PENDING',
           actualCheckoutDate: new Date('2026-08-01'),
           items: [],
-          contract: { room: { id: 7 }, bills: [] },
+          contract: {
+            status: 'PENDING_CHECKOUT',
+            room: { id: 7 },
+            bills: [],
+          },
         }),
         update: jest.fn().mockResolvedValue({ id: 1, status: 'APPROVED' }),
       },
@@ -577,6 +656,12 @@ describe('CheckoutService', () => {
 
     expect(contractUpdate).not.toHaveBeenCalled();
     expect(roomUpdate).not.toHaveBeenCalled();
+    expectContractMutationOrder(
+      'checkout.approve',
+      tx.$queryRaw,
+      tx.checkoutSettlement.findUniqueOrThrow,
+      tx.rentBill.updateMany,
+    );
   });
   it('locks post-offset arrears separately and creates an inspection-only supplemental bill', async () => {
     const settlementUpdate = jest
@@ -717,6 +802,12 @@ describe('CheckoutService', () => {
       expect.objectContaining({
         data: expect.objectContaining({ roomStatus: 'EMPTY' }),
       }),
+    );
+    expectContractMutationOrder(
+      'checkout.completeZeroRefund',
+      tx.$queryRaw,
+      tx.checkoutSettlement.findUniqueOrThrow,
+      tx.checkoutSettlement.updateMany,
     );
   });
 
