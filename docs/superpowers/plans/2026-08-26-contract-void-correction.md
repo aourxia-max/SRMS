@@ -35,7 +35,7 @@
 **Interfaces:**
 - Produces: Prisma models `ContractVoidRequest`, `ContractVoidReversal`, `ContractVoidRequestFile`
 - Produces: enums `ContractVoidRequestStatus`, `ContractVoidReversalCategory`
-- Produces: unique keys `activeContractKey`, `completedContractKey`, `executionBatchNo`, `idempotencyKey`
+- Produces: unique keys `activeContractKey`, `completedContractKey`, `executionBatchNo`, `executionIdempotencyKey`, reversal `idempotencyKey`
 - Extends: `FileCategory` with `CONTRACT_VOID_PROOF`
 
 - [ ] **Step 1: Write a failing schema test**
@@ -95,6 +95,7 @@ model ContractVoidRequest {
   activeContractKey    String?                   @unique @map("active_contract_key") @db.VarChar(80)
   completedContractKey String?                   @unique @map("completed_contract_key") @db.VarChar(80)
   executionBatchNo     String?                   @unique @map("execution_batch_no") @db.VarChar(40)
+  executionIdempotencyKey String?                 @unique @map("execution_idempotency_key") @db.VarChar(100)
   resultSnapshot       Json?                     @map("result_snapshot")
   submittedBy          Int                       @map("submitted_by") @db.UnsignedInt
   submittedAt          DateTime                  @default(now()) @map("submitted_at") @db.DateTime(3)
@@ -425,7 +426,7 @@ Inside one `prisma.db.$transaction`, lock in this order: request, contract, bill
 
 - [ ] **Step 4: Cancel pending related workflows with exact terminal states**
 
-Set `ContractChange`, `BillAdjustment`, `PaymentRefund`, `PaymentVoidRequest`, `PricingRebate`, and `DepositRefund` from `DRAFT` or `PENDING` to `ApprovalStatus.CANCELLED`. Set `CheckoutSettlement` from `DRAFT`, `PENDING`, or `REJECTED` to `CheckoutSettlementStatus.CANCELLED`. Do not modify approved or completed rows in this cancellation step; those are preserved and receive reversal entries in Step 5. Record one `ContractVoidReversal` per affected record with amount `0.00` and metadata `{ previousStatus, nextStatus }`.
+Set `ContractChange`, `BillAdjustment`, `PaymentRefund`, `PaymentVoidRequest`, `PricingRebate`, and `DepositRefund` from `DRAFT` or `PENDING` to `ApprovalStatus.CANCELLED`. Set `CheckoutSettlement` only from `DRAFT` or `PENDING` to `CheckoutSettlementStatus.CANCELLED`. Preserve `REJECTED`, approved and completed rows as terminal history; approved or completed monetary effects receive reversal entries in Step 5. Record one `ContractVoidReversal` per affected record with amount `0.00` and metadata `{ previousStatus, nextStatus }`.
 
 - [ ] **Step 5: Write financial reversals**
 
