@@ -87,7 +87,6 @@ describe('contract void correction schema', () => {
 
     expect(identifiers.filter((name) => name.length > 64)).toEqual([]);
 
-
     expect(migration).toMatch(/CREATE TABLE `contract_void_requests`/);
     expect(migration).toMatch(/CREATE TABLE `contract_void_reversals`/);
     expect(migration).toMatch(/CREATE TABLE `contract_void_request_files`/);
