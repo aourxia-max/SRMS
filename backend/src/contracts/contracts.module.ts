@@ -5,6 +5,7 @@ import { ContractLifecycleService } from './contract-lifecycle.service';
 import { ContractDraftsService } from './contract-drafts.service';
 import { ContractDepositService } from './contract-deposit.service';
 import { FilesModule } from '../files/files.module';
+import { ContractVoidPreviewService } from './contract-void-preview.service';
 
 @Module({
   imports: [FilesModule],
@@ -14,7 +15,8 @@ import { FilesModule } from '../files/files.module';
     ContractLifecycleService,
     ContractDepositService,
     ContractDraftsService,
+    ContractVoidPreviewService,
   ],
-  exports: [ContractLifecycleService],
+  exports: [ContractLifecycleService, ContractVoidPreviewService],
 })
 export class ContractsModule {}
