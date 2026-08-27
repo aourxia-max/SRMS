@@ -146,3 +146,10 @@ Task 9: fix round 4/5 review correction (1 important open — global Element Plu
 Task 9: final fix round 5/5 required: close any global contract-void confirmation prompt during panel unmount and prove downgrade/logout fail-closed behavior.
 
 Task 9: fix round 5/5 implementation (1 important addressed — component-owned Element Plus prompt close on auth reset/unmount; stale resolve/reject remains API-inert; base 2564525, implementation commit contains this ledger entry).
+
+Task 9: complete (commits 11a419b..e8bbc6a, final review clean; frontend unit 221/221; backend unit 477/477; real MySQL concurrency E2E 6/6).
+
+Task 10 Ruling: The real API E2E may import only `MYSQL_*` from `deploy/.env.test` into its process and construct a localhost `DATABASE_URL`; values must never be printed, logged, modified or committed — if wrong, the E2E bootstrap must be replaced before any shared-database use.
+Task 10 Ruling: Deliberately inconsistent VOIDED relation-filter sentinels are deleted only because they have no completed correction or append-only security audit; COMPLETED four-scenario chains retain their uniquely prefixed business provenance because deleting them would orphan immutable audit evidence — if wrong, a dedicated append-only test-data archival policy is required before cleanup.
+Task 10 RED/GREEN: valid real-MySQL red was Excel contract-void rows showing `否（内部抵扣）` instead of `否（内部纠错）`; focused unit reproduced the exact mismatch, and a type-specific presentation-only mapping made focused finance 4/4 plus target E2E 6/6 pass without changing financial calculations.
+Task 10: complete (implementation commit is the commit containing this ledger entry; real MySQL API E2E 6/6; related unit 85/85; backend full unit 477/477; lint/build/diff check clean).

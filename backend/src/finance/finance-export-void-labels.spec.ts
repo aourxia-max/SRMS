@@ -106,7 +106,7 @@ describe('FinanceExportService cash-flow labels and references', () => {
       '收款',
       '-120',
       '流出',
-      '否（内部抵扣）',
+      '否（内部纠错）',
       '否',
       '',
       'HTZF202608260001',

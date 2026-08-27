@@ -75,7 +75,7 @@ describe('FinanceExportService contract correction cash flow', () => {
       '\u6536\u6b3e',
       '-120',
       '\u6d41\u51fa',
-      '\u5426\uff08\u5185\u90e8\u62b5\u6263\uff09',
+      '\u5426\uff08\u5185\u90e8\u7ea0\u9519\uff09',
       '\u5426',
       '',
       'HTZF202608260001',

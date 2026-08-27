@@ -136,7 +136,11 @@ export class FinanceExportService {
         categoryValue(row.category),
         value(row.amount),
         row.direction === 'IN' ? '流入' : '流出',
-        row.external ? '是' : '否（内部抵扣）',
+        row.external
+          ? '是'
+          : row.flowType === 'CONTRACT_VOID_REVERSAL'
+            ? '否（内部纠错）'
+            : '否（内部抵扣）',
         row.countsAsRentReceipt ? '是' : '否',
         businessReference(row),
         row.requestNo ?? '',
