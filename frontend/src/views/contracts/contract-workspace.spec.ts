@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import ElementPlus, { ElDialog, ElMessage, ElOption, ElSelect } from 'element-plus'
+import ElementPlus, { ElDialog, ElMessage, ElMessageBox, ElOption, ElSelect } from 'element-plus'
 import { nextTick } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -223,6 +223,28 @@ const activeContract = (): ContractDetail => ({
   pricingMode: 'FIXED',
   commissions: [],
 })
+
+function deferredMessageBoxPrompt() {
+  let resolvePrompt!: (value: { value: string; action: 'confirm' }) => void
+  let rejectPrompt!: (reason?: unknown) => void
+  const close = vi.fn()
+  const promptPromise = new Promise<{ value: string; action: 'confirm' }>((resolve, reject) => {
+    resolvePrompt = resolve
+    rejectPrompt = reject
+  })
+  const prompt = vi.spyOn(ElMessageBox, 'prompt').mockImplementation((message) => {
+    if (typeof message === 'function') {
+      message({
+        confirm: vi.fn(),
+        cancel: vi.fn(),
+        close,
+      })
+    }
+    return promptPromise as never
+  })
+
+  return { close, prompt, rejectPrompt, resolvePrompt }
+}
 
 describe('合同工作区复审边界', () => {
   it('详情事件打开作废纠错页并预选当前合同', async () => {
@@ -565,6 +587,99 @@ describe('合同工作区复审边界', () => {
     wrapper.unmount()
     vi.restoreAllMocks()
   })
+
+  it('直接执行确认框打开后登出会随父层卸载关闭且旧确认不调用任何 API', async () => {
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
+    vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'listContractVoidRequests').mockResolvedValue([])
+    vi.spyOn(contractService, 'previewContractVoid').mockResolvedValue({
+      contract: { id: 12, status: 'ACTIVE', roomId: 8 },
+      summary: {
+        rentBillPayable: '0.00',
+        effectivePayment: '0.00',
+        depositBalance: '0.00',
+        prepaymentBalance: '0.00',
+        refundNet: '0.00',
+        currentNetImpact: '0.00',
+        plannedReversal: '0.00',
+        postReversalNetImpact: '0.00',
+      },
+      rows: [],
+      pending: { adjustments: [], refunds: [], voidRequests: [], depositRefunds: [], changes: [], rebates: [], checkouts: [] },
+      completedCheckoutIds: [],
+      room: { currentStatus: 'RENTED', hasLaterContract: false, action: 'RECALCULATE' },
+      flags: { hasPendingWorkflows: false, hasCompletedCheckout: false, hasLaterContract: false },
+      sourceSnapshot: {
+        prepaymentBalanceSource: null,
+        depositBalanceSource: null,
+        contractMembers: [],
+        paymentAllocations: [],
+        adjustments: [],
+        rebates: [],
+        checkoutSettlements: [],
+        commissions: [],
+      },
+      impactHash: 'a'.repeat(64),
+    })
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+    const submit = vi.spyOn(contractService, 'submitContractVoidRequest').mockResolvedValue({} as never)
+    const approve = vi.spyOn(contractService, 'approveContractVoidRequest').mockResolvedValue({} as never)
+    const deferredPrompt = deferredMessageBoxPrompt()
+
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = {
+      id: 1,
+      username: 'root',
+      displayName: '超级管理员',
+      role: 'SUPER_ADMIN',
+    }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=void-correction&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+    await wrapper.get('[data-test="void-reason"]').setValue('登出前直接执行')
+
+    await wrapper.get('[data-test="direct-execute-void"]').trigger('click')
+    await flushPromises()
+    expect(deferredPrompt.prompt).toHaveBeenCalledTimes(1)
+
+    session.user = null
+    await nextTick()
+    await flushPromises()
+    const closeCalls = deferredPrompt.close.mock.calls.length
+    const panelExists = wrapper.findComponent(ContractVoidPanel).exists()
+
+    deferredPrompt.resolvePrompt({ value: '确认作废合同', action: 'confirm' })
+    await flushPromises()
+    const submitCalls = submit.mock.calls.length
+    const approveCalls = approve.mock.calls.length
+    wrapper.unmount()
+    vi.restoreAllMocks()
+
+    expect(closeCalls).toBe(1)
+    expect(panelExists).toBe(false)
+    expect(submitCalls).toBe(0)
+    expect(approveCalls).toBe(0)
+  })
+
   it('访客不能通过查询参数强制进入合同作废纠错工作区', async () => {
     vi.spyOn(http, 'get').mockImplementation(
       (url: string) =>

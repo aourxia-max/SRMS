@@ -172,3 +172,30 @@
 - 真实 MySQL E2E 只在测试进程内从 `deploy/.env.test` 导入 `MYSQL_*` 并构造 `DATABASE_URL`；没有输出、记录或提交任何值。
 - 没有修改后端权限、附件删除资格、迁移或 Task 10+。显式删除仍只能作用于 uploader-owned、unlocked、unassociated 的 `CONTRACT_VOID_PROOF`；submitted／locked／associated／historical attachment 绝不触碰。
 - 当前无功能阻塞或 Important 开放项。
+
+## Fix round 5/5：组件专属风险确认框生命周期
+
+### 红灯与根因
+
+- 修改前两个聚焦文件 62/62 通过；加入审批降为 ADMIN 与直接执行时登出的回归用例后，2 文件 64 项中 2 项按预期失败、62 项通过，失败均为组件专属 `close` 调用次数期望 1、实际 0。
+- Element Plus 静态 `ElMessageBox.prompt` 把弹框挂到 `document.body`，返回值只有 Promise。父工作区因登出或降为无访问权角色用 `v-else-if` 同步卸载面板时，子组件的 props watcher 不保证先运行；原 `onBeforeUnmount` 仅失效认证 generation，没有关闭弹框。
+- 原 `saving` 条件下调用静态 `ElMessageBox.close()` 既遗漏父层先卸载路径，也会关闭页面中其他组件创建的 MessageBox。
+
+### 最小实现与失败关闭
+
+- 使用 Element Plus 2.14.3 公开的 message render-function action handlers，捕获当前面板 prompt 的实例级 `close`；直接执行、审批和驳回 prompt 共用组件专属 helper。
+- 认证用户／角色 reset 与 `onBeforeUnmount` 都调用组件专属 close；Promise `finally` 仅清理自己的句柄，不再调用全局 `ElMessageBox.close()`，正常确认完成后也不会残留句柄。
+- 关闭前先递增认证 generation；即使旧 prompt Promise 随后 resolve 或 reject，提交与审批路径都会在 API 前因旧 generation 失败关闭。测试分别证明登出后的旧 resolve 与降为 ADMIN 后的旧 reject 均不调用 submit/approve API。
+
+### 绿灯与验证
+
+- RED 对应命令修复后：2 文件、64/64。
+- Task 9 前端四文件聚焦：4 文件、70/70。
+- 前端完整单元：39 文件、221/221。
+- `npm --prefix frontend run build` 通过；仅保留既有大 chunk 警告。
+- 本轮后端 diff 为 none；`git diff --check` 通过。
+
+### 范围与自审
+
+- 仅修改 `ContractVoidPanel.vue` 及面板／父工作区回归测试；未改后端、权限、附件清理、迁移、Task 10+、env 或秘密。
+- 历史／已提交附件不可变边界和 staged proof 的既有受控清理范围保持不变；本轮不发任何额外 API。

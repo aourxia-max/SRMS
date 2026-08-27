@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { UploadFile } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import type { ElMessageBoxOptions, UploadFile } from 'element-plus'
+import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { approveContractVoidRequest, cancelContractVoidRequest, deleteContractVoidProof, downloadContractVoidProof, getContractVoidRequest, listContractVoidRequests, previewContractVoid, refreshContractVoidRequestSnapshot, rejectContractVoidRequest, submitContractVoidRequest, uploadContractVoidProof } from '../../../services/contracts'
 import type { ContractListItem, ContractRole, ContractVoidImpact, ContractVoidProofFile, ContractVoidRequest, ContractVoidRequestQuery, ContractVoidRequestStatus } from '../../../types/contracts'
 import { contractVoidConfirmationText } from '../../../types/contracts'
@@ -58,6 +58,7 @@ let authGeneration = 0
 const authReady = computed(() => Number.isInteger(props.currentUserId) && Number(props.currentUserId) > 0 && (props.role === 'ADMIN' || props.role === 'SUPER_ADMIN'))
 let actionSession: ActionSession | null = authReady.value ? createContractVoidActionSession(props.currentUserId!) : null
 let activeFormContractId: number | null = null
+let activePromptClose: (() => void) | null = null
 
 const eligibleContracts = computed(() => props.contracts.filter((item) => item.status !== 'VOIDED'))
 const visibleContracts = computed(() => {
@@ -131,6 +132,29 @@ function isStale(error: unknown) {
 
 function isPromptCancelled(error: unknown) {
   return error === 'cancel' || error === 'close'
+}
+
+function closePanelPrompt() {
+  const close = activePromptClose
+  activePromptClose = null
+  close?.()
+}
+
+async function promptOwnedByPanel(message: string, title: string, options: ElMessageBoxOptions) {
+  let ownedClose: (() => void) | null = null
+  try {
+    return await ElMessageBox.prompt(
+      ({ close }) => {
+        ownedClose = close
+        activePromptClose = close
+        return h('span', message)
+      },
+      title,
+      options,
+    )
+  } finally {
+    if (activePromptClose === ownedClose) activePromptClose = null
+  }
 }
 
 function queryFromFilters(): ContractVoidRequestQuery {
@@ -248,7 +272,7 @@ function closeProofPreview() {
 function resetUserBoundState() {
   authGeneration += 1
   previewGeneration += 1
-  if (saving.value) ElMessageBox.close()
+  closePanelPrompt()
   requests.value = []
   requestsLoading.value = false
   detailLoading.value = false
@@ -370,7 +394,7 @@ async function refreshPendingRequestStale(request: ContractVoidRequest, generati
 }
 
 async function riskConfirmation(action: '直接执行' | '确认作废') {
-  const result = await ElMessageBox.prompt(`请输入“${contractVoidConfirmationText}”后${action}`, '合同作废风险确认', {
+  const result = await promptOwnedByPanel(`请输入“${contractVoidConfirmationText}”后${action}`, '合同作废风险确认', {
     confirmButtonText: action,
     cancelButtonText: '取消',
     inputPlaceholder: contractVoidConfirmationText,
@@ -514,7 +538,7 @@ async function rejectRequest() {
   if (!session || !current || !isCurrentAuthContext(generation) || saving.value || props.role !== 'SUPER_ADMIN' || current.status !== 'PENDING') return
   saving.value = true
   try {
-    const result = await ElMessageBox.prompt('请输入驳回原因', '驳回合同作废申请', {
+    const result = await promptOwnedByPanel('请输入驳回原因', '驳回合同作废申请', {
       confirmButtonText: '确认驳回',
       cancelButtonText: '取消',
       inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因',
@@ -655,6 +679,7 @@ onBeforeUnmount(() => {
   authGeneration += 1
   previewGeneration += 1
   actionSession = null
+  closePanelPrompt()
   closeProofPreview()
   releaseUploadedProofs()
 })

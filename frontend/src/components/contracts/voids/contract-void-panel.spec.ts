@@ -173,6 +173,28 @@ async function setReason(wrapper: ReturnType<typeof mount>, value = '纸质合�
   await wrapper.get('[data-test="void-reason"]').setValue(value)
 }
 
+function deferredMessageBoxPrompt() {
+  let resolvePrompt!: (value: { value: string; action: 'confirm' }) => void
+  let rejectPrompt!: (reason?: unknown) => void
+  const close = vi.fn()
+  const promptPromise = new Promise<{ value: string; action: 'confirm' }>((resolve, reject) => {
+    resolvePrompt = resolve
+    rejectPrompt = reject
+  })
+  const prompt = vi.spyOn(ElMessageBox, 'prompt').mockImplementation((message) => {
+    if (typeof message === 'function') {
+      message({
+        confirm: vi.fn(),
+        cancel: vi.fn(),
+        close,
+      })
+    }
+    return promptPromise as never
+  })
+
+  return { close, prompt, rejectPrompt, resolvePrompt }
+}
+
 describe('合同作废纠错面板', () => {
   const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
   const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
@@ -298,6 +320,36 @@ describe('合同作废纠错面板', () => {
     const validator = prompt.mock.calls[0][2]!.inputValidator as (value: string) => boolean | string
     expect(validator('确认作废合同')).toBe(true)
     expect(validator('确认作废合同\n')).not.toBe(true)
+  })
+
+  it('审批确认框打开后降为 ADMIN 会关闭本面板 prompt 且旧拒绝不调用审批 API', async () => {
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([request()])
+    const deferredPrompt = deferredMessageBoxPrompt()
+    const globalClose = vi.spyOn(ElMessageBox, 'close')
+    const wrapper = mountPanel('SUPER_ADMIN', null, 1)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="approve-void-request"]').trigger('click')
+    await flushPromises()
+    expect(deferredPrompt.prompt).toHaveBeenCalledTimes(1)
+
+    await wrapper.setProps({ role: 'ADMIN' })
+    await flushPromises()
+    const closeCalls = deferredPrompt.close.mock.calls.length
+    const globalCloseCalls = globalClose.mock.calls.length
+
+    deferredPrompt.rejectPrompt('close')
+    await flushPromises()
+    const approveCalls = vi.mocked(contractService.approveContractVoidRequest).mock.calls.length
+    const submitCalls = vi.mocked(contractService.submitContractVoidRequest).mock.calls.length
+    wrapper.unmount()
+
+    expect(closeCalls).toBe(1)
+    expect(globalCloseCalls).toBe(0)
+    expect(approveCalls).toBe(0)
+    expect(submitCalls).toBe(0)
   })
 
   it('超级管理员可驳回待确认申请', async () => {

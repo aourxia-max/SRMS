@@ -141,3 +141,8 @@ Task 9: minor (deferred): shared-room MySQL E2E fixtures were not cleaned; fix n
 Task 9: fix round 3/5 (2 addressed, 2 important open — user-scoped terminal recovery and parent generation guard fixed; exact persisted hash/status assertions remain incomplete, and user switching must also invalidate in-memory draft/attachments/async role state; commits 6af2921..afd5745).
 Task 9: minor (deferred): invalidating an in-flight selected-contract request can leave the workspace loading flag set; fix naturally with the round 4 user-switch fail-closed work.
 Task 9: fix round 4/5 (2 important + 1 minor addressed, 0 important open — exact persisted hash/status assertions, reactive role/auth fail-close, user-bound async invalidation and loading reset; base afd5745, implementation commit contains this ledger entry).
+
+Task 9: fix round 4/5 review correction (1 important open — global Element Plus risk-confirmation prompt can outlive panel unmount after logout or downgrade; commit 2564525).
+Task 9: final fix round 5/5 required: close any global contract-void confirmation prompt during panel unmount and prove downgrade/logout fail-closed behavior.
+
+Task 9: fix round 5/5 implementation (1 important addressed — component-owned Element Plus prompt close on auth reset/unmount; stale resolve/reject remains API-inert; base 2564525, implementation commit contains this ledger entry).
