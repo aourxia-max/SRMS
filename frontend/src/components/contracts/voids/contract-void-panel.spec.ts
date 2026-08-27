@@ -162,7 +162,7 @@ function request(status: ContractVoidRequestStatus = 'PENDING', overrides: Parti
   }
 }
 
-function mountPanel(role: ContractRole = 'ADMIN', selectedContractId: number | null = 86, currentUserId = 7) {
+function mountPanel(role: ContractRole = 'ADMIN', selectedContractId: number | null = 86, currentUserId: number | null = 7) {
   return mount(ContractVoidPanel, {
     props: { contracts, role, selectedContractId, currentUserId },
     global: { plugins: [ElementPlus] },
@@ -522,6 +522,124 @@ describe('合同作废纠错面板', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="cancel-void-request"]').exists()).toBe(false)
+  })
+
+  it('切换登录用户会清空草稿、附件和预览且新用户提交不携带旧用户 staged proof', async () => {
+    const createObjectURL = vi.fn().mockReturnValue('blob:void-proof-501')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
+    vi.mocked(contractService.submitContractVoidRequest).mockRejectedValueOnce(new Error('request was not sent')).mockResolvedValueOnce(request())
+    const wrapper = mountPanel('ADMIN', 86, 7)
+    await flushPromises()
+    const file = new File(['proof-image'], '作废证明.png', { type: 'image/png' })
+    const upload = wrapper.findComponent(ElUpload)
+    await (upload.props('onChange') as (value: { raw: File }) => Promise<void>)({ raw: file })
+    await flushPromises()
+    await setReason(wrapper, '同标签用户切换草稿')
+    await wrapper.get('[data-test="preview-void-proof-501"]').trigger('click')
+    await wrapper.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+    const oldUserKey = vi.mocked(contractService.submitContractVoidRequest).mock.calls[0][0].idempotencyKey
+
+    await wrapper.setProps({ currentUserId: 8 })
+    await flushPromises()
+
+    const reasonInputAfterSwitch = wrapper.find('[data-test="void-reason"]')
+    const reasonAfterSwitch = reasonInputAfterSwitch.exists()
+      ? (reasonInputAfterSwitch.element as HTMLTextAreaElement).value
+      : ''
+    const impactAfterSwitch = wrapper.find('[data-test="void-impact-cards"]').exists()
+    const proofAfterSwitch = wrapper.find('[data-test="preview-void-proof-501"]').exists()
+    const previewAfterSwitch = wrapper.find('[data-test="void-proof-preview"]').exists()
+
+    await wrapper.setProps({ selectedContractId: null })
+    await flushPromises()
+    await wrapper.setProps({ selectedContractId: 86 })
+    await flushPromises()
+    await setReason(wrapper, '同标签用户切换草稿')
+    await wrapper.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+    const newUserPayload = vi.mocked(contractService.submitContractVoidRequest).mock.calls[1][0]
+    wrapper.unmount()
+
+    expect(reasonAfterSwitch).toBe('')
+    expect(impactAfterSwitch).toBe(false)
+    expect(proofAfterSwitch).toBe(false)
+    expect(previewAfterSwitch).toBe(false)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:void-proof-501')
+    expect(contractService.deleteContractVoidProof).not.toHaveBeenCalled()
+    expect(newUserPayload.fileAssetIds).toEqual([])
+    expect(newUserPayload.idempotencyKey).not.toBe(oldUserKey)
+  })
+
+  it('用户切换后旧列表、影响预览和上传慢响应都不能覆盖新用户空状态', async () => {
+    let resolveOldList!: (value: ContractVoidRequest[]) => void
+    let resolveOldImpact!: (value: ContractVoidImpact) => void
+    let resolveOldUpload!: (value: Awaited<ReturnType<typeof contractService.uploadContractVoidProof>>) => void
+    vi.mocked(contractService.listContractVoidRequests)
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveOldList = resolve)))
+      .mockResolvedValueOnce([])
+    vi.mocked(contractService.previewContractVoid)
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveOldImpact = resolve)))
+      .mockResolvedValue(impact(hashB))
+    vi.mocked(contractService.uploadContractVoidProof).mockImplementationOnce(() => new Promise((resolve) => (resolveOldUpload = resolve)))
+    const createObjectURL = vi.fn().mockReturnValue('blob:stale-user-proof')
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const wrapper = mountPanel('ADMIN', 86, 7)
+    await flushPromises()
+    const file = new File(['old-user-proof'], '旧用户证明.png', { type: 'image/png' })
+    const upload = wrapper.findComponent(ElUpload)
+    const uploadPromise = (upload.props('onChange') as (value: { raw: File }) => Promise<void>)({ raw: file })
+
+    await wrapper.setProps({ currentUserId: 8 })
+    await flushPromises()
+    resolveOldList([request()])
+    resolveOldImpact(impact(hashA))
+    resolveOldUpload({
+      id: 501,
+      originalName: '旧用户证明.png',
+      mimeType: 'image/png',
+      sizeBytes: '14',
+      uploadedAt: '2026-08-26T08:00:00.000Z',
+    })
+    await uploadPromise
+    await flushPromises()
+
+    const requestExists = wrapper.find('[data-test="void-request-detail-901"]').exists()
+    const impactExists = wrapper.find('[data-test="void-impact-cards"]').exists()
+    const proofExists = wrapper.find('[data-test="preview-void-proof-501"]').exists()
+    wrapper.unmount()
+
+    expect(requestExists).toBe(false)
+    expect(impactExists).toBe(false)
+    expect(proofExists).toBe(false)
+    expect(createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('认证用户尚未就绪时不加载敏感数据并禁用表单和附件操作', async () => {
+    const wrapper = mountPanel('ADMIN', 86, null)
+    await flushPromises()
+
+    const listCalls = vi.mocked(contractService.listContractVoidRequests).mock.calls.length
+    const previewCalls = vi.mocked(contractService.previewContractVoid).mock.calls.length
+    const reasonDisabled = Object.hasOwn(wrapper.get('[data-test="void-reason"]').attributes(), 'disabled')
+    const uploadDisabled = wrapper.findComponent(ElUpload).props('disabled')
+    const submitDisabled = Object.hasOwn(wrapper.get('[data-test="submit-void-request"]').attributes(), 'disabled')
+    wrapper.unmount()
+
+    expect(listCalls).toBe(0)
+    expect(previewCalls).toBe(0)
+    expect(reasonDisabled).toBe(true)
+    expect(uploadDisabled).toBe(true)
+    expect(submitDisabled).toBe(true)
   })
 
   it('确认接口已完成但详情刷新失败时仍立即通知父页面并清除执行状态', async () => {

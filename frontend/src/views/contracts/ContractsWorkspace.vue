@@ -14,7 +14,7 @@ import { appendContractFile, approveFixedRentRebate, confirmContractDraft, confi
 import { http } from '../../services/http'
 import { listAllPayments } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
-import { emptyContractForm, type ContractDetail, type ContractChange, type ContractFile, type ContractFormModel, type ContractListItem, type ContractPayload, type ContractPreview, type ContractRoom, type ContractTenant, type ContractWorkspaceTab, type PricingRebate, type RentBill } from '../../types/contracts'
+import { emptyContractForm, type ContractDetail, type ContractChange, type ContractFile, type ContractFormModel, type ContractListItem, type ContractPayload, type ContractPreview, type ContractRole, type ContractRoom, type ContractTenant, type ContractWorkspaceTab, type PricingRebate, type RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
 type ApiResponse<T> = { data: T }
@@ -23,8 +23,8 @@ const draftStorageKey = 'srms.currentFixedContractDraftId'
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
-const role = session.user?.role || 'VISITOR'
-const canAccessVoidCorrection = role === 'ADMIN' || role === 'SUPER_ADMIN'
+const role = computed<ContractRole>(() => session.user?.role || 'VISITOR')
+const canAccessVoidCorrection = computed(() => role.value === 'ADMIN' || role.value === 'SUPER_ADMIN')
 const tab = ref<ContractWorkspaceTab>('list')
 const rooms = ref<ContractRoom[]>([])
 const tenants = ref<ContractTenant[]>([])
@@ -74,7 +74,7 @@ async function writeWorkspaceRoute(nextTab: ContractWorkspaceTab, contractId = s
 }
 
 function setTab(nextTab: ContractWorkspaceTab) {
-  if (nextTab === 'void-correction' && !canAccessVoidCorrection) return
+  if (nextTab === 'void-correction' && !canAccessVoidCorrection.value) return
   tab.value = nextTab
   void writeWorkspaceRoute(nextTab)
 }
@@ -138,6 +138,7 @@ let detailLoadGeneration = 0
 
 function clearSelectedContract() {
   detailLoadGeneration += 1
+  loading.value = false
   selectedContractId.value = null
   selectedContract.value = null
   bills.value = []
@@ -191,7 +192,7 @@ async function applyRouteState() {
   if (!baseDataLoaded) return
   const routeContractId = contractIdFromRoute()
   const routeTab = tabFromRoute()
-  if (routeTab === 'void-correction' && !canAccessVoidCorrection) {
+  if (routeTab === 'void-correction' && !canAccessVoidCorrection.value) {
     tab.value = 'list'
     return
   }
@@ -345,7 +346,7 @@ function closePreview() {
   releasePreviewUrl()
 }
 async function loadPreview(generation: number) {
-  const payload = toContractPayload(form.value, role)
+  const payload = toContractPayload(form.value, role.value)
   if (!payload.startDate || !payload.endDate || payload.endDate < payload.startDate || payload.monthlyRent === undefined || Number(payload.monthlyRent) < 0) {
     if (previewRequests.isCurrent(generation)) {
       preview.value = null
@@ -480,6 +481,15 @@ onBeforeUnmount(() => {
 watch(
   () => [route.query.tab, route.query.contractId],
   () => void applyRouteState(),
+)
+watch(
+  () => canAccessVoidCorrection.value,
+  (canAccess) => {
+    if (canAccess || tab.value !== 'void-correction') return
+    tab.value = 'list'
+    void writeWorkspaceRoute('list', null)
+  },
+  { flush: 'sync' },
 )
 </script>
 

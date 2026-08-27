@@ -485,6 +485,7 @@ describe('合同工作区复审边界', () => {
 
     wrapper.getComponent(ContractVoidPanel).vm.$emit('completed', 12)
     await flushPromises()
+    expect(wrapper.getComponent(ContractListPanel).props('loading')).toBe(false)
     await router.replace('/contracts?tab=detail&contractId=12')
     await flushPromises()
 
@@ -493,6 +494,74 @@ describe('合同工作区复审边界', () => {
     expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="open-contract-void-correction"]').exists()).toBe(false)
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  it('同标签 SUPER_ADMIN 降为 ADMIN 时立即更新角色 UI，降为 VISITOR 时卸载作废面板', async () => {
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
+    vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'listContractVoidRequests').mockResolvedValue([])
+    vi.spyOn(contractService, 'previewContractVoid').mockImplementation(() => new Promise(() => undefined))
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = {
+      id: 1,
+      username: 'root',
+      displayName: '超级管理员',
+      role: 'SUPER_ADMIN',
+    }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=void-correction&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(wrapper.getComponent(ContractVoidPanel).props('role')).toBe('SUPER_ADMIN')
+    expect(wrapper.find('[data-test="direct-execute-void"]').exists()).toBe(true)
+
+    session.user = {
+      id: 1,
+      username: 'root',
+      displayName: '管理员',
+      role: 'ADMIN',
+    }
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.getComponent(ContractVoidPanel).props('role')).toBe('ADMIN')
+    expect(wrapper.find('[data-test="direct-execute-void"]').exists()).toBe(false)
+
+    session.user = {
+      id: 1,
+      username: 'root',
+      displayName: '访客',
+      role: 'VISITOR',
+    }
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.findComponent(ContractVoidPanel).exists()).toBe(false)
+    expect(wrapper.findComponent(ContractListPanel).exists()).toBe(true)
+    expect(router.currentRoute.value.query.tab).toBe('list')
     wrapper.unmount()
     vi.restoreAllMocks()
   })

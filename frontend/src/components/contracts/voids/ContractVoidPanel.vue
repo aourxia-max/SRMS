@@ -31,6 +31,7 @@ type PreviewFile = {
   previewUrl: string
 }
 
+type ActionSession = ReturnType<typeof createContractVoidActionSession>
 const requests = ref<ContractVoidRequest[]>([])
 const requestsLoading = ref(false)
 const detailLoading = ref(false)
@@ -53,7 +54,9 @@ const filters = reactive<{
   status: ContractVoidRequestStatus | ''
 }>({ contractNo: '', roomKeyword: '', tenantKeyword: '', status: '' })
 let previewGeneration = 0
-let actionSession = props.currentUserId ? createContractVoidActionSession(props.currentUserId) : null
+let authGeneration = 0
+const authReady = computed(() => Number.isInteger(props.currentUserId) && Number(props.currentUserId) > 0 && (props.role === 'ADMIN' || props.role === 'SUPER_ADMIN'))
+let actionSession: ActionSession | null = authReady.value ? createContractVoidActionSession(props.currentUserId!) : null
 let activeFormContractId: number | null = null
 
 const eligibleContracts = computed(() => props.contracts.filter((item) => item.status !== 'VOIDED'))
@@ -65,7 +68,7 @@ const visibleContracts = computed(() => {
 const selectedContract = computed(() => props.contracts.find((item) => item.id === selectedId.value) ?? null)
 const terminalRequest = computed(() => Boolean(selectedRequest.value && selectedRequest.value.status !== 'PENDING'))
 const canCancelRequest = computed(() => selectedRequest.value?.status === 'PENDING' && (props.role === 'SUPER_ADMIN' || selectedRequest.value.submittedBy === props.currentUserId))
-const submitDisabled = computed(() => !actionSession || saving.value || attachmentUploading.value || !selectedContract.value || selectedContract.value.status === 'VOIDED' || !impact.value?.impactHash || !reason.value.trim())
+const submitDisabled = computed(() => !authReady.value || !actionSession || saving.value || attachmentUploading.value || !selectedContract.value || selectedContract.value.status === 'VOIDED' || !impact.value?.impactHash || !reason.value.trim())
 const selectedRequestImpact = computed<ContractVoidImpact | null>(() =>
   selectedRequest.value
     ? {
@@ -74,6 +77,10 @@ const selectedRequestImpact = computed<ContractVoidImpact | null>(() =>
       }
     : null,
 )
+
+function isCurrentAuthContext(generation: number) {
+  return generation === authGeneration && authReady.value && Boolean(actionSession)
+}
 
 function primaryTenant(contract?: ContractListItem | ContractVoidRequest['contract'] | null) {
   return contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant.name || '未记录租户'
@@ -135,37 +142,47 @@ function queryFromFilters(): ContractVoidRequestQuery {
   }
 }
 
-async function recoverPendingRequest(rows: ContractVoidRequest[], submissionKey?: string) {
-  if (selectedRequest.value) return null
+async function recoverPendingRequest(rows: ContractVoidRequest[], submissionKey: string | undefined, generation: number, session: ActionSession) {
+  if (!isCurrentAuthContext(generation) || selectedRequest.value) return null
   const recovered = rows.find(
     (item) =>
       item.status === 'PENDING' &&
-      (submissionKey ? item.submissionIdempotencyKey === submissionKey : actionSession?.hasSubmissionKey(item.submissionIdempotencyKey)),
+      (submissionKey ? item.submissionIdempotencyKey === submissionKey : session.hasSubmissionKey(item.submissionIdempotencyKey)),
   )
   if (!recovered) return null
+  let detail: ContractVoidRequest
   try {
-    selectedRequest.value = await getContractVoidRequest(recovered.id)
+    detail = await getContractVoidRequest(recovered.id)
   } catch {
-    selectedRequest.value = recovered
+    detail = recovered
   }
+  if (!isCurrentAuthContext(generation) || selectedRequest.value) return null
+  selectedRequest.value = detail
   selectedId.value = recovered.contractId
   activeFormContractId = recovered.contractId
   impact.value = null
   return selectedRequest.value
 }
 
-async function loadRequests(submissionKey?: string) {
+async function loadRequests(submissionKey?: string, generation = authGeneration) {
+  const session = actionSession
+  if (!session || !isCurrentAuthContext(generation)) {
+    requests.value = []
+    requestsLoading.value = false
+    return null
+  }
   requestsLoading.value = true
   try {
     const loaded = await listContractVoidRequests(submissionKey && selectedId.value ? { contractId: selectedId.value } : queryFromFilters())
+    if (!isCurrentAuthContext(generation)) return null
     requests.value = loaded
-    if (actionSession) loaded.filter((item) => item.status !== 'PENDING').forEach((item) => actionSession?.markTerminal(item.id, item.submissionIdempotencyKey))
-    return await recoverPendingRequest(loaded, submissionKey)
+    loaded.filter((item) => item.status !== 'PENDING').forEach((item) => session.markTerminal(item.id, item.submissionIdempotencyKey))
+    return await recoverPendingRequest(loaded, submissionKey, generation, session)
   } catch (error) {
-    ElMessage.error(errorDetails(error, '合同作废纠错申请加载失败').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '合同作废纠错申请加载失败').message)
     return null
   } finally {
-    requestsLoading.value = false
+    if (isCurrentAuthContext(generation)) requestsLoading.value = false
   }
 }
 
@@ -175,40 +192,45 @@ function releaseUploadedProof(file: UploadedProof) {
   uploadedProofs.value = uploadedProofs.value.filter((item) => item.id !== file.id)
 }
 
-async function deleteUploadedProof(file: UploadedProof) {
+async function deleteUploadedProof(file: UploadedProof, generation = authGeneration) {
+  if (!isCurrentAuthContext(generation)) return false
   try {
     await deleteContractVoidProof(file.id)
+    if (!isCurrentAuthContext(generation)) return false
     releaseUploadedProof(file)
     return true
   } catch (error) {
-    ElMessage.error(errorDetails(error, '证明附件删除失败，请稍后重试').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '证明附件删除失败，请稍后重试').message)
     return false
   }
 }
 
 async function removeUploadedProof(file: UploadedProof) {
-  if (saving.value || attachmentUploading.value) return
+  const generation = authGeneration
+  if (!isCurrentAuthContext(generation) || saving.value || attachmentUploading.value) return
   attachmentUploading.value = true
   try {
-    await deleteUploadedProof(file)
+    await deleteUploadedProof(file, generation)
   } finally {
-    attachmentUploading.value = false
+    if (isCurrentAuthContext(generation)) attachmentUploading.value = false
   }
 }
 
-async function discardUploadedProofs() {
+async function discardUploadedProofs(generation = authGeneration) {
+  if (!isCurrentAuthContext(generation)) return false
   if (!uploadedProofs.value.length) return true
   if (saving.value || attachmentUploading.value) return false
   attachmentUploading.value = true
   let allDeleted = true
   try {
     for (const file of [...uploadedProofs.value]) {
-      if (!(await deleteUploadedProof(file))) allDeleted = false
+      if (!(await deleteUploadedProof(file, generation))) allDeleted = false
+      if (!isCurrentAuthContext(generation)) return false
     }
   } finally {
-    attachmentUploading.value = false
+    if (isCurrentAuthContext(generation)) attachmentUploading.value = false
   }
-  return allDeleted
+  return isCurrentAuthContext(generation) && allDeleted
 }
 
 function releaseUploadedProofs() {
@@ -223,26 +245,60 @@ function closeProofPreview() {
   previewFile.value = null
 }
 
-async function loadImpact(contractId: number) {
+function resetUserBoundState() {
+  authGeneration += 1
+  previewGeneration += 1
+  if (saving.value) ElMessageBox.close()
+  requests.value = []
+  requestsLoading.value = false
+  detailLoading.value = false
+  impactLoading.value = false
+  saving.value = false
+  attachmentUploading.value = false
+  selectedId.value = null
+  selectedRequest.value = null
+  impact.value = null
+  reason.value = ''
+  contractKeyword.value = ''
+  activeFormContractId = null
+  closeProofPreview()
+  releaseUploadedProofs()
+}
+
+async function loadImpact(contractId: number, authContext = authGeneration) {
+  if (!isCurrentAuthContext(authContext)) return
   const generation = ++previewGeneration
   impactLoading.value = true
   impact.value = null
   try {
     const result = await previewContractVoid(contractId)
-    if (generation === previewGeneration) impact.value = result
+    if (isCurrentAuthContext(authContext) && generation === previewGeneration) impact.value = result
   } catch (error) {
-    if (generation === previewGeneration) ElMessage.error(errorDetails(error, '合同关联影响预览失败').message)
+    if (isCurrentAuthContext(authContext) && generation === previewGeneration) ElMessage.error(errorDetails(error, '合同关联影响预览失败').message)
   } finally {
-    if (generation === previewGeneration) impactLoading.value = false
+    if (isCurrentAuthContext(authContext) && generation === previewGeneration) impactLoading.value = false
   }
 }
 
 async function chooseContract(contractId: number | null) {
+  const generation = authGeneration
+  if (!authReady.value || !actionSession) {
+    previewGeneration += 1
+    activeFormContractId = contractId
+    selectedRequest.value = null
+    selectedId.value = contractId
+    reason.value = ''
+    impact.value = null
+    impactLoading.value = false
+    return
+  }
   const previousContractId = activeFormContractId
-  if (contractId !== previousContractId && !(await discardUploadedProofs())) {
+  if (contractId !== previousContractId && !(await discardUploadedProofs(generation))) {
+    if (!isCurrentAuthContext(generation)) return
     selectedId.value = previousContractId
     return
   }
+  if (!isCurrentAuthContext(generation)) return
   activeFormContractId = contractId
   selectedRequest.value = null
   selectedId.value = contractId
@@ -259,50 +315,58 @@ async function chooseContract(contractId: number | null) {
     ElMessage.warning('已作废合同不能再次申请作废')
     return
   }
-  await loadImpact(contractId)
+  await loadImpact(contractId, generation)
 }
 
 async function openRequest(row: ContractVoidRequest) {
-  if (saving.value) return
-  if (!(await discardUploadedProofs())) return
+  const generation = authGeneration
+  if (!isCurrentAuthContext(generation) || saving.value) return
+  if (!(await discardUploadedProofs(generation)) || !isCurrentAuthContext(generation)) return
   detailLoading.value = true
   try {
-    selectedRequest.value = await getContractVoidRequest(row.id)
-    selectedId.value = selectedRequest.value.contractId
-    activeFormContractId = selectedRequest.value.contractId
+    const detail = await getContractVoidRequest(row.id)
+    if (!isCurrentAuthContext(generation)) return
+    selectedRequest.value = detail
+    selectedId.value = detail.contractId
+    activeFormContractId = detail.contractId
     impact.value = null
   } catch (error) {
-    ElMessage.error(errorDetails(error, '合同作废纠错申请详情加载失败').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '合同作废纠错申请详情加载失败').message)
   } finally {
-    detailLoading.value = false
+    if (isCurrentAuthContext(generation)) detailLoading.value = false
   }
 }
 
 async function startNewRequest() {
+  const generation = authGeneration
+  if (!isCurrentAuthContext(generation)) return
   const contractId = selectedRequest.value?.contractId ?? selectedId.value
-  if (!(await discardUploadedProofs())) return
-  actionSession?.beginNewForm()
+  if (!(await discardUploadedProofs(generation)) || !isCurrentAuthContext(generation)) return
+  actionSession!.beginNewForm()
   selectedRequest.value = null
   selectedId.value = contractId
   activeFormContractId = contractId
   reason.value = ''
-  if (contractId) await loadImpact(contractId)
+  if (contractId) await loadImpact(contractId, generation)
 }
 
-async function refreshStale(contractId: number) {
+async function refreshStale(contractId: number, generation = authGeneration) {
+  if (!isCurrentAuthContext(generation)) return
   selectedRequest.value = null
   selectedId.value = contractId
-  await Promise.all([loadImpact(contractId), loadRequests()])
-  ElMessage.warning('合同关联数据已变化，已为你重新计算，请再次核对')
+  await Promise.all([loadImpact(contractId, generation), loadRequests(undefined, generation)])
+  if (isCurrentAuthContext(generation)) ElMessage.warning('合同关联数据已变化，已为你重新计算，请再次核对')
 }
 
-async function refreshPendingRequestStale(request: ContractVoidRequest) {
+async function refreshPendingRequestStale(request: ContractVoidRequest, generation = authGeneration) {
+  if (!isCurrentAuthContext(generation)) return
   const refreshed = await refreshContractVoidRequestSnapshot(request.id)
+  if (!isCurrentAuthContext(generation)) return
   selectedRequest.value = refreshed
   selectedId.value = refreshed.contractId
   impact.value = null
-  await loadRequests()
-  ElMessage.warning('合同关联数据已变化，已为你重新计算，请再次核对')
+  await loadRequests(undefined, generation)
+  if (isCurrentAuthContext(generation)) ElMessage.warning('合同关联数据已变化，已为你重新计算，请再次核对')
 }
 
 async function riskConfirmation(action: '直接执行' | '确认作废') {
@@ -332,23 +396,27 @@ function submissionFingerprint() {
 
 async function submit(direct: boolean) {
   if (submitDisabled.value) return
-  saving.value = true
+  const generation = authGeneration
+  const session = actionSession
+  const contract = selectedContract.value
+  const currentImpact = impact.value
+  if (!session || !contract || !currentImpact || !isCurrentAuthContext(generation)) return
+  const submissionReason = reason.value.trim()
+  const fileAssetIds = uploadedProofs.value.map((file) => file.id)
+  const idempotencyKey = session.submissionKey(submissionFingerprint())
   let createdRequest: ContractVoidRequest | null = null
-  if (!actionSession) {
-    ElMessage.error('登录用户信息尚未就绪，请稍后重试')
-    saving.value = false
-    return
-  }
-  const idempotencyKey = actionSession.submissionKey(submissionFingerprint())
+  saving.value = true
   try {
     const confirmation = direct ? await riskConfirmation('直接执行') : null
+    if (!isCurrentAuthContext(generation)) return
     const created = await submitContractVoidRequest({
-      contractId: selectedContract.value!.id,
-      reason: reason.value.trim(),
-      impactHash: impact.value!.impactHash,
-      fileAssetIds: uploadedProofs.value.map((file) => file.id),
+      contractId: contract.id,
+      reason: submissionReason,
+      impactHash: currentImpact.impactHash,
+      fileAssetIds,
       idempotencyKey,
     })
+    if (!isCurrentAuthContext(generation)) return
     createdRequest = created
     selectedRequest.value = created
     impact.value = null
@@ -357,128 +425,156 @@ async function submit(direct: boolean) {
       await approveContractVoidRequest(created.id, {
         previewHash: created.impactHash,
         confirmation: contractVoidConfirmationText,
-        idempotencyKey: actionSession.executionKey(created.id),
+        idempotencyKey: session.executionKey(created.id),
       })
-      actionSession?.markTerminal(created.id, created.submissionIdempotencyKey)
-      actionSession?.beginNewForm()
+      if (!isCurrentAuthContext(generation)) return
+      session.markTerminal(created.id, created.submissionIdempotencyKey)
+      session.beginNewForm()
       emit('completed', created.contractId)
       try {
-        selectedRequest.value = await getContractVoidRequest(created.id)
+        const detail = await getContractVoidRequest(created.id)
+        if (isCurrentAuthContext(generation)) selectedRequest.value = detail
       } catch {
-        selectedRequest.value = { ...created, status: 'COMPLETED' }
+        if (isCurrentAuthContext(generation)) selectedRequest.value = { ...created, status: 'COMPLETED' }
       }
+      if (!isCurrentAuthContext(generation)) return
       ElMessage.success('合同已作废并完成纠错冲销')
     } else {
       ElMessage.success('合同作废纠错申请已提交')
     }
-    await loadRequests()
+    await loadRequests(undefined, generation)
   } catch (error) {
+    if (!isCurrentAuthContext(generation)) return
     if (isPromptCancelled(error)) return
     if (!createdRequest) {
-      const recovered = await loadRequests(idempotencyKey)
+      const recovered = await loadRequests(idempotencyKey, generation)
+      if (!isCurrentAuthContext(generation)) return
       if (recovered) {
         ElMessage.warning('提交响应未确认，已找回服务端待确认申请')
         return
       }
     }
     if (isStale(error) && createdRequest) {
-      await refreshPendingRequestStale(createdRequest)
+      await refreshPendingRequestStale(createdRequest, generation)
     } else if (isStale(error) && selectedId.value) {
-      await refreshStale(selectedId.value)
+      await refreshStale(selectedId.value, generation)
     } else {
       const detail = errorDetails(error, direct ? '合同作废直接执行失败' : '合同作废纠错申请提交失败')
       ElMessage.error(createdRequest && direct ? `申请已提交，可在当前详情继续确认；${detail.message}` : detail.message)
     }
   } finally {
-    saving.value = false
+    if (isCurrentAuthContext(generation)) saving.value = false
   }
 }
 async function approveRequest() {
-  if (saving.value || !actionSession || !selectedRequest.value || selectedRequest.value.status !== 'PENDING') return
-  saving.value = true
+  const generation = authGeneration
+  const session = actionSession
   const current = selectedRequest.value
+  if (!session || !current || !isCurrentAuthContext(generation) || saving.value || current.status !== 'PENDING' || props.role !== 'SUPER_ADMIN') return
+  saving.value = true
   try {
     await riskConfirmation('确认作废')
+    if (!isCurrentAuthContext(generation)) return
     await approveContractVoidRequest(current.id, {
       previewHash: current.impactHash,
       confirmation: contractVoidConfirmationText,
-      idempotencyKey: actionSession.executionKey(current.id),
+      idempotencyKey: session.executionKey(current.id),
     })
-    actionSession?.markTerminal(current.id, current.submissionIdempotencyKey)
-    actionSession?.beginNewForm()
+    if (!isCurrentAuthContext(generation)) return
+    session.markTerminal(current.id, current.submissionIdempotencyKey)
+    session.beginNewForm()
     emit('completed', current.contractId)
     try {
-      selectedRequest.value = await getContractVoidRequest(current.id)
+      const detail = await getContractVoidRequest(current.id)
+      if (isCurrentAuthContext(generation)) selectedRequest.value = detail
     } catch {
-      selectedRequest.value = { ...current, status: 'COMPLETED' }
+      if (isCurrentAuthContext(generation)) selectedRequest.value = { ...current, status: 'COMPLETED' }
     }
-    await loadRequests()
+    if (!isCurrentAuthContext(generation)) return
+    await loadRequests(undefined, generation)
+    if (!isCurrentAuthContext(generation)) return
     ElMessage.success('合同作废申请已确认并完成冲销')
   } catch (error) {
+    if (!isCurrentAuthContext(generation)) return
     if (isPromptCancelled(error)) return
-    if (isStale(error)) await refreshPendingRequestStale(current)
+    if (isStale(error)) await refreshPendingRequestStale(current, generation)
     else {
       const detail = errorDetails(error, '合同作废申请确认失败')
       ElMessage.error(`申请仍为待确认，可继续确认；${detail.message}`)
     }
   } finally {
-    saving.value = false
+    if (isCurrentAuthContext(generation)) saving.value = false
   }
 }
 
 async function rejectRequest() {
-  if (saving.value || props.role !== 'SUPER_ADMIN' || selectedRequest.value?.status !== 'PENDING') return
-  saving.value = true
+  const generation = authGeneration
+  const session = actionSession
   const current = selectedRequest.value
+  if (!session || !current || !isCurrentAuthContext(generation) || saving.value || props.role !== 'SUPER_ADMIN' || current.status !== 'PENDING') return
+  saving.value = true
   try {
     const result = await ElMessageBox.prompt('请输入驳回原因', '驳回合同作废申请', {
       confirmButtonText: '确认驳回',
       cancelButtonText: '取消',
       inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因',
     })
-    selectedRequest.value = await rejectContractVoidRequest(current.id, result.value.trim())
-    actionSession?.markTerminal(current.id, current.submissionIdempotencyKey)
-    await loadRequests()
+    if (!isCurrentAuthContext(generation)) return
+    const rejected = await rejectContractVoidRequest(current.id, result.value.trim())
+    if (!isCurrentAuthContext(generation)) return
+    selectedRequest.value = rejected
+    session.markTerminal(current.id, current.submissionIdempotencyKey)
+    await loadRequests(undefined, generation)
+    if (!isCurrentAuthContext(generation)) return
     ElMessage.success('合同作废申请已驳回')
   } catch (error) {
-    if (!isPromptCancelled(error)) ElMessage.error(errorDetails(error, '合同作废申请驳回失败').message)
+    if (isCurrentAuthContext(generation) && !isPromptCancelled(error)) ElMessage.error(errorDetails(error, '合同作废申请驳回失败').message)
   } finally {
-    saving.value = false
+    if (isCurrentAuthContext(generation)) saving.value = false
   }
 }
 
 async function cancelRequest() {
-  if (saving.value || !canCancelRequest.value || !selectedRequest.value) return
+  const generation = authGeneration
+  const session = actionSession
+  const current = selectedRequest.value
+  if (!session || !current || !isCurrentAuthContext(generation) || saving.value || !canCancelRequest.value) return
   saving.value = true
   try {
-    const current = selectedRequest.value
-    selectedRequest.value = await cancelContractVoidRequest(current.id)
-    actionSession?.markTerminal(current.id, current.submissionIdempotencyKey)
-    await loadRequests()
+    const cancelled = await cancelContractVoidRequest(current.id)
+    if (!isCurrentAuthContext(generation)) return
+    selectedRequest.value = cancelled
+    session.markTerminal(current.id, current.submissionIdempotencyKey)
+    await loadRequests(undefined, generation)
+    if (!isCurrentAuthContext(generation)) return
     ElMessage.success('合同作废申请已取消')
   } catch (error) {
-    ElMessage.error(errorDetails(error, '合同作废申请取消失败').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '合同作废申请取消失败').message)
   } finally {
-    saving.value = false
+    if (isCurrentAuthContext(generation)) saving.value = false
   }
 }
 
 async function uploadProof(uploadFile: UploadFile) {
-  if (!uploadFile.raw || saving.value || attachmentUploading.value) return
+  const generation = authGeneration
+  if (!uploadFile.raw || !isCurrentAuthContext(generation) || saving.value || attachmentUploading.value) return
+  const raw = uploadFile.raw
   attachmentUploading.value = true
   try {
-    const asset = await uploadContractVoidProof(uploadFile.raw)
-    const previewUrl = URL.createObjectURL(uploadFile.raw)
+    const asset = await uploadContractVoidProof(raw)
+    if (!isCurrentAuthContext(generation)) return
+    const previewUrl = URL.createObjectURL(raw)
     uploadedProofs.value.push({ ...asset, previewUrl })
     ElMessage.success(`证明附件“${asset.originalName}”上传成功`)
   } catch (error) {
-    ElMessage.error(errorDetails(error, '证明附件上传失败，请重试').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '证明附件上传失败，请重试').message)
   } finally {
-    attachmentUploading.value = false
+    if (isCurrentAuthContext(generation)) attachmentUploading.value = false
   }
 }
 
 function previewUploadedProof(file: UploadedProof) {
+  if (!authReady.value) return
   closeProofPreview()
   previewFile.value = file
   previewOwnedUrl.value = false
@@ -486,7 +582,9 @@ function previewUploadedProof(file: UploadedProof) {
 }
 
 async function previewRequestProof(file: NonNullable<ContractVoidRequest['files']>[number]) {
-  if (!selectedRequest.value || saving.value) return
+  const generation = authGeneration
+  const requestId = selectedRequest.value?.id
+  if (!requestId || !isCurrentAuthContext(generation) || saving.value) return
   const local = uploadedProofs.value.find((item) => item.id === file.fileAssetId)
   if (local) {
     previewUploadedProof(local)
@@ -494,7 +592,8 @@ async function previewRequestProof(file: NonNullable<ContractVoidRequest['files'
   }
   saving.value = true
   try {
-    const blob = await downloadContractVoidProof(selectedRequest.value.id, file.fileAssetId)
+    const blob = await downloadContractVoidProof(requestId, file.fileAssetId)
+    if (!isCurrentAuthContext(generation)) return
     closeProofPreview()
     previewFile.value = {
       ...file.fileAsset,
@@ -503,17 +602,20 @@ async function previewRequestProof(file: NonNullable<ContractVoidRequest['files'
     previewOwnedUrl.value = true
     previewOpen.value = true
   } catch (error) {
-    ElMessage.error(errorDetails(error, '证明附件预览失败，请稍后重试').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '证明附件预览失败，请稍后重试').message)
   } finally {
-    saving.value = false
+    if (isCurrentAuthContext(generation)) saving.value = false
   }
 }
 
 async function downloadRequestProof(file: NonNullable<ContractVoidRequest['files']>[number]) {
-  if (!selectedRequest.value || saving.value) return
+  const generation = authGeneration
+  const requestId = selectedRequest.value?.id
+  if (!requestId || !isCurrentAuthContext(generation) || saving.value) return
   saving.value = true
   try {
-    const blob = await downloadContractVoidProof(selectedRequest.value.id, file.fileAssetId)
+    const blob = await downloadContractVoidProof(requestId, file.fileAssetId)
+    if (!isCurrentAuthContext(generation)) return
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -523,21 +625,20 @@ async function downloadRequestProof(file: NonNullable<ContractVoidRequest['files
     link.remove()
     URL.revokeObjectURL(url)
   } catch (error) {
-    ElMessage.error(errorDetails(error, '证明附件下载失败，请稍后重试').message)
+    if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '证明附件下载失败，请稍后重试').message)
   } finally {
-    saving.value = false
+    if (isCurrentAuthContext(generation)) saving.value = false
   }
 }
 
 watch(
-  () => props.currentUserId,
-  (userId, previousUserId) => {
-    actionSession = userId ? createContractVoidActionSession(userId) : null
-    if (userId !== previousUserId) {
-      selectedRequest.value = null
-      void loadRequests()
-    }
+  () => [props.currentUserId, props.role] as const,
+  ([userId]) => {
+    resetUserBoundState()
+    actionSession = authReady.value && userId ? createContractVoidActionSession(userId) : null
+    if (actionSession) void loadRequests(undefined, authGeneration)
   },
+  { flush: 'sync' },
 )
 
 watch(
@@ -547,15 +648,15 @@ watch(
   },
   { immediate: true },
 )
-onMounted(loadRequests)
+onMounted(() => {
+  if (authReady.value) void loadRequests(undefined, authGeneration)
+})
 onBeforeUnmount(() => {
+  authGeneration += 1
   previewGeneration += 1
+  actionSession = null
   closeProofPreview()
-  const abandonedProofs = [...uploadedProofs.value]
   releaseUploadedProofs()
-  abandonedProofs.forEach((file) => {
-    void deleteContractVoidProof(file.id).catch(() => undefined)
-  })
 })
 </script>
 
@@ -566,14 +667,14 @@ onBeforeUnmount(() => {
         <h1>合同作废／纠错</h1>
         <p>先核对关联影响，再提交作废申请或执行纠错冲销</p>
       </div>
-      <el-button v-if="selectedRequest" :disabled="saving" @click="startNewRequest">新建作废申请</el-button>
+      <el-button v-if="selectedRequest" :disabled="!authReady || saving" @click="startNewRequest">新建作废申请</el-button>
     </header>
 
     <div class="void-layout">
       <section class="contract-card request-list-card">
         <header class="card-head">
           <h2>作废纠错申请</h2>
-          <el-button :loading="requestsLoading" link type="primary" @click="loadRequests">刷新</el-button>
+          <el-button :loading="requestsLoading" :disabled="!authReady" link type="primary" @click="loadRequests()">刷新</el-button>
         </header>
         <div class="request-filters">
           <el-input v-model="filters.contractNo" data-test="void-contract-no-filter" clearable placeholder="合同编号" />
@@ -585,7 +686,7 @@ onBeforeUnmount(() => {
             <el-option label="已驳回" value="REJECTED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
-          <el-button data-test="search-void-requests" type="primary" :disabled="saving" @click="loadRequests">查询</el-button>
+          <el-button data-test="search-void-requests" type="primary" :disabled="!authReady || saving" @click="loadRequests()">查询</el-button>
         </div>
         <small class="status-filter-help">状态筛选：待确认、已完成、已驳回、已取消</small>
         <el-table v-loading="requestsLoading" :data="requests" stripe row-key="id" empty-text="暂无合同作废纠错申请" max-height="560">
@@ -686,7 +787,7 @@ onBeforeUnmount(() => {
             <div class="form-body">
               <el-form label-position="top">
                 <el-form-item label="选择合同" required>
-                  <el-select v-model="selectedId" data-test="void-contract-select" filterable :filter-method="(value: string) => (contractKeyword = value)" placeholder="搜索合同编号、楼栋房号或租户姓名" no-match-text="未找到可作废的合同" @change="chooseContract">
+                  <el-select v-model="selectedId" data-test="void-contract-select" filterable :disabled="!authReady || saving || attachmentUploading" :filter-method="(value: string) => (contractKeyword = value)" placeholder="搜索合同编号、楼栋房号或租户姓名" no-match-text="未找到可作废的合同" @change="chooseContract">
                     <el-option v-for="item in visibleContracts" :key="item.id" :label="contractOptionLabel(item)" :value="item.id" />
                   </el-select>
                 </el-form-item>
@@ -704,15 +805,15 @@ onBeforeUnmount(() => {
                 <ContractVoidImpactCards v-else-if="impact" :impact="impact" />
                 <el-alert v-else title="尚未生成关联影响，不能提交申请" type="warning" :closable="false" />
                 <el-form label-position="top" class="void-form">
-                  <el-form-item label="作废原因" required><el-input v-model="reason" data-test="void-reason" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="请说明原合同错误及作废依据" /></el-form-item>
+                  <el-form-item label="作废原因" required><el-input v-model="reason" data-test="void-reason" type="textarea" :disabled="!authReady || saving" :rows="3" maxlength="500" show-word-limit placeholder="请说明原合同错误及作废依据" /></el-form-item>
                   <el-form-item label="证明附件（可选）">
-                    <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" :disabled="saving || attachmentUploading" :on-change="uploadProof"><el-button :loading="attachmentUploading" :disabled="saving">上传证明附件</el-button></el-upload>
+                    <el-upload :auto-upload="false" :show-file-list="false" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" :disabled="!authReady || saving || attachmentUploading" :on-change="uploadProof"><el-button :loading="attachmentUploading" :disabled="!authReady || saving">上传证明附件</el-button></el-upload>
                     <span class="upload-tip">上传成功后才会加入申请；支持图片和 PDF 预览</span>
                   </el-form-item>
                   <div v-if="uploadedProofs.length" class="evidence-list uploaded-list">
                     <div v-for="file in uploadedProofs" :key="file.id">
                       <span>{{ file.originalName }}</span>
-                      <div><el-button :data-test="`preview-void-proof-${file.id}`" link type="primary" @click="previewUploadedProof(file)">预览</el-button><el-button :data-test="`remove-void-proof-${file.id}`" link type="danger" :disabled="saving || attachmentUploading" @click="removeUploadedProof(file)">移除</el-button></div>
+                      <div><el-button :data-test="`preview-void-proof-${file.id}`" link type="primary" :disabled="!authReady" @click="previewUploadedProof(file)">预览</el-button><el-button :data-test="`remove-void-proof-${file.id}`" link type="danger" :disabled="!authReady || saving || attachmentUploading" @click="removeUploadedProof(file)">移除</el-button></div>
                     </div>
                   </div>
                   <div class="submit-actions">

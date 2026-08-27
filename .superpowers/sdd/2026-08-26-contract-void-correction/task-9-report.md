@@ -144,3 +144,31 @@
 - 后端完整单元：79 suite、477/477；前端完整单元：39 文件、215/215；真实 MySQL E2E：1 suite、6/6。
 - 后端 `lint:check`、后端 build、前端 build、`git diff --check` 均通过；前端仅有既存大 chunk 警告。
 - 用户授权的临时证明附件边界保持不变：仅 uploader-owned、unlocked、unassociated 的 `CONTRACT_VOID_PROOF`；submitted／locked／associated／historical attachment 绝不删除。本轮未修改 env、secret 或迁移，未输出任何密码或密钥。
+
+## Fix round 4/5：身份切换失败关闭与精确并发持久化证明
+
+### 红灯、根因与闭合
+
+- 前端首轮聚焦为 2 文件、62 项中 5 项失败、57 项通过：合同工作区的 `role`／`canAccessVoidCorrection` 是 setup 时静态快照；面板仅轮换 action session，未清空 reason、impact、selected contract/request、staged proof 与预览，也没有按认证代际拒绝旧列表／影响／上传响应；`clearSelectedContract` 使旧 generation 失效后，旧请求的 finally 不再清 loading，导致加载态永久保留。
+- `ContractsWorkspace` 将角色和作废页签权限改为响应式计算；同标签 `SUPER_ADMIN -> ADMIN` 立即撤下直接执行 UI，继续降为无权限角色时同步卸载作废面板、回退列表并移除合同选择。`clearSelectedContract` 现在同步清 loading，旧 generation 仍不能写回。
+- `ContractVoidPanel` 以认证 generation 约束列表、详情、影响、刷新、提交、审批、驳回、取消、上传、证明预览和下载的每次异步写回。用户 ID 或角色变化时先失效旧 generation，关闭 prompt，清空请求、草稿、合同／申请选择、影响、staged proof、预览和所有 loading/saving 状态，再为已就绪且获授权的当前用户创建新 session；认证未就绪时不加载敏感数据并禁用选择、原因、上传、查询和提交。
+- 提交前冻结当前合同、原因、impactHash、附件 ID、session 与幂等键；认证代际变化后旧响应不能写入新用户 UI。旧用户 staged proof 只从本地状态移除并撤销 object URL，不发后端删除请求，也绝不进入新用户 payload/key；服务端孤立文件继续由既有 24 小时受控 TTL 处理。
+
+### 精确 MySQL 并发断言
+
+- refresh-vs-refresh 保留真实 `arrivals=2` barrier，并对左右两项分别断言 baseline、返回值和对应持久化 request 均为 `PENDING`，三处 impactHash 逐项精确相等。
+- approve-vs-refresh 同样保留双到达 barrier；审批 request 从数据库回读并精确断言 `COMPLETED` 且 impactHash 等于 `completed.impactHash`，刷新 request 精确断言 `PENDING` 且持久化 hash 等于 `refreshed.impactHash`。
+- fixture cleanup 与安全审计 provenance 未改：refresh-only fixture 仍安全删除，approve 的 COMPLETED 一侧及其追加式审计来源仍保留。
+
+### 绿灯与最终验证
+
+- 面板聚焦：1 文件、27/27；工作区聚焦：1 文件、35/35；Task 9 前端聚焦：4 文件、72/72。
+- 前端完整单元：39 文件、219/219；前端 build 通过，仅有既存大 chunk 警告。
+- 后端聚焦：10 suite、117/117；后端完整单元：79 suite、477/477；真实 MySQL E2E：1 suite、6/6。
+- 后端 `lint:check`、后端 build、`git diff --check` 均通过。
+
+### 安全边界与自审
+
+- 真实 MySQL E2E 只在测试进程内从 `deploy/.env.test` 导入 `MYSQL_*` 并构造 `DATABASE_URL`；没有输出、记录或提交任何值。
+- 没有修改后端权限、附件删除资格、迁移或 Task 10+。显式删除仍只能作用于 uploader-owned、unlocked、unassociated 的 `CONTRACT_VOID_PROOF`；submitted／locked／associated／historical attachment 绝不触碰。
+- 当前无功能阻塞或 Important 开放项。

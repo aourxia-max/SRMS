@@ -410,22 +410,26 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
 
     barrier.transactionSpy.mockRestore();
     expect(barrier.arrivals()).toBe(2);
-    expect(results.map((item) => item.status)).toEqual(['PENDING', 'PENDING']);
-    expect(results.map((item) => item.impactHash)).toEqual(
-      baseline.map((item) => item.impactHash),
-    );
-    const stored = await prisma.db.contractVoidRequest.findMany({
-      where: { id: { in: [left.requestId, right.requestId] } },
-      orderBy: { id: 'asc' },
-      select: { status: true, impactHash: true },
-    });
-    expect(stored).toHaveLength(2);
-    expect(
-      stored.every(
-        (item) =>
-          item.status === 'PENDING' && /^[0-9a-f]{64}$/.test(item.impactHash),
-      ),
-    ).toBe(true);
+    expect(baseline[0].status).toBe('PENDING');
+    expect(baseline[1].status).toBe('PENDING');
+    expect(results[0].status).toBe('PENDING');
+    expect(results[1].status).toBe('PENDING');
+    expect(results[0].impactHash).toBe(baseline[0].impactHash);
+    expect(results[1].impactHash).toBe(baseline[1].impactHash);
+    const [storedLeft, storedRight] = await Promise.all([
+      prisma.db.contractVoidRequest.findUniqueOrThrow({
+        where: { id: left.requestId },
+        select: { status: true, impactHash: true },
+      }),
+      prisma.db.contractVoidRequest.findUniqueOrThrow({
+        where: { id: right.requestId },
+        select: { status: true, impactHash: true },
+      }),
+    ]);
+    expect(storedLeft.status).toBe('PENDING');
+    expect(storedRight.status).toBe('PENDING');
+    expect(storedLeft.impactHash).toBe(results[0].impactHash);
+    expect(storedRight.impactHash).toBe(results[1].impactHash);
   });
 
   it('同一房源 approve 与另一合同 refresh 并发完成且终态和持久化快照一致', async () => {
@@ -460,19 +464,23 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
 
     barrier.transactionSpy.mockRestore();
     expect(barrier.arrivals()).toBe(2);
-    expect(completed).toMatchObject({
-      status: 'COMPLETED',
-      contractStatus: 'VOIDED',
-    });
-    expect(refreshed).toMatchObject({ status: 'PENDING' });
-    const stored = await prisma.db.contractVoidRequest.findUniqueOrThrow({
-      where: { id: refresh.requestId },
-      select: { status: true, impactHash: true },
-    });
-    expect(stored).toEqual({
-      status: 'PENDING',
-      impactHash: refreshed.impactHash,
-    });
+    expect(completed.status).toBe('COMPLETED');
+    expect(completed.contractStatus).toBe('VOIDED');
+    expect(refreshed.status).toBe('PENDING');
+    const [storedApproval, storedRefresh] = await Promise.all([
+      prisma.db.contractVoidRequest.findUniqueOrThrow({
+        where: { id: approval.requestId },
+        select: { status: true, impactHash: true },
+      }),
+      prisma.db.contractVoidRequest.findUniqueOrThrow({
+        where: { id: refresh.requestId },
+        select: { status: true, impactHash: true },
+      }),
+    ]);
+    expect(storedApproval.status).toBe('COMPLETED');
+    expect(storedApproval.impactHash).toBe(completed.impactHash);
+    expect(storedRefresh.status).toBe('PENDING');
+    expect(storedRefresh.impactHash).toBe(refreshed.impactHash);
   });
   it('rolls back every row when failure occurs after reversal insertion', async () => {
     rollbackFixture = await createFixture('rollback');
