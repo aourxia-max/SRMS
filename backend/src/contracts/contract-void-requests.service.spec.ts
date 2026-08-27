@@ -193,13 +193,22 @@ describe('ContractVoidRequestsService', () => {
         const sql = query.strings.join('?');
         if (sql.includes('contract_void_requests'))
           return Promise.resolve([request]);
-        if (sql.includes('contracts')) {
+        if (sql.includes('FROM rooms')) return Promise.resolve([{ id: 3 }]);
+        if (sql.includes('FROM contracts')) {
           return Promise.resolve([
-            { id: 7, status: requestOverrides.contractStatus ?? 'ACTIVE' },
+            {
+              id: BigInt(7),
+              roomId: BigInt(3),
+              status: requestOverrides.contractStatus ?? 'ACTIVE',
+              contractNo: 'HT20260007',
+            },
           ]);
         }
         return Promise.resolve([]);
       }),
+      contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 7, roomId: 3 }),
+      },
       contractVoidRequest: {
         findUnique: jest
           .fn()
@@ -259,7 +268,7 @@ describe('ContractVoidRequestsService', () => {
     expect(requests.refreshSnapshot).toHaveBeenCalledWith(9, admin);
   });
 
-  it('refreshes a pending snapshot under contract-first deterministic row locks', async () => {
+  it('refreshes a pending snapshot under room-first deterministic row locks', async () => {
     const { service, tx, db, preview, hash, snapshot } = refreshService();
 
     await expect(service.refreshSnapshot(9, admin)).resolves.toMatchObject({
@@ -271,8 +280,9 @@ describe('ContractVoidRequestsService', () => {
     const lockOrder = tx.$queryRaw.mock.calls.map(([query]) =>
       query.strings.join('?'),
     );
-    expect(lockOrder[0]).toContain('contracts');
-    expect(lockOrder[1]).toContain('contract_void_requests');
+    expect(lockOrder[0]).toContain('rooms');
+    expect(lockOrder[1]).toContain('contracts');
+    expect(lockOrder[2]).toContain('contract_void_requests');
     expect(preview.loadInput.mock.invocationCallOrder[0]).toBeGreaterThan(
       tx.$queryRaw.mock.invocationCallOrder.at(-1)!,
     );

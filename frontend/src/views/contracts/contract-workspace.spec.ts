@@ -441,6 +441,61 @@ describe('合同工作区复审边界', () => {
     vi.restoreAllMocks()
   })
 
+  it('作废完成后详情重载失败时关闭旧详情并回到列表，路由监听不会恢复旧 ACTIVE 对象', async () => {
+    const active = activeContract()
+    const voided = { ...active, status: 'VOIDED' as const }
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) => Promise.resolve({ data: { data: url === '/properties/rooms' ? [] : { items: [] } } }) as never,
+    )
+    vi.spyOn(contractService, 'listContracts').mockResolvedValueOnce([active]).mockResolvedValueOnce([voided])
+    vi.spyOn(contractService, 'getContract').mockResolvedValueOnce(active).mockRejectedValue(new Error('detail timeout'))
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'listContractVoidRequests').mockResolvedValue([])
+    vi.spyOn(contractService, 'previewContractVoid').mockResolvedValue({
+      contract: { id: 12, status: 'ACTIVE', roomId: 8 },
+      summary: {
+        rentBillPayable: '0.00', effectivePayment: '0.00', depositBalance: '0.00', prepaymentBalance: '0.00', refundNet: '0.00', currentNetImpact: '0.00', plannedReversal: '0.00', postReversalNetImpact: '0.00',
+      },
+      rows: [],
+      pending: { adjustments: [], refunds: [], voidRequests: [], depositRefunds: [], changes: [], rebates: [], checkouts: [] },
+      completedCheckoutIds: [],
+      room: { currentStatus: 'RENTED', hasLaterContract: false, action: 'RECALCULATE' },
+      flags: { hasPendingWorkflows: false, hasCompletedCheckout: false, hasLaterContract: false },
+      sourceSnapshot: { prepaymentBalanceSource: null, depositBalanceSource: null, contractMembers: [], paymentAllocations: [], adjustments: [], rebates: [], checkoutSettlements: [], commissions: [] },
+      impactHash: 'a'.repeat(64),
+    })
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+    const error = vi.spyOn(ElMessage, 'error')
+
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = { id: 1, username: 'root', displayName: '超级管理员', role: 'SUPER_ADMIN' }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=void-correction&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    wrapper.getComponent(ContractVoidPanel).vm.$emit('completed', 12)
+    await flushPromises()
+    await router.replace('/contracts?tab=detail&contractId=12')
+    await flushPromises()
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('合同作废后详情刷新失败'))
+    expect(wrapper.getComponent(ContractDetailPanel).props('contract')).toBeNull()
+    expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-contract-void-correction"]').exists()).toBe(false)
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
   it('访客不能通过查询参数强制进入合同作废纠错工作区', async () => {
     vi.spyOn(http, 'get').mockImplementation(
       (url: string) =>

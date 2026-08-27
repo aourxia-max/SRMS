@@ -134,7 +134,17 @@ async function loadBaseData() {
   }
 }
 
-async function selectContract(summary: ContractListItem, syncRoute = true) {
+function clearSelectedContract() {
+  selectedContractId.value = null
+  selectedContract.value = null
+  bills.value = []
+  files.value = []
+  changes.value = []
+  rebates.value = []
+  payments.value = []
+}
+
+async function selectContract(summary: ContractListItem, syncRoute = true, failClosed = false) {
   selectedContractId.value = summary.id
   loading.value = true
   try {
@@ -147,8 +157,14 @@ async function selectContract(summary: ContractListItem, syncRoute = true) {
     payments.value = contractPayments
     tab.value = 'detail'
     if (syncRoute) await writeWorkspaceRoute('detail', summary.id)
+    return true
   } catch (error) {
+    if (failClosed) {
+      clearSelectedContract()
+      throw error
+    }
     ElMessage.error(errorMessage(error, '合同详情加载失败'))
+    return false
   } finally {
     loading.value = false
   }
@@ -406,23 +422,21 @@ async function reloadSelectedContract() {
 }
 
 async function handleContractVoidCompleted(contractId: number) {
+  clearSelectedContract()
+  tab.value = 'list'
   try {
     contracts.value = await listContracts()
     const summary = contracts.value.find((item) => item.id === contractId)
     if (!summary) {
-      selectedContractId.value = null
-      selectedContract.value = null
-      bills.value = []
-      files.value = []
-      changes.value = []
-      rebates.value = []
-      payments.value = []
-      setTab('list')
+      await writeWorkspaceRoute('list', null)
       return
     }
-    await selectContract(summary, false)
+    await selectContract(summary, false, true)
     await writeWorkspaceRoute('detail', contractId)
   } catch (error) {
+    clearSelectedContract()
+    tab.value = 'list'
+    await writeWorkspaceRoute('list', null)
     ElMessage.error(errorMessage(error, '合同作废后详情刷新失败，请手动刷新'))
   }
 }

@@ -15,7 +15,7 @@ import {
   hashContractVoidImpact,
 } from './contract-void-impact';
 import {
-  lockContractVoidContract,
+  lockContractVoidExclusiveScope,
   lockContractVoidRelatedRows,
 } from './contract-void-locks';
 import { resolveRoomStatusAfterContractVoid } from './contract-room-reconciliation';
@@ -146,7 +146,10 @@ export class ContractVoidExecutorService {
           if (!reference) {
             throw new NotFoundException('合同作废申请不存在');
           }
-          await lockContractVoidContract(tx, reference.contractId);
+          const scope = await lockContractVoidExclusiveScope(
+            tx,
+            reference.contractId,
+          );
 
           const requests = await tx.$queryRaw<RawLockedRequest[]>(
             Prisma.sql`SELECT id, request_no AS requestNo, contract_id AS contractId, status, impact_hash AS impactHash, execution_batch_no AS executionBatchNo, execution_idempotency_key AS executionIdempotencyKey, result_snapshot AS resultSnapshot FROM contract_void_requests WHERE id = ${requestId} FOR UPDATE`,
@@ -170,11 +173,7 @@ export class ContractVoidExecutorService {
           }
 
           await lockContractVoidRelatedRows(tx, request.contractId);
-          const contract = await tx.contract.findUnique({
-            where: { id: request.contractId },
-            select: { contractNo: true, status: true },
-          });
-          if (!contract) throw new NotFoundException('合同不存在');
+          const contract = scope.target;
 
           const input = await this.previews.loadInput(tx, request.contractId);
           const computed = computeContractVoidImpact(input);

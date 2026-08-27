@@ -98,27 +98,36 @@ function harness() {
     contract: { contractNo: 'HT20260007', status: 'ACTIVE' },
   };
   const tx = {
-    $queryRaw: jest.fn((query: { strings: string[] }) =>
-      Promise.resolve(
-        query.strings.join('?').includes('contract_void_requests')
-          ? [
-              {
-                ...request,
-                id: BigInt(request.id),
-                contractId: BigInt(request.contractId),
-              },
-            ]
-          : [],
-      ),
-    ),
+    $queryRaw: jest.fn((query: { strings: string[] }) => {
+      const sql = query.strings.join('?');
+      if (sql.includes('contract_void_requests')) {
+        return Promise.resolve([
+          {
+            ...request,
+            id: BigInt(request.id),
+            contractId: BigInt(request.contractId),
+          },
+        ]);
+      }
+      if (sql.includes('FROM rooms')) return Promise.resolve([{ id: 3 }]);
+      if (sql.includes('FROM contracts')) {
+        return Promise.resolve([
+          {
+            id: BigInt(7),
+            roomId: BigInt(3),
+            status: 'ACTIVE',
+            contractNo: 'HT20260007',
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    }),
     contractVoidRequest: {
       findUnique: jest.fn().mockImplementation(() => Promise.resolve(request)),
       update: jest.fn().mockResolvedValue({}),
     },
     contract: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ contractNo: 'HT20260007', status: 'ACTIVE' }),
+      findUnique: jest.fn().mockResolvedValue({ id: 7, roomId: 3 }),
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({ status: 'VOIDED' }),
     },
@@ -231,10 +240,9 @@ describe('ContractVoidExecutorService', () => {
       query.strings.join('?'),
     );
     expect(lockOrder).toEqual([
-      expect.stringContaining('contracts'),
-      expect.stringContaining('contract_void_requests'),
       expect.stringContaining('rooms'),
       expect.stringContaining('contracts'),
+      expect.stringContaining('contract_void_requests'),
       expect.stringContaining('contract_members'),
       expect.stringContaining('rent_bills'),
       expect.stringContaining('payments'),
@@ -259,10 +267,10 @@ describe('ContractVoidExecutorService', () => {
     });
     expect(tx.contract.findUnique).toHaveBeenCalledWith({
       where: { id: 7 },
-      select: { contractNo: true, status: true },
+      select: { id: true, roomId: true },
     });
-    expect(tx.contract.findUnique.mock.invocationCallOrder[0]).toBeGreaterThan(
-      tx.$queryRaw.mock.invocationCallOrder.at(-1)!,
+    expect(tx.contract.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[0],
     );
     expect(previews.loadInput.mock.invocationCallOrder[0]).toBeGreaterThan(
       tx.$queryRaw.mock.invocationCallOrder.at(-1)!,

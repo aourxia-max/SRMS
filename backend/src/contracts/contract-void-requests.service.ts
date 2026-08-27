@@ -14,7 +14,7 @@ import {
   hashContractVoidImpact,
 } from './contract-void-impact';
 import {
-  lockContractVoidContract,
+  lockContractVoidExclusiveScope,
   lockContractVoidRelatedRows,
 } from './contract-void-locks';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
@@ -219,11 +219,10 @@ export class ContractVoidRequestsService {
         });
         if (!reference) throw new NotFoundException('合同作废申请不存在');
 
-        const contracts = await lockContractVoidContract(
+        const scope = await lockContractVoidExclusiveScope(
           tx,
           reference.contractId,
         );
-        if (contracts.length !== 1) throw new NotFoundException('合同不存在');
 
         const rows = await tx.$queryRaw<
           Array<{
@@ -253,7 +252,7 @@ export class ContractVoidRequestsService {
           request.submittedBy !== user.id
         )
           throw new ForbiddenException('只能刷新本人提交的作废申请');
-        if (contracts[0].status === 'VOIDED')
+        if (scope.target.status === 'VOIDED')
           throw new BadRequestException('已作废合同不能刷新影响快照');
 
         await lockContractVoidRelatedRows(tx, request.contractId);

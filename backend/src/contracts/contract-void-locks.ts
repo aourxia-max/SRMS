@@ -1,27 +1,59 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
-export async function lockContractVoidContract(
+type LockedContract = {
+  id: number;
+  roomId: number;
+  status: string;
+  contractNo: string;
+};
+
+type RawLockedContract = {
+  id: number | bigint;
+  roomId: number | bigint;
+  status: string;
+  contractNo: string;
+};
+
+export async function lockContractVoidExclusiveScope(
   tx: Prisma.TransactionClient,
   contractId: number,
 ) {
-  return tx.$queryRaw<Array<{ id: number | bigint; status: string }>>(
-    Prisma.sql`SELECT id, status FROM contracts WHERE id = ${contractId} FOR UPDATE`,
+  const identity = await tx.contract.findUnique({
+    where: { id: contractId },
+    select: { id: true, roomId: true },
+  });
+  if (!identity) throw new NotFoundException('合同不存在');
+  if (identity.roomId === null || identity.roomId === undefined) {
+    throw new ConflictException('合同未关联房源，不能执行作废纠错');
+  }
+
+  const rooms = await tx.$queryRaw<Array<{ id: number | bigint }>>(
+    Prisma.sql`SELECT id FROM rooms WHERE id = ${identity.roomId} FOR UPDATE`,
   );
+  if (rooms.length !== 1) throw new NotFoundException('合同关联房源不存在');
+
+  const rawContracts = await tx.$queryRaw<RawLockedContract[]>(
+    Prisma.sql`SELECT id, room_id AS roomId, status, contract_no AS contractNo FROM contracts WHERE room_id = ${identity.roomId} ORDER BY id FOR UPDATE`,
+  );
+  const contracts: LockedContract[] = rawContracts.map((contract) => ({
+    ...contract,
+    id: Number(contract.id),
+    roomId: Number(contract.roomId),
+  }));
+  const target = contracts.find((contract) => contract.id === contractId);
+  if (!target || target.roomId !== identity.roomId) {
+    throw new ConflictException('合同所属房源已变化，请刷新后重试');
+  }
+  return { roomId: identity.roomId, target, contracts };
 }
 
 export async function lockContractVoidRelatedRows(
   tx: Prisma.TransactionClient,
   contractId: number,
 ) {
-  // The contract root is locked separately before the request row. Everything
-  // below then follows the same deterministic parent-before-child order for
-  // refresh and approval.
-  await tx.$queryRaw(
-    Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT room_id FROM contracts WHERE id = ${contractId}) FOR UPDATE`,
-  );
-  await tx.$queryRaw(
-    Prisma.sql`SELECT related.id FROM contracts related JOIN contracts source ON source.room_id = related.room_id WHERE source.id = ${contractId} ORDER BY related.id FOR UPDATE`,
-  );
+  // The exclusive correction scope has already locked room -> all contracts
+  // in ascending id order. Child rows now follow one deterministic order.
   await tx.$queryRaw(
     Prisma.sql`SELECT id FROM contract_members WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
   );

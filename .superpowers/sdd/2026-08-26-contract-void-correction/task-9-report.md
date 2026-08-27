@@ -91,3 +91,35 @@
 ### 自审
 
 负向测试覆盖他人上传、已锁定、已关联、物理删除失败、TTL 竞争条件及数据库创建失败回滚。没有删除 submitted/locked/historical attachment，没有读取、输出或提交任何秘密。当前无功能阻塞。
+
+## Fix round 2/5：跨重载幂等恢复、父页面失败关闭与同房锁序
+
+### Important 红灯与根因
+
+- 幂等恢复红灯：前端 3 文件 60 项中新增 4 项失败。根因是 submission/execution key 仅保存在组件内存，首次提交 timeout 后 catch 不按服务端 `submissionIdempotencyKey` 回查，重载后也不会自动选中已创建的 PENDING。
+- 父页面失败关闭红灯：详情重载 reject 时旧 ACTIVE 对象仍保留，随后仍写 detail 路由；新增测试证明危险入口可能继续显示。
+- 锁序红灯：统一 helper 的 3 项新增测试全部失败。旧路径为 target contract -> room -> 同房 contracts，同房 A/B 并发存在环路。
+
+### 实现与生命周期
+
+- submission key 以 `sessionStorage` 保存，定位键仅为表单摘要 fingerprint，不保存原因、附件内容等敏感 payload；同 fingerprint 跨 reload 复用，payload 变化轮换。execution key 按 requestId 跨 reload 复用，申请进入 COMPLETED/REJECTED/CANCELLED 后同时清除 execution 与对应 submission key。
+- submit 响应 timeout/丢失时立即重新加载申请，并优先以完整 `submissionIdempotencyKey` 精确找回服务端 PENDING；找到后直接展示并可继续确认，未找到则保留原 key 供重试。页面重新挂载也从 sessionStorage 中的 opaque key 恢复。
+- completed 事件先清空旧 selected contract、账单、附件、变更、退差和收款，再加载列表/详情。列表或详情任一失败都保持 selected 为空并回退安全列表路由；路由 watcher 不会恢复旧 ACTIVE 对象，危险按钮隐藏。
+- 纠错独占锁统一为 identity-only 读取 roomId（不参与业务决策）后 `room FOR UPDATE -> 同房全部 contracts ORDER BY id FOR UPDATE -> request -> related rows`。锁内重载 target 并校验 roomId 未漂移；合同无房源或房源缺失均中文失败。executor 与 refresh 共用同一 helper。
+
+### 真实 MySQL 并发证据
+
+- 新增同一 room 两份非 VOIDED 合同 fixture，覆盖 refresh-vs-refresh 与 approve-vs-refresh；均在 10 秒保护超时内完成，无 deadlock，终态及持久化 impactHash 一致。
+- 首次运行因 Docker 守护进程未启动而在连接阶段超时；启动既有 `srms_test` MySQL 后，fixture 又暴露 A 快照在 B 合同创建前生成而 stale。将 A 先通过受保护刷新接口同步基线后，最终真实 MySQL E2E 1 suite、6/6 通过。未输出或提交测试配置秘密。
+
+### 最终验证
+
+- 后端 affected/Task5/6/9 focused：5 suite、91/91。
+- 前端 Task9 focused：4 文件、69/69；其中 3 个 Important 聚焦 61/61。
+- 后端完整单元：79 suite、477/477；前端完整单元：39 文件、212/212。
+- 真实 MySQL E2E：1 suite、6/6。
+- 后端 `lint:check`、后端 build、前端 build、`git diff --check` 全部通过；仅保留既有前端大 chunk 警告。
+
+### 自审
+
+没有使用 localStorage，没有持久化原因或附件内容，没有自动重提/自动审批。普通合同 mutation 仍只锁单合同；仅 refresh/execute 纠错独占路径采用 room-first。未修改或输出任何 env、密码、令牌或密钥。三个 Important 均有先红后绿证据，无功能阻塞。

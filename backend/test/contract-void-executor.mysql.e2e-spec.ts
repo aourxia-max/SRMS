@@ -4,6 +4,7 @@ import type { AuthUser } from '../src/auth/auth-user.type';
 import { CheckoutService } from '../src/checkout/checkout.service';
 import { ContractVoidExecutorService } from '../src/contracts/contract-void-executor.service';
 import { ContractVoidPreviewService } from '../src/contracts/contract-void-preview.service';
+import { ContractVoidRequestsService } from '../src/contracts/contract-void-requests.service';
 import { ContractVoidReversalWriter } from '../src/contracts/contract-void-reversal-writer';
 import { CommissionsService } from '../src/finance/commissions.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -212,6 +213,184 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
     };
   }
 
+  async function createSharedRoomFixture(label: string) {
+    const suffix = `${marker.slice(-8)}${label.slice(-5)}`;
+    const building = await prisma.db.building.create({
+      data: {
+        buildingNo: `ZFSH${suffix}`.slice(0, 20),
+        buildingName: '合同作废同房并发 E2E',
+        floorCount: 1,
+        remark: '隔离测试数据',
+      },
+    });
+    const room = await prisma.db.room.create({
+      data: {
+        buildingId: building.id,
+        houseNo: '201',
+        fullHouseNo: `ZFSH${suffix}栋201`.slice(0, 60),
+        floorNo: 2,
+        roomType: 'RESIDENTIAL',
+        area: new Prisma.Decimal('60.00'),
+        usageType: 'RESIDENCE',
+        roomStatus: 'RENTED',
+        remark: '合同作废同房并发 E2E',
+      },
+    });
+    const fixtures: Fixture[] = [];
+    for (const index of [1, 2]) {
+      const tenant = await prisma.db.tenant.create({
+        data: {
+          name: `同房并发租户${suffix}${index}`,
+          remark: '隔离测试数据',
+        },
+      });
+      const contract = await prisma.db.contract.create({
+        data: {
+          contractNo: `ZFSH-HT-${suffix}-${index}`,
+          roomId: room.id,
+          startDate: new Date(`2035-0${index}-01T00:00:00.000Z`),
+          endDate: new Date(`2035-1${index}-30T00:00:00.000Z`),
+          monthlyRent: new Prisma.Decimal('100.00'),
+          pricingMode: 'FIXED',
+          paymentCycleMonths: 1,
+          depositRequired: new Prisma.Decimal('0.00'),
+          status: 'ACTIVE',
+          activatedAt: new Date(),
+          members: {
+            create: { tenantId: tenant.id, memberRole: 'PRIMARY' },
+          },
+        },
+      });
+      const payment = await prisma.db.payment.create({
+        data: {
+          receiptNo: `ZFSH-SK-${suffix}-${index}`,
+          contractId: contract.id,
+          paymentCategory: 'RENT',
+          paymentDate: new Date('2035-01-02T00:00:00.000Z'),
+          amount: new Prisma.Decimal('100.00'),
+          method: 'CASH',
+          operatorId: operator.id,
+          status: 'CONFIRMED',
+        },
+      });
+      const previews = new ContractVoidPreviewService(prisma);
+      const preview = await previews.preview(contract.id, operator);
+      const request = await prisma.db.contractVoidRequest.create({
+        data: {
+          requestNo: `ZFSH-ZF-${suffix}-${index}`,
+          contractId: contract.id,
+          reason: '验证同房合同统一锁序',
+          impactSnapshot: JSON.parse(
+            JSON.stringify(preview),
+          ) as Prisma.InputJsonValue,
+          impactHash: preview.impactHash,
+          activeContractKey: `contract:${contract.id}`,
+          submissionIdempotencyKey: `submit-shared-${suffix}-${index}`,
+          submittedBy: operator.id,
+        },
+      });
+      fixtures.push({
+        buildingId: building.id,
+        roomId: room.id,
+        tenantId: tenant.id,
+        contractId: contract.id,
+        paymentId: payment.id,
+        requestId: request.id,
+        previewHash: preview.impactHash,
+      });
+    }
+    return fixtures as [Fixture, Fixture];
+  }
+
+  async function withinTimeout<T>(promise: Promise<T>, milliseconds = 10000) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('同房合同并发操作超时')),
+            milliseconds,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  it('同一房源两个合同并发 refresh 均在超时内完成且快照保持一致', async () => {
+    const [left, right] = await createSharedRoomFixture('refresh-pair');
+    const requests = new ContractVoidRequestsService(
+      prisma,
+      new ContractVoidPreviewService(prisma),
+    );
+
+    const results = await withinTimeout(
+      Promise.all([
+        requests.refreshSnapshot(left.requestId, operator),
+        requests.refreshSnapshot(right.requestId, operator),
+      ]),
+    );
+
+    expect(results.map((item) => item.status)).toEqual(['PENDING', 'PENDING']);
+    const stored = await prisma.db.contractVoidRequest.findMany({
+      where: { id: { in: [left.requestId, right.requestId] } },
+      orderBy: { id: 'asc' },
+      select: { status: true, impactHash: true },
+    });
+    expect(stored).toHaveLength(2);
+    expect(
+      stored.every(
+        (item) =>
+          item.status === 'PENDING' && /^[0-9a-f]{64}$/.test(item.impactHash),
+      ),
+    ).toBe(true);
+  });
+
+  it('同一房源 approve 与另一合同 refresh 并发完成且终态和持久化快照一致', async () => {
+    const [approval, refresh] =
+      await createSharedRoomFixture('approve-refresh');
+    const previews = new ContractVoidPreviewService(prisma);
+    const executor = new ContractVoidExecutorService(
+      prisma,
+      previews,
+      new ContractVoidReversalWriter(),
+      new SecurityAuditChainService(),
+    );
+    const requests = new ContractVoidRequestsService(prisma, previews);
+    const synchronizedApproval = await requests.refreshSnapshot(
+      approval.requestId,
+      operator,
+    );
+
+    const [completed, refreshed] = await withinTimeout(
+      Promise.all([
+        executor.execute(
+          approval.requestId,
+          synchronizedApproval.impactHash,
+          '确认作废合同',
+          `execute-shared-${marker}`,
+          operator,
+        ),
+        requests.refreshSnapshot(refresh.requestId, operator),
+      ]),
+    );
+
+    expect(completed).toMatchObject({
+      status: 'COMPLETED',
+      contractStatus: 'VOIDED',
+    });
+    expect(refreshed).toMatchObject({ status: 'PENDING' });
+    const stored = await prisma.db.contractVoidRequest.findUniqueOrThrow({
+      where: { id: refresh.requestId },
+      select: { status: true, impactHash: true },
+    });
+    expect(stored).toEqual({
+      status: 'PENDING',
+      impactHash: refreshed.impactHash,
+    });
+  });
   it('rolls back every row when failure occurs after reversal insertion', async () => {
     rollbackFixture = await createFixture('rollback');
     const previews = new ContractVoidPreviewService(prisma);

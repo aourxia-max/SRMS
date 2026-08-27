@@ -135,12 +135,34 @@ function queryFromFilters(): ContractVoidRequestQuery {
   }
 }
 
-async function loadRequests() {
+async function recoverPendingRequest(rows: ContractVoidRequest[], submissionKey?: string) {
+  if (selectedRequest.value) return null
+  const recovered = rows.find(
+    (item) =>
+      item.status === 'PENDING' &&
+      (submissionKey ? item.submissionIdempotencyKey === submissionKey : actionSession.hasSubmissionKey(item.submissionIdempotencyKey)),
+  )
+  if (!recovered) return null
+  try {
+    selectedRequest.value = await getContractVoidRequest(recovered.id)
+  } catch {
+    selectedRequest.value = recovered
+  }
+  selectedId.value = recovered.contractId
+  activeFormContractId = recovered.contractId
+  impact.value = null
+  return selectedRequest.value
+}
+
+async function loadRequests(submissionKey?: string) {
   requestsLoading.value = true
   try {
-    requests.value = await listContractVoidRequests(queryFromFilters())
+    const loaded = await listContractVoidRequests(submissionKey && selectedId.value ? { contractId: selectedId.value } : queryFromFilters())
+    requests.value = loaded
+    return await recoverPendingRequest(loaded, submissionKey)
   } catch (error) {
     ElMessage.error(errorDetails(error, '合同作废纠错申请加载失败').message)
+    return null
   } finally {
     requestsLoading.value = false
   }
@@ -293,18 +315,25 @@ async function riskConfirmation(action: '直接执行' | '确认作废') {
 }
 
 function submissionFingerprint() {
-  return JSON.stringify({
+  const value = JSON.stringify({
     contractId: selectedContract.value?.id ?? null,
     reason: reason.value.trim(),
     impactHash: impact.value?.impactHash ?? null,
     fileAssetIds: uploadedProofs.value.map((file) => file.id).sort((left, right) => left - right),
   })
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `v1-${(hash >>> 0).toString(36)}`
 }
 
 async function submit(direct: boolean) {
   if (submitDisabled.value) return
   saving.value = true
   let createdRequest: ContractVoidRequest | null = null
+  const idempotencyKey = actionSession.submissionKey(submissionFingerprint())
   try {
     const confirmation = direct ? await riskConfirmation('直接执行') : null
     const created = await submitContractVoidRequest({
@@ -312,7 +341,7 @@ async function submit(direct: boolean) {
       reason: reason.value.trim(),
       impactHash: impact.value!.impactHash,
       fileAssetIds: uploadedProofs.value.map((file) => file.id),
-      idempotencyKey: actionSession.submissionKey(submissionFingerprint()),
+      idempotencyKey,
     })
     createdRequest = created
     selectedRequest.value = created
@@ -325,7 +354,7 @@ async function submit(direct: boolean) {
         idempotencyKey: actionSession.executionKey(created.id),
       })
       selectedRequest.value = await getContractVoidRequest(created.id)
-      actionSession.markTerminal(created.id)
+      actionSession.markTerminal(created.id, created.submissionIdempotencyKey)
       actionSession.beginNewForm()
       ElMessage.success('合同已作废并完成纠错冲销')
       emit('completed', created.contractId)
@@ -335,6 +364,13 @@ async function submit(direct: boolean) {
     await loadRequests()
   } catch (error) {
     if (isPromptCancelled(error)) return
+    if (!createdRequest) {
+      const recovered = await loadRequests(idempotencyKey)
+      if (recovered) {
+        ElMessage.warning('提交响应未确认，已找回服务端待确认申请')
+        return
+      }
+    }
     if (isStale(error) && createdRequest) {
       await refreshPendingRequestStale(createdRequest)
     } else if (isStale(error) && selectedId.value) {
@@ -347,7 +383,6 @@ async function submit(direct: boolean) {
     saving.value = false
   }
 }
-
 async function approveRequest() {
   if (saving.value || !selectedRequest.value || selectedRequest.value.status !== 'PENDING') return
   saving.value = true
@@ -360,7 +395,7 @@ async function approveRequest() {
       idempotencyKey: actionSession.executionKey(current.id),
     })
     selectedRequest.value = await getContractVoidRequest(current.id)
-    actionSession.markTerminal(current.id)
+    actionSession.markTerminal(current.id, current.submissionIdempotencyKey)
     actionSession.beginNewForm()
     await loadRequests()
     ElMessage.success('合同作废申请已确认并完成冲销')
@@ -388,6 +423,7 @@ async function rejectRequest() {
       inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因',
     })
     selectedRequest.value = await rejectContractVoidRequest(current.id, result.value.trim())
+    actionSession.markTerminal(current.id, current.submissionIdempotencyKey)
     await loadRequests()
     ElMessage.success('合同作废申请已驳回')
   } catch (error) {
@@ -401,7 +437,9 @@ async function cancelRequest() {
   if (saving.value || !canCancelRequest.value || !selectedRequest.value) return
   saving.value = true
   try {
-    selectedRequest.value = await cancelContractVoidRequest(selectedRequest.value.id)
+    const current = selectedRequest.value
+    selectedRequest.value = await cancelContractVoidRequest(current.id)
+    actionSession.markTerminal(current.id, current.submissionIdempotencyKey)
     await loadRequests()
     ElMessage.success('合同作废申请已取消')
   } catch (error) {

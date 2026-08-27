@@ -178,6 +178,7 @@ describe('合同作废纠错面板', () => {
   const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
 
   beforeEach(() => {
+    sessionStorage.clear()
     vi.clearAllMocks()
     vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([])
     vi.mocked(contractService.previewContractVoid).mockResolvedValue(impact())
@@ -331,6 +332,50 @@ describe('合同作废纠错面板', () => {
     expect(others.find('[data-test="cancel-void-request"]').exists()).toBe(false)
   })
 
+  it('首次提交响应超时后立即按 submission key 找回服务端已创建的待确认申请', async () => {
+    let submittedKey = ''
+    let listCount = 0
+    vi.mocked(contractService.listContractVoidRequests).mockImplementation(async () => {
+      listCount += 1
+      return listCount === 1 || !submittedKey ? [] : [request('PENDING', { submissionIdempotencyKey: submittedKey })]
+    })
+    vi.mocked(contractService.submitContractVoidRequest).mockImplementation(async (payload) => {
+      submittedKey = payload.idempotencyKey
+      throw new Error('timeout')
+    })
+    const wrapper = mountPanel('ADMIN')
+    await flushPromises()
+    await setReason(wrapper, '首次超时立即恢复')
+
+    await wrapper.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+
+    expect(contractService.submitContractVoidRequest).toHaveBeenCalledTimes(1)
+    expect(contractService.listContractVoidRequests).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('HTZF20260826000901')
+    expect(wrapper.find('[data-test="cancel-void-request"]').exists()).toBe(true)
+  })
+
+  it('页面重载后按 sessionStorage 中的 submission key 自动恢复待确认申请', async () => {
+    let submittedKey = ''
+    vi.mocked(contractService.submitContractVoidRequest).mockImplementation(async (payload) => {
+      submittedKey = payload.idempotencyKey
+      throw new Error('timeout')
+    })
+    const first = mountPanel('ADMIN')
+    await flushPromises()
+    await setReason(first, '页面重载恢复')
+    await first.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+    first.unmount()
+
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([request('PENDING', { submissionIdempotencyKey: submittedKey })])
+    const second = mountPanel('ADMIN')
+    await flushPromises()
+
+    expect(second.text()).toContain('HTZF20260826000901')
+    expect(second.find('[data-test="cancel-void-request"]').exists()).toBe(true)
+  })
   it('提交响应超时后重试复用同一 submission key 并取回原申请', async () => {
     vi.mocked(contractService.submitContractVoidRequest).mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce(request())
     const wrapper = mountPanel('ADMIN')
@@ -411,6 +456,55 @@ describe('合同作废纠错面板', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('申请已提交，可在当前详情继续确认'))
   })
 
+  it('直接执行超时后页面重载恢复 PENDING 并继续复用原 execution key', async () => {
+    let pending = request()
+    vi.mocked(contractService.submitContractVoidRequest).mockImplementation(async (payload) => {
+      pending = request('PENDING', { submissionIdempotencyKey: payload.idempotencyKey })
+      return pending
+    })
+    let listCount = 0
+    vi.mocked(contractService.listContractVoidRequests).mockImplementation(async () => {
+      listCount += 1
+      return listCount === 1 ? [] : [pending]
+    })
+    vi.mocked(contractService.approveContractVoidRequest)
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValueOnce({
+        requestId: 901,
+        requestNo: pending.requestNo,
+        status: 'COMPLETED',
+        contractId: 86,
+        contractNo: contracts[0].contractNo,
+        contractStatus: 'VOIDED',
+        impactHash: hashA,
+        executionBatchNo: 'HTZXP202608260901',
+        reversalCount: 1,
+        categoryTotals: {},
+        roomAction: 'KEEP_CURRENT_STATUS',
+        roomStatusBefore: 'RENTED',
+        roomStatusAfter: 'RENTED',
+      })
+    vi.mocked(contractService.getContractVoidRequest).mockResolvedValueOnce(pending).mockResolvedValueOnce(request('COMPLETED'))
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '确认作废合同' } as never)
+
+    const first = mountPanel('SUPER_ADMIN')
+    await flushPromises()
+    await setReason(first, '直接执行跨重载恢复')
+    await first.get('[data-test="direct-execute-void"]').trigger('click')
+    await flushPromises()
+    const firstExecutionKey = vi.mocked(contractService.approveContractVoidRequest).mock.calls[0][1].idempotencyKey
+    first.unmount()
+
+    const second = mountPanel('SUPER_ADMIN')
+    await flushPromises()
+    expect(second.find('[data-test="approve-void-request"]').exists()).toBe(true)
+    await second.get('[data-test="approve-void-request"]').trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(contractService.approveContractVoidRequest).mock.calls[1][1].idempotencyKey).toBe(firstExecutionKey)
+    expect(second.text()).toContain('终态申请仅可查看')
+    second.unmount()
+  })
   it('stale 响应只重新预览并替换 impactHash，不自动再次提交', async () => {
     vi.mocked(contractService.previewContractVoid).mockReset().mockResolvedValueOnce(impact(hashA)).mockResolvedValueOnce(impact(hashB))
     vi.mocked(contractService.submitContractVoidRequest).mockRejectedValue({
