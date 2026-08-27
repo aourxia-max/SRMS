@@ -1,7 +1,7 @@
 type ContractVoidKeyKind = 'submit' | 'execute'
 type ContractVoidKeyFactory = (kind: ContractVoidKeyKind) => string
 
-const storagePrefix = 'srms:contract-void:idempotency:'
+const storageRoot = 'srms:contract-void:idempotency:'
 
 const defaultKeyFactory: ContractVoidKeyFactory = (kind) => {
   const token = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -16,7 +16,9 @@ function defaultStorage() {
   }
 }
 
-export function createContractVoidActionSession(factory: ContractVoidKeyFactory = defaultKeyFactory, storage: Storage | undefined = defaultStorage()) {
+export function createContractVoidActionSession(userId: number, factory: ContractVoidKeyFactory = defaultKeyFactory, storage: Storage | undefined = defaultStorage()) {
+  if (!Number.isInteger(userId) || userId <= 0) throw new Error('合同作废幂等会话缺少有效用户')
+  const storagePrefix = storageRoot + 'user:' + userId + ':'
   let submissionLocator = ''
   const memory = new Map<string, string>()
 

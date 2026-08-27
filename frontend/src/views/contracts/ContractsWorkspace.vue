@@ -134,7 +134,10 @@ async function loadBaseData() {
   }
 }
 
+let detailLoadGeneration = 0
+
 function clearSelectedContract() {
+  detailLoadGeneration += 1
   selectedContractId.value = null
   selectedContract.value = null
   bills.value = []
@@ -145,10 +148,12 @@ function clearSelectedContract() {
 }
 
 async function selectContract(summary: ContractListItem, syncRoute = true, failClosed = false) {
+  const generation = ++detailLoadGeneration
   selectedContractId.value = summary.id
   loading.value = true
   try {
     const [detail, contractBills, contractFiles, contractChanges, contractRebates, contractPayments] = await Promise.all([getContract(summary.id), getContractBills(summary.id), getContractFiles(summary.id), getContractChanges(summary.id), listFixedRentRebates(summary.id), listAllPayments({ contractId: summary.id })])
+    if (generation !== detailLoadGeneration || selectedContractId.value !== summary.id) return false
     selectedContract.value = { ...detail, room: summary.room }
     bills.value = contractBills
     files.value = contractFiles
@@ -159,6 +164,7 @@ async function selectContract(summary: ContractListItem, syncRoute = true, failC
     if (syncRoute) await writeWorkspaceRoute('detail', summary.id)
     return true
   } catch (error) {
+    if (generation !== detailLoadGeneration) return false
     if (failClosed) {
       clearSelectedContract()
       throw error
@@ -166,7 +172,7 @@ async function selectContract(summary: ContractListItem, syncRoute = true, failC
     ElMessage.error(errorMessage(error, '合同详情加载失败'))
     return false
   } finally {
-    loading.value = false
+    if (generation === detailLoadGeneration) loading.value = false
   }
 }
 

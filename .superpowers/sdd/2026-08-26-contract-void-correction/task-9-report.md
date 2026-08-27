@@ -123,3 +123,24 @@
 ### 自审
 
 没有使用 localStorage，没有持久化原因或附件内容，没有自动重提/自动审批。普通合同 mutation 仍只锁单合同；仅 refresh/execute 纠错独占路径采用 room-first。未修改或输出任何 env、密码、令牌或密钥。三个 Important 均有先红后绿证据，无功能阻塞。
+
+## Fix round 3/5：用户隔离、完成态竞态关闭与确定性并发证明
+
+### Important 红灯与闭合
+
+- 幂等会话现在以 `sessionStorage` 的 `user:<currentUserId>` 作用域保存 opaque key；认证用户未就绪时不读取、不恢复、不可提交。同一标签 ADMIN A 切换至 B／SUPER_ADMIN 时，相同 fingerprint 也不会复用前一用户 key 或自动选中前一用户 PENDING。未保存原因、附件内容等敏感 payload。
+- 每次加载申请列表都会对当前用户作用域观察到的 COMPLETED／REJECTED／CANCELLED 执行终态清理。approve API 一旦返回 COMPLETED，立即清 submission/execution key 并 emit completed；后续详情 GET 仅为 best-effort，失败仍保持终态且父页面立即 fail-closed。
+- 合同详情加载增加递增 generation。clear/completed 会使所有旧请求失效；异步结果写入前同时校验 generation 与 selected id，旧 ACTIVE 响应即使延迟返回也不能复活详情和危险操作。
+
+### 确定性 MySQL 并发与 fixture 生命周期
+
+- E2E 对事务客户端包裹测试 barrier：两个参与事务都完成 identity-only roomId 读取后才同时释放并争抢 room lock；两组测试均精确断言 `arrivals=2`，不是普通 `Promise.all` 偶然串行。
+- refresh-vs-refresh 校验两次返回 hash 等于无业务变化的同步基线，并逐项等于最终持久化 hash，状态均为 PENDING。approve-vs-refresh 校验审批返回及持久化均为 COMPLETED、hash 一致；另一申请返回及持久化均为 PENDING、hash 一致。真实 MySQL 6/6 在超时内通过且无 deadlock。
+- refresh-only 共享房源 fixture 在 afterAll 完整删除；approve-vs-refresh 的 PENDING 一侧删除。COMPLETED 一侧及房源来源保留，因为追加式安全审计必须保有 provenance；使用专用 `ZFSH` 前缀，不触碰既有 Task5 fixture。
+
+### 测试与自审
+
+- 前端聚焦：3 文件、64/64；新增同标签切用户隔离、approve 完成但详情 reject 仍 emit/清 key，以及既有父页面失败关闭/路由恢复回归。
+- 后端完整单元：79 suite、477/477；前端完整单元：39 文件、215/215；真实 MySQL E2E：1 suite、6/6。
+- 后端 `lint:check`、后端 build、前端 build、`git diff --check` 均通过；前端仅有既存大 chunk 警告。
+- 用户授权的临时证明附件边界保持不变：仅 uploader-owned、unlocked、unassociated 的 `CONTRACT_VOID_PROOF`；submitted／locked／associated／historical attachment 绝不删除。本轮未修改 env、secret 或迁移，未输出任何密码或密钥。

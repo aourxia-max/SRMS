@@ -53,7 +53,7 @@ const filters = reactive<{
   status: ContractVoidRequestStatus | ''
 }>({ contractNo: '', roomKeyword: '', tenantKeyword: '', status: '' })
 let previewGeneration = 0
-const actionSession = createContractVoidActionSession()
+let actionSession = props.currentUserId ? createContractVoidActionSession(props.currentUserId) : null
 let activeFormContractId: number | null = null
 
 const eligibleContracts = computed(() => props.contracts.filter((item) => item.status !== 'VOIDED'))
@@ -65,7 +65,7 @@ const visibleContracts = computed(() => {
 const selectedContract = computed(() => props.contracts.find((item) => item.id === selectedId.value) ?? null)
 const terminalRequest = computed(() => Boolean(selectedRequest.value && selectedRequest.value.status !== 'PENDING'))
 const canCancelRequest = computed(() => selectedRequest.value?.status === 'PENDING' && (props.role === 'SUPER_ADMIN' || selectedRequest.value.submittedBy === props.currentUserId))
-const submitDisabled = computed(() => saving.value || attachmentUploading.value || !selectedContract.value || selectedContract.value.status === 'VOIDED' || !impact.value?.impactHash || !reason.value.trim())
+const submitDisabled = computed(() => !actionSession || saving.value || attachmentUploading.value || !selectedContract.value || selectedContract.value.status === 'VOIDED' || !impact.value?.impactHash || !reason.value.trim())
 const selectedRequestImpact = computed<ContractVoidImpact | null>(() =>
   selectedRequest.value
     ? {
@@ -140,7 +140,7 @@ async function recoverPendingRequest(rows: ContractVoidRequest[], submissionKey?
   const recovered = rows.find(
     (item) =>
       item.status === 'PENDING' &&
-      (submissionKey ? item.submissionIdempotencyKey === submissionKey : actionSession.hasSubmissionKey(item.submissionIdempotencyKey)),
+      (submissionKey ? item.submissionIdempotencyKey === submissionKey : actionSession?.hasSubmissionKey(item.submissionIdempotencyKey)),
   )
   if (!recovered) return null
   try {
@@ -159,6 +159,7 @@ async function loadRequests(submissionKey?: string) {
   try {
     const loaded = await listContractVoidRequests(submissionKey && selectedId.value ? { contractId: selectedId.value } : queryFromFilters())
     requests.value = loaded
+    if (actionSession) loaded.filter((item) => item.status !== 'PENDING').forEach((item) => actionSession?.markTerminal(item.id, item.submissionIdempotencyKey))
     return await recoverPendingRequest(loaded, submissionKey)
   } catch (error) {
     ElMessage.error(errorDetails(error, '合同作废纠错申请加载失败').message)
@@ -280,7 +281,7 @@ async function openRequest(row: ContractVoidRequest) {
 async function startNewRequest() {
   const contractId = selectedRequest.value?.contractId ?? selectedId.value
   if (!(await discardUploadedProofs())) return
-  actionSession.beginNewForm()
+  actionSession?.beginNewForm()
   selectedRequest.value = null
   selectedId.value = contractId
   activeFormContractId = contractId
@@ -333,6 +334,11 @@ async function submit(direct: boolean) {
   if (submitDisabled.value) return
   saving.value = true
   let createdRequest: ContractVoidRequest | null = null
+  if (!actionSession) {
+    ElMessage.error('登录用户信息尚未就绪，请稍后重试')
+    saving.value = false
+    return
+  }
   const idempotencyKey = actionSession.submissionKey(submissionFingerprint())
   try {
     const confirmation = direct ? await riskConfirmation('直接执行') : null
@@ -353,11 +359,15 @@ async function submit(direct: boolean) {
         confirmation: contractVoidConfirmationText,
         idempotencyKey: actionSession.executionKey(created.id),
       })
-      selectedRequest.value = await getContractVoidRequest(created.id)
-      actionSession.markTerminal(created.id, created.submissionIdempotencyKey)
-      actionSession.beginNewForm()
-      ElMessage.success('合同已作废并完成纠错冲销')
+      actionSession?.markTerminal(created.id, created.submissionIdempotencyKey)
+      actionSession?.beginNewForm()
       emit('completed', created.contractId)
+      try {
+        selectedRequest.value = await getContractVoidRequest(created.id)
+      } catch {
+        selectedRequest.value = { ...created, status: 'COMPLETED' }
+      }
+      ElMessage.success('合同已作废并完成纠错冲销')
     } else {
       ElMessage.success('合同作废纠错申请已提交')
     }
@@ -384,7 +394,7 @@ async function submit(direct: boolean) {
   }
 }
 async function approveRequest() {
-  if (saving.value || !selectedRequest.value || selectedRequest.value.status !== 'PENDING') return
+  if (saving.value || !actionSession || !selectedRequest.value || selectedRequest.value.status !== 'PENDING') return
   saving.value = true
   const current = selectedRequest.value
   try {
@@ -394,12 +404,16 @@ async function approveRequest() {
       confirmation: contractVoidConfirmationText,
       idempotencyKey: actionSession.executionKey(current.id),
     })
-    selectedRequest.value = await getContractVoidRequest(current.id)
-    actionSession.markTerminal(current.id, current.submissionIdempotencyKey)
-    actionSession.beginNewForm()
+    actionSession?.markTerminal(current.id, current.submissionIdempotencyKey)
+    actionSession?.beginNewForm()
+    emit('completed', current.contractId)
+    try {
+      selectedRequest.value = await getContractVoidRequest(current.id)
+    } catch {
+      selectedRequest.value = { ...current, status: 'COMPLETED' }
+    }
     await loadRequests()
     ElMessage.success('合同作废申请已确认并完成冲销')
-    emit('completed', current.contractId)
   } catch (error) {
     if (isPromptCancelled(error)) return
     if (isStale(error)) await refreshPendingRequestStale(current)
@@ -423,7 +437,7 @@ async function rejectRequest() {
       inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因',
     })
     selectedRequest.value = await rejectContractVoidRequest(current.id, result.value.trim())
-    actionSession.markTerminal(current.id, current.submissionIdempotencyKey)
+    actionSession?.markTerminal(current.id, current.submissionIdempotencyKey)
     await loadRequests()
     ElMessage.success('合同作废申请已驳回')
   } catch (error) {
@@ -439,7 +453,7 @@ async function cancelRequest() {
   try {
     const current = selectedRequest.value
     selectedRequest.value = await cancelContractVoidRequest(current.id)
-    actionSession.markTerminal(current.id, current.submissionIdempotencyKey)
+    actionSession?.markTerminal(current.id, current.submissionIdempotencyKey)
     await loadRequests()
     ElMessage.success('合同作废申请已取消')
   } catch (error) {
@@ -514,6 +528,17 @@ async function downloadRequestProof(file: NonNullable<ContractVoidRequest['files
     saving.value = false
   }
 }
+
+watch(
+  () => props.currentUserId,
+  (userId, previousUserId) => {
+    actionSession = userId ? createContractVoidActionSession(userId) : null
+    if (userId !== previousUserId) {
+      selectedRequest.value = null
+      void loadRequests()
+    }
+  },
+)
 
 watch(
   () => props.selectedContractId,

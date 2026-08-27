@@ -32,6 +32,8 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
   let prisma: PrismaService;
   let operator: AuthUser;
   let rollbackFixture: Fixture | undefined;
+  let refreshPair: [Fixture, Fixture] | undefined;
+  let approveRefreshPair: [Fixture, Fixture] | undefined;
   const marker = `${Date.now().toString(36)}${Math.random()
     .toString(36)
     .slice(2, 8)}`;
@@ -66,7 +68,32 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
     operator = user;
   });
 
+  async function deletePendingFixture(fixture: Fixture) {
+    await prisma.db.$transaction(async (tx) => {
+      await tx.contractVoidRequest.deleteMany({
+        where: { id: fixture.requestId, status: 'PENDING' },
+      });
+      await tx.payment.deleteMany({ where: { id: fixture.paymentId } });
+      await tx.contractMember.deleteMany({
+        where: { contractId: fixture.contractId },
+      });
+      await tx.contract.deleteMany({ where: { id: fixture.contractId } });
+      await tx.tenant.deleteMany({ where: { id: fixture.tenantId } });
+    });
+  }
   afterAll(async () => {
+    if (refreshPair) {
+      await deletePendingFixture(refreshPair[0]);
+      await deletePendingFixture(refreshPair[1]);
+      await prisma.db.room.deleteMany({ where: { id: refreshPair[0].roomId } });
+      await prisma.db.building.deleteMany({
+        where: { id: refreshPair[0].buildingId },
+      });
+    }
+    if (approveRefreshPair) {
+      // The approved side is retained because its append-only audit entry must keep provenance.
+      await deletePendingFixture(approveRefreshPair[1]);
+    }
     if (rollbackFixture) {
       await prisma.db.$transaction(async (tx) => {
         await tx.contractVoidReversal.deleteMany({
@@ -302,6 +329,48 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
     return fixtures as [Fixture, Fixture];
   }
 
+  function installIdentityBarrier() {
+    const gate = deferred();
+    let arrivals = 0;
+    const originalTransaction = prisma.db.$transaction.bind(prisma.db);
+    const transactionSpy = jest
+      .spyOn(prisma.db, '$transaction')
+      .mockImplementation((callback: unknown, options?: unknown) => {
+        if (typeof callback !== 'function')
+          throw new Error('并发 barrier 仅支持交互式事务');
+        return originalTransaction(async (tx) => {
+          const contract = new Proxy(tx.contract, {
+            get(target, property, receiver) {
+              if (property !== 'findUnique')
+                return Reflect.get(target, property, receiver) as unknown;
+              return async (args: { select?: Record<string, boolean> }) => {
+                const result = await target.findUnique(args as never);
+                if (
+                  args.select?.id === true &&
+                  args.select?.roomId === true &&
+                  Object.keys(args.select).length === 2
+                ) {
+                  arrivals += 1;
+                  if (arrivals === 2) gate.resolve();
+                  await gate.promise;
+                }
+                return result;
+              };
+            },
+          });
+          const wrapped = new Proxy(tx, {
+            get(target, property, receiver) {
+              return property === 'contract'
+                ? contract
+                : (Reflect.get(target, property, receiver) as unknown);
+            },
+          });
+          const run = callback as (client: typeof tx) => Promise<unknown>;
+          return await run(wrapped);
+        }, options as never);
+      });
+    return { transactionSpy, arrivals: () => arrivals };
+  }
   async function withinTimeout<T>(promise: Promise<T>, milliseconds = 10000) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -320,12 +389,18 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
   }
 
   it('同一房源两个合同并发 refresh 均在超时内完成且快照保持一致', async () => {
-    const [left, right] = await createSharedRoomFixture('refresh-pair');
+    refreshPair = await createSharedRoomFixture('refresh-pair');
+    const [left, right] = refreshPair;
     const requests = new ContractVoidRequestsService(
       prisma,
       new ContractVoidPreviewService(prisma),
     );
 
+    const baseline = await Promise.all([
+      requests.refreshSnapshot(left.requestId, operator),
+      requests.refreshSnapshot(right.requestId, operator),
+    ]);
+    const barrier = installIdentityBarrier();
     const results = await withinTimeout(
       Promise.all([
         requests.refreshSnapshot(left.requestId, operator),
@@ -333,7 +408,12 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
       ]),
     );
 
+    barrier.transactionSpy.mockRestore();
+    expect(barrier.arrivals()).toBe(2);
     expect(results.map((item) => item.status)).toEqual(['PENDING', 'PENDING']);
+    expect(results.map((item) => item.impactHash)).toEqual(
+      baseline.map((item) => item.impactHash),
+    );
     const stored = await prisma.db.contractVoidRequest.findMany({
       where: { id: { in: [left.requestId, right.requestId] } },
       orderBy: { id: 'asc' },
@@ -349,8 +429,8 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
   });
 
   it('同一房源 approve 与另一合同 refresh 并发完成且终态和持久化快照一致', async () => {
-    const [approval, refresh] =
-      await createSharedRoomFixture('approve-refresh');
+    approveRefreshPair = await createSharedRoomFixture('approve-refresh');
+    const [approval, refresh] = approveRefreshPair;
     const previews = new ContractVoidPreviewService(prisma);
     const executor = new ContractVoidExecutorService(
       prisma,
@@ -364,6 +444,7 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
       operator,
     );
 
+    const barrier = installIdentityBarrier();
     const [completed, refreshed] = await withinTimeout(
       Promise.all([
         executor.execute(
@@ -377,6 +458,8 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
       ]),
     );
 
+    barrier.transactionSpy.mockRestore();
+    expect(barrier.arrivals()).toBe(2);
     expect(completed).toMatchObject({
       status: 'COMPLETED',
       contractStatus: 'VOIDED',

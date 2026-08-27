@@ -505,6 +505,41 @@ describe('合同作废纠错面板', () => {
     expect(second.text()).toContain('终态申请仅可查看')
     second.unmount()
   })
+  it('切换登录用户后不会自动恢复上一用户的待确认申请', async () => {
+    let submittedKey = ''
+    vi.mocked(contractService.submitContractVoidRequest).mockImplementation(async (payload) => {
+      submittedKey = payload.idempotencyKey
+      throw new Error('timeout')
+    })
+    const wrapper = mountPanel('ADMIN', 86, 7)
+    await flushPromises()
+    await setReason(wrapper, '用户隔离恢复')
+    await wrapper.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([request('PENDING', { submissionIdempotencyKey: submittedKey })])
+    await wrapper.setProps({ currentUserId: 8 })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cancel-void-request"]').exists()).toBe(false)
+  })
+
+  it('确认接口已完成但详情刷新失败时仍立即通知父页面并清除执行状态', async () => {
+    const pending = request()
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([pending])
+    vi.mocked(contractService.getContractVoidRequest).mockResolvedValueOnce(pending).mockRejectedValueOnce(new Error('detail timeout'))
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '确认作废合同' } as never)
+    const wrapper = mountPanel('SUPER_ADMIN', null, 1)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="approve-void-request"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('completed')).toEqual([[86]])
+    expect(wrapper.find('[data-test="approve-void-request"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('终态申请仅可查看')
+  })
   it('stale 响应只重新预览并替换 impactHash，不自动再次提交', async () => {
     vi.mocked(contractService.previewContractVoid).mockReset().mockResolvedValueOnce(impact(hashA)).mockResolvedValueOnce(impact(hashB))
     vi.mocked(contractService.submitContractVoidRequest).mockRejectedValue({
