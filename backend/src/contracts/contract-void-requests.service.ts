@@ -9,6 +9,14 @@ import { Prisma, UserRole } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  computeContractVoidImpact,
+  hashContractVoidImpact,
+} from './contract-void-impact';
+import {
+  lockContractVoidContract,
+  lockContractVoidRelatedRows,
+} from './contract-void-locks';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
 import { ContractVoidExecutorService } from './contract-void-executor.service';
 import {
@@ -199,6 +207,84 @@ export class ContractVoidRequestsService {
         throw new ConflictException('作废申请编号冲突，请重试');
       throw new ConflictException('合同作废申请唯一键冲突，请重试');
     }
+  }
+
+  async refreshSnapshot(id: number, user: AuthUser) {
+    this.assertCanSubmit(user);
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const reference = await tx.contractVoidRequest.findUnique({
+          where: { id },
+          select: { contractId: true },
+        });
+        if (!reference) throw new NotFoundException('合同作废申请不存在');
+
+        const contracts = await lockContractVoidContract(
+          tx,
+          reference.contractId,
+        );
+        if (contracts.length !== 1) throw new NotFoundException('合同不存在');
+
+        const rows = await tx.$queryRaw<
+          Array<{
+            id: number | bigint;
+            contractId: number | bigint;
+            status: string;
+            submittedBy: number | bigint;
+            impactHash: string;
+          }>
+        >(
+          Prisma.sql`SELECT id, contract_id AS contractId, status, submitted_by AS submittedBy, impact_hash AS impactHash FROM contract_void_requests WHERE id = ${id} FOR UPDATE`,
+        );
+        if (rows.length !== 1)
+          throw new NotFoundException('合同作废申请不存在');
+        const request = {
+          ...rows[0],
+          id: Number(rows[0].id),
+          contractId: Number(rows[0].contractId),
+          submittedBy: Number(rows[0].submittedBy),
+        };
+        if (request.contractId !== reference.contractId)
+          throw new ConflictException('申请关联合同已变化，请刷新后重试');
+        if (request.status !== 'PENDING')
+          throw new BadRequestException('只有待确认的作废申请可以刷新影响快照');
+        if (
+          user.role !== UserRole.SUPER_ADMIN &&
+          request.submittedBy !== user.id
+        )
+          throw new ForbiddenException('只能刷新本人提交的作废申请');
+        if (contracts[0].status === 'VOIDED')
+          throw new BadRequestException('已作废合同不能刷新影响快照');
+
+        await lockContractVoidRelatedRows(tx, request.contractId);
+        const input = await this.previews.loadInput(tx, request.contractId);
+        const computed = computeContractVoidImpact(input);
+        const impactSnapshot = {
+          ...computed,
+          sourceSnapshot: input.sourceSnapshot,
+        };
+        const impactHash = hashContractVoidImpact(impactSnapshot);
+        const updatedAt = new Date();
+        const changed = await tx.contractVoidRequest.updateMany({
+          where: { id, status: 'PENDING', impactHash: request.impactHash },
+          data: {
+            impactSnapshot: impactSnapshot as unknown as Prisma.InputJsonValue,
+            impactHash,
+            updatedAt,
+          },
+        });
+        if (changed.count !== 1)
+          throw new ConflictException('申请状态或影响快照已变化，请刷新后重试');
+        const refreshed = await tx.contractVoidRequest.findUnique({
+          where: { id },
+          include: requestDetailInclude,
+        });
+        if (!refreshed)
+          throw new ConflictException('申请刷新后读取失败，请刷新后重试');
+        return refreshed;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
 
   async approve(

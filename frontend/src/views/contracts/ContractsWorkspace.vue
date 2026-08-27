@@ -10,47 +10,11 @@ import ContractSummaryPanel from '../../components/contracts/ContractSummaryPane
 import ContractTopNav from '../../components/contracts/ContractTopNav.vue'
 import FixedRentRebatePanel from '../../components/contracts/FixedRentRebatePanel.vue'
 import ContractVoidPanel from '../../components/contracts/voids/ContractVoidPanel.vue'
-import {
-  appendContractFile,
-  approveFixedRentRebate,
-  confirmContractDraft,
-  confirmFixedContract,
-  createContractDraft,
-  createLatestRequestGuard,
-  downloadContractFile,
-  isFixedRentRebateEligible,
-  getContract,
-  getContractBills,
-  getContractChanges,
-  getContractFiles,
-  getContractDraft,
-  listContracts,
-  listFixedRentRebates,
-  previewFixedContract,
-  rejectFixedRentRebate,
-  submitFixedRentRebate,
-  toContractPayload,
-  updateContractDraft,
-  uploadContractFile,
-} from '../../services/contracts'
+import { appendContractFile, approveFixedRentRebate, confirmContractDraft, confirmFixedContract, createContractDraft, createLatestRequestGuard, downloadContractFile, isFixedRentRebateEligible, getContract, getContractBills, getContractChanges, getContractFiles, getContractDraft, listContracts, listFixedRentRebates, previewFixedContract, rejectFixedRentRebate, submitFixedRentRebate, toContractPayload, updateContractDraft, uploadContractFile } from '../../services/contracts'
 import { http } from '../../services/http'
 import { listAllPayments } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
-import {
-  emptyContractForm,
-  type ContractDetail,
-  type ContractChange,
-  type ContractFile,
-  type ContractFormModel,
-  type ContractListItem,
-  type ContractPayload,
-  type ContractPreview,
-  type ContractRoom,
-  type ContractTenant,
-  type ContractWorkspaceTab,
-  type PricingRebate,
-  type RentBill,
-} from '../../types/contracts'
+import { emptyContractForm, type ContractDetail, type ContractChange, type ContractFile, type ContractFormModel, type ContractListItem, type ContractPayload, type ContractPreview, type ContractRoom, type ContractTenant, type ContractWorkspaceTab, type PricingRebate, type RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
 type ApiResponse<T> = { data: T }
@@ -93,9 +57,7 @@ const workspaceTabs: ContractWorkspaceTab[] = ['list', 'create', 'detail', 'fixe
 
 function tabFromRoute(): ContractWorkspaceTab | null {
   const value = route.query.tab
-  return typeof value === 'string' && workspaceTabs.includes(value as ContractWorkspaceTab)
-    ? value as ContractWorkspaceTab
-    : null
+  return typeof value === 'string' && workspaceTabs.includes(value as ContractWorkspaceTab) ? (value as ContractWorkspaceTab) : null
 }
 
 function contractIdFromRoute(): number | null {
@@ -140,11 +102,7 @@ const formFromPayload = (payload: ContractPayload): ContractFormModel => {
 async function loadBaseData() {
   loading.value = true
   try {
-    const [roomResponse, tenantResponse, contractData] = await Promise.all([
-      http.get<ApiResponse<ContractRoom[]>>('/properties/rooms'),
-      http.get<ApiResponse<{ items: ContractTenant[] }>>('/tenants'),
-      listContracts(),
-    ])
+    const [roomResponse, tenantResponse, contractData] = await Promise.all([http.get<ApiResponse<ContractRoom[]>>('/properties/rooms'), http.get<ApiResponse<{ items: ContractTenant[] }>>('/tenants'), listContracts()])
     rooms.value = roomResponse.data.data.filter((room) => !['SOLD', 'FOR_SALE', 'DISABLED'].includes(room.roomStatus || ''))
     tenants.value = tenantResponse.data.data.items
     contracts.value = contractData
@@ -180,14 +138,7 @@ async function selectContract(summary: ContractListItem, syncRoute = true) {
   selectedContractId.value = summary.id
   loading.value = true
   try {
-    const [detail, contractBills, contractFiles, contractChanges, contractRebates, contractPayments] = await Promise.all([
-      getContract(summary.id),
-      getContractBills(summary.id),
-      getContractFiles(summary.id),
-      getContractChanges(summary.id),
-      listFixedRentRebates(summary.id),
-      listAllPayments({ contractId: summary.id }),
-    ])
+    const [detail, contractBills, contractFiles, contractChanges, contractRebates, contractPayments] = await Promise.all([getContract(summary.id), getContractBills(summary.id), getContractFiles(summary.id), getContractChanges(summary.id), listFixedRentRebates(summary.id), listAllPayments({ contractId: summary.id })])
     selectedContract.value = { ...detail, room: summary.room }
     bills.value = contractBills
     files.value = contractFiles
@@ -223,9 +174,7 @@ async function applyRouteState() {
     return
   }
   if (routeTab === 'fixed-rebate') {
-    const summary = routeContractId
-      ? contracts.value.find((item) => item.id === routeContractId && isFixedRentRebateEligible(item))
-      : undefined
+    const summary = routeContractId ? contracts.value.find((item) => item.id === routeContractId && isFixedRentRebateEligible(item)) : undefined
     if (summary && routeContractId !== selectedContractId.value) await selectContract(summary, false)
     else if (!summary) {
       selectedContractId.value = null
@@ -251,9 +200,7 @@ async function applyRouteState() {
 async function saveDraft(payload: ContractPayload) {
   saving.value = true
   try {
-    const draft = currentDraftId.value
-      ? await updateContractDraft(currentDraftId.value, payload)
-      : await createContractDraft(payload)
+    const draft = currentDraftId.value ? await updateContractDraft(currentDraftId.value, payload) : await createContractDraft(payload)
     currentDraftId.value = draft.id
     localStorage.setItem(draftStorageKey, String(draft.id))
     ElMessage.success('合同草稿已保存')
@@ -421,11 +368,17 @@ async function openFixedRentRebate(contractId: number) {
 }
 
 function openCheckout(contractId: number) {
-  void router.push({ name: 'checkout', query: { tab: 'initiate', contractId: String(contractId) } })
+  void router.push({
+    name: 'checkout',
+    query: { tab: 'initiate', contractId: String(contractId) },
+  })
 }
 
 function openPaymentCollect(contractId: number) {
-  void router.push({ path: '/payments/collect', query: { contractId: String(contractId) } })
+  void router.push({
+    path: '/payments/collect',
+    query: { contractId: String(contractId) },
+  })
 }
 
 function openContractVoidCorrection(contractId: number) {
@@ -452,17 +405,45 @@ async function reloadSelectedContract() {
   if (summary) await selectContract(summary, false)
 }
 
+async function handleContractVoidCompleted(contractId: number) {
+  try {
+    contracts.value = await listContracts()
+    const summary = contracts.value.find((item) => item.id === contractId)
+    if (!summary) {
+      selectedContractId.value = null
+      selectedContract.value = null
+      bills.value = []
+      files.value = []
+      changes.value = []
+      rebates.value = []
+      payments.value = []
+      setTab('list')
+      return
+    }
+    await selectContract(summary, false)
+    await writeWorkspaceRoute('detail', contractId)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '合同作废后详情刷新失败，请手动刷新'))
+  }
+}
+
 async function approveRebate(id: number) {
   try {
     await approveFixedRentRebate(id)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
     ElMessage.success('退差已确认')
-  } catch (error) { ElMessage.error(errorMessage(error, '退差确认失败')) }
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '退差确认失败'))
+  }
 }
 
 async function rejectRebate(id: number) {
   try {
-    const result = await ElMessageBox.prompt('请输入驳回原因', '驳回退差', { confirmButtonText: '确认驳回', cancelButtonText: '取消', inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因' })
+    const result = await ElMessageBox.prompt('请输入驳回原因', '驳回退差', {
+      confirmButtonText: '确认驳回',
+      cancelButtonText: '取消',
+      inputValidator: (value) => Boolean(value.trim()) || '请输入驳回原因',
+    })
     await rejectFixedRentRebate(id, result.value)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
     ElMessage.success('退差已驳回')
@@ -476,7 +457,10 @@ onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer)
   closePreview()
 })
-watch(() => [route.query.tab, route.query.contractId], () => void applyRouteState())
+watch(
+  () => [route.query.tab, route.query.contractId],
+  () => void applyRouteState(),
+)
 </script>
 
 <template>
@@ -490,33 +474,86 @@ watch(() => [route.query.tab, route.query.contractId], () => void applyRouteStat
       </div>
       <ContractDetailPanel v-else-if="tab === 'detail'" :contract="selectedContract" :bills="bills" :files="files" :changes="changes" :payments="payments" :role="role" :loading="loading" @back="setTab('list')" @rebate="openFixedRentRebate" @checkout="openCheckout" @payment="openPaymentCollect" @void-correction="openContractVoidCorrection" @preview="previewFile" @download="downloadFile" @upload="appendSelectedContractFile" @commission-changed="reloadSelectedContract" />
       <FixedRentRebatePanel v-else-if="tab === 'fixed-rebate'" :contract="selectedContract" :contracts="contracts" :bills="bills" :rebates="rebates" :role="role" :saving="saving" @back="setTab('list')" @select-contract="selectRebateContract" @submit="submitRebate" @approve="approveRebate" @reject="rejectRebate" />
-      <ContractVoidPanel v-else-if="tab === 'void-correction' && canAccessVoidCorrection" :contracts="contracts" :role="role" :current-user-id="session.user?.id ?? null" :selected-contract-id="selectedContractId" />
+      <ContractVoidPanel v-else-if="tab === 'void-correction' && canAccessVoidCorrection" :contracts="contracts" :role="role" :current-user-id="session.user?.id ?? null" :selected-contract-id="selectedContractId" @completed="handleContractVoidCompleted" />
     </main>
-      <el-dialog v-model="previewOpen" :title="previewName || '合同附件预览'" width="880px" @closed="closePreview">
-        <el-skeleton v-if="previewLoading" :rows="6" animated />
-        <div v-else-if="previewUrl" class="contract-preview-viewer">
-          <div class="contract-preview-toolbar" aria-label="图片缩放控制">
-            <el-button data-test="contract-preview-zoom-out" :disabled="previewScale <= 0.5" @click="changePreviewScale(-0.25)">缩小</el-button>
-            <span data-test="contract-preview-scale">{{ previewScaleLabel }}</span>
-            <el-button data-test="contract-preview-zoom-in" :disabled="previewScale >= 3" @click="changePreviewScale(0.25)">放大</el-button>
-            <el-button data-test="contract-preview-reset" @click="resetPreviewScale">重置</el-button>
-          </div>
-          <div class="contract-preview-viewport">
-            <img data-test="contract-image-preview" :src="previewUrl" :alt="previewName" class="contract-image-preview" :style="{ transform: 'scale(' + previewScale + ')' }" />
-          </div>
+    <el-dialog v-model="previewOpen" :title="previewName || '合同附件预览'" width="880px" @closed="closePreview">
+      <el-skeleton v-if="previewLoading" :rows="6" animated />
+      <div v-else-if="previewUrl" class="contract-preview-viewer">
+        <div class="contract-preview-toolbar" aria-label="图片缩放控制">
+          <el-button data-test="contract-preview-zoom-out" :disabled="previewScale <= 0.5" @click="changePreviewScale(-0.25)">缩小</el-button>
+          <span data-test="contract-preview-scale">{{ previewScaleLabel }}</span>
+          <el-button data-test="contract-preview-zoom-in" :disabled="previewScale >= 3" @click="changePreviewScale(0.25)">放大</el-button>
+          <el-button data-test="contract-preview-reset" @click="resetPreviewScale">重置</el-button>
         </div>
-      </el-dialog>
+        <div class="contract-preview-viewport">
+          <img data-test="contract-image-preview" :src="previewUrl" :alt="previewName" class="contract-image-preview" :style="{ transform: 'scale(' + previewScale + ')' }" />
+        </div>
+      </div>
+    </el-dialog>
   </el-config-provider>
 </template>
 
 <style scoped>
-.contracts-workspace { min-height: 100%; padding: 20px 26px 40px; color: #233044; font: 14px/1.5 "Microsoft YaHei", "PingFang SC", sans-serif; background: #f3f6fb; }
-.create-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 15px; align-items: start; }
-@media (max-width: 1100px) { .create-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 760px) { .contracts-workspace { padding: 12px 10px 28px; } }
-.contract-preview-viewer { display: grid; gap: 12px; }
-.contract-preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.contract-preview-toolbar span { min-width: 48px; color: #526075; font-variant-numeric: tabular-nums; text-align: center; }
-.contract-preview-viewport { display: flex; min-height: 260px; max-height: 65vh; align-items: flex-start; justify-content: center; padding: 16px; overflow: auto; background: #f3f6fb; border-radius: 8px; }
-.contract-image-preview { display: block; max-width: 100%; max-height: 58vh; margin: 0 auto; object-fit: contain; transform-origin: top center; transition: transform 120ms ease; }
+.contracts-workspace {
+  min-height: 100%;
+  padding: 20px 26px 40px;
+  color: #233044;
+  font:
+    14px/1.5 'Microsoft YaHei',
+    'PingFang SC',
+    sans-serif;
+  background: #f3f6fb;
+}
+.create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 15px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .create-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 760px) {
+  .contracts-workspace {
+    padding: 12px 10px 28px;
+  }
+}
+.contract-preview-viewer {
+  display: grid;
+  gap: 12px;
+}
+.contract-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.contract-preview-toolbar span {
+  min-width: 48px;
+  color: #526075;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.contract-preview-viewport {
+  display: flex;
+  min-height: 260px;
+  max-height: 65vh;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
+  overflow: auto;
+  background: #f3f6fb;
+  border-radius: 8px;
+}
+.contract-image-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 58vh;
+  margin: 0 auto;
+  object-fit: contain;
+  transform-origin: top center;
+  transition: transform 120ms ease;
+}
 </style>

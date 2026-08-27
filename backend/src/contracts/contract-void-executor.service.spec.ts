@@ -231,8 +231,8 @@ describe('ContractVoidExecutorService', () => {
       query.strings.join('?'),
     );
     expect(lockOrder).toEqual([
-      expect.stringContaining('contract_void_requests'),
       expect.stringContaining('contracts'),
+      expect.stringContaining('contract_void_requests'),
       expect.stringContaining('rooms'),
       expect.stringContaining('contracts'),
       expect.stringContaining('contract_members'),
@@ -253,7 +253,10 @@ describe('ContractVoidExecutorService', () => {
     expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
-    expect(tx.contractVoidRequest.findUnique).not.toHaveBeenCalled();
+    expect(tx.contractVoidRequest.findUnique).toHaveBeenCalledWith({
+      where: { id: 9 },
+      select: { contractId: true },
+    });
     expect(tx.contract.findUnique).toHaveBeenCalledWith({
       where: { id: 7 },
       select: { contractNo: true, status: true },

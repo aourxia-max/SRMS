@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -8,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { basename, extname, resolve } from 'path';
 import { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,6 +53,8 @@ const contractExtensions: Record<string, string[]> = {
   'image/gif': ['.gif'],
 };
 
+export const CONTRACT_VOID_PROOF_STAGED_TTL_MS = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class FilesService {
   constructor(
@@ -85,6 +88,65 @@ export class FilesService {
   }
   private contractVoidProofFolder() {
     return resolve(process.cwd(), '..', 'uploads', 'contract-void-proofs');
+  }
+  private contractVoidProofPath(storedName: string) {
+    return resolve(this.contractVoidProofFolder(), basename(storedName));
+  }
+  private async unlinkContractVoidProof(path: string) {
+    try {
+      await unlink(path);
+    } catch (error) {
+      if ((error as { code?: unknown })?.code !== 'ENOENT') throw error;
+    }
+  }
+  private async cleanupExpiredContractVoidProofs() {
+    const cutoff = new Date(Date.now() - CONTRACT_VOID_PROOF_STAGED_TTL_MS);
+    const candidates = await this.prisma.db.fileAsset.findMany({
+      where: {
+        category: 'CONTRACT_VOID_PROOF',
+        lockedAt: null,
+        uploadedAt: { lt: cutoff },
+        contractVoidRequestFiles: { none: {} },
+      },
+      select: { id: true, storedName: true, uploadedAt: true },
+    });
+    for (const candidate of candidates) {
+      const lockedAt = new Date();
+      const claimed = await this.prisma.db.fileAsset.updateMany({
+        where: {
+          id: candidate.id,
+          category: 'CONTRACT_VOID_PROOF',
+          lockedAt: null,
+          uploadedAt: { lt: cutoff },
+          contractVoidRequestFiles: { none: {} },
+        },
+        data: { lockedAt },
+      });
+      if (claimed.count !== 1) continue;
+      try {
+        await this.unlinkContractVoidProof(
+          this.contractVoidProofPath(candidate.storedName),
+        );
+      } catch {
+        await this.prisma.db.fileAsset.updateMany({
+          where: {
+            id: candidate.id,
+            category: 'CONTRACT_VOID_PROOF',
+            lockedAt,
+          },
+          data: { lockedAt: null },
+        });
+        continue;
+      }
+      await this.prisma.db.fileAsset.deleteMany({
+        where: {
+          id: candidate.id,
+          category: 'CONTRACT_VOID_PROOF',
+          lockedAt,
+          contractVoidRequestFiles: { none: {} },
+        },
+      });
+    }
   }
   private folder() {
     return resolve(process.cwd(), '..', 'uploads', 'tenant-ids');
@@ -196,6 +258,7 @@ export class FilesService {
       throw new ForbiddenException('当前角色不能上传合同作废证明');
     if (!file || !file.buffer)
       throw new BadRequestException('请上传合同作废证明');
+    await this.cleanupExpiredContractVoidProofs();
     const limit = await this.configLimit();
     if (file.size > limit || file.buffer.length > limit)
       throw new BadRequestException('附件超过允许大小');
@@ -210,24 +273,31 @@ export class FilesService {
     const storedName = `${randomUUID()}${extension}`;
     const storageKey = `contract-void-proofs/${storedName}`;
     await mkdir(this.contractVoidProofFolder(), { recursive: true });
-    await writeFile(
-      resolve(this.contractVoidProofFolder(), storedName),
-      file.buffer,
-      { flag: 'wx' },
-    );
-    const asset = await this.prisma.db.fileAsset.create({
-      data: {
-        storageKey,
-        originalName,
-        storedName,
-        mimeType: file.mimetype,
-        extension,
-        sizeBytes: BigInt(file.buffer.length),
-        sha256: createHash('sha256').update(file.buffer).digest('hex'),
-        category: 'CONTRACT_VOID_PROOF',
-        uploadedBy: user.id,
-      },
-    });
+    const proofPath = this.contractVoidProofPath(storedName);
+    await writeFile(proofPath, file.buffer, { flag: 'wx' });
+    let asset;
+    try {
+      asset = await this.prisma.db.fileAsset.create({
+        data: {
+          storageKey,
+          originalName,
+          storedName,
+          mimeType: file.mimetype,
+          extension,
+          sizeBytes: BigInt(file.buffer.length),
+          sha256: createHash('sha256').update(file.buffer).digest('hex'),
+          category: 'CONTRACT_VOID_PROOF',
+          uploadedBy: user.id,
+        },
+      });
+    } catch (error) {
+      try {
+        await this.unlinkContractVoidProof(proofPath);
+      } catch {
+        // Keep the database error as the primary upload failure.
+      }
+      throw error;
+    }
     return {
       id: asset.id,
       originalName: asset.originalName,
@@ -235,6 +305,59 @@ export class FilesService {
       sizeBytes: asset.sizeBytes.toString(),
       uploadedAt: asset.uploadedAt,
     };
+  }
+
+  async deleteContractVoidProof(fileId: number, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('当前角色不能删除合同作废证明');
+    const asset = await this.prisma.db.fileAsset.findUnique({
+      where: { id: fileId },
+      include: {
+        contractVoidRequestFiles: { select: { contractVoidRequestId: true } },
+      },
+    });
+    if (!asset || asset.category !== 'CONTRACT_VOID_PROOF')
+      throw new NotFoundException('待提交的合同作废证明不存在');
+    if (asset.uploadedBy !== user.id)
+      throw new ForbiddenException('只能删除本人上传的待提交证明');
+    if (asset.lockedAt || asset.contractVoidRequestFiles.length)
+      throw new ConflictException('证明附件已提交，不能删除');
+    const lockedAt = new Date();
+    const claimed = await this.prisma.db.fileAsset.updateMany({
+      where: {
+        id: fileId,
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: user.id,
+        lockedAt: null,
+        contractVoidRequestFiles: { none: {} },
+      },
+      data: { lockedAt },
+    });
+    if (claimed.count !== 1)
+      throw new ConflictException('证明附件状态已变化，不能删除');
+    try {
+      await this.unlinkContractVoidProof(
+        this.contractVoidProofPath(asset.storedName),
+      );
+    } catch {
+      await this.prisma.db.fileAsset.updateMany({
+        where: { id: fileId, category: 'CONTRACT_VOID_PROOF', lockedAt },
+        data: { lockedAt: null },
+      });
+      throw new ServiceUnavailableException('证明附件删除失败，请稍后重试');
+    }
+    const deleted = await this.prisma.db.fileAsset.deleteMany({
+      where: {
+        id: fileId,
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: user.id,
+        lockedAt,
+        contractVoidRequestFiles: { none: {} },
+      },
+    });
+    if (deleted.count !== 1)
+      throw new ConflictException('证明附件状态已变化，删除未完成');
+    return { id: fileId };
   }
 
   async downloadContractVoidProof(
@@ -253,12 +376,21 @@ export class FilesService {
       include: { fileAsset: true },
     });
     if (!item) throw new NotFoundException('合同作废证明不存在');
-    const content = await readFile(
-      resolve(
-        this.contractVoidProofFolder(),
-        basename(item.fileAsset.storedName),
-      ),
-    );
+    let content: Buffer;
+    try {
+      content = await readFile(
+        resolve(
+          this.contractVoidProofFolder(),
+          basename(item.fileAsset.storedName),
+        ),
+      );
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'ENOENT')
+        throw new NotFoundException('合同作废证明文件不存在');
+      throw new ServiceUnavailableException(
+        '合同作废证明文件读取失败，请稍后重试',
+      );
+    }
     return { asset: item.fileAsset, content };
   }
 

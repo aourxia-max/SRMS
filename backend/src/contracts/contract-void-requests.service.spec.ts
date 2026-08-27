@@ -3,9 +3,16 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
+import { PATH_METADATA } from '@nestjs/common/constants';
 import { Prisma, UserRole } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { ROLES_KEY } from '../authorization/roles.decorator';
+import {
+  computeContractVoidImpact,
+  hashContractVoidImpact,
+} from './contract-void-impact';
+import { ContractVoidController } from './contract-void.controller';
 import { ContractVoidRequestsService } from './contract-void-requests.service';
 import {
   RejectContractVoidRequestDto,
@@ -28,6 +35,46 @@ const dto = {
   fileAssetIds: [31, 32],
   idempotencyKey: 'submit-contract-void-0001',
 };
+
+function refreshedSnapshotInput() {
+  return {
+    contract: { id: 7, status: 'ACTIVE', roomId: 3 },
+    bills: [],
+    payments: [],
+    refunds: [],
+    prepaymentBalance: '25.00',
+    depositBalance: '1000.00',
+    pending: {
+      adjustments: [{ id: 51, status: 'PENDING' }],
+      refunds: [],
+      voidRequests: [],
+      changes: [],
+      rebates: [],
+      checkouts: [],
+      depositRefunds: [],
+    },
+    completedCheckoutIds: [],
+    laterContractIds: [8],
+    currentRoomStatus: 'RENTED',
+    sourceSnapshot: {
+      prepaymentBalanceSource: null,
+      depositBalanceSource: null,
+      contractMembers: [],
+      paymentAllocations: [],
+      adjustments: [],
+      rebates: [],
+      checkoutSettlements: [],
+      commissions: [],
+    },
+  };
+}
+
+function refreshedImpact() {
+  const input = refreshedSnapshotInput();
+  const computed = computeContractVoidImpact(input);
+  const snapshot = { ...computed, sourceSnapshot: input.sourceSnapshot };
+  return { input, snapshot, hash: hashContractVoidImpact(snapshot) };
+}
 
 describe('contract void DTO validation', () => {
   it('rejects malformed submission fields', async () => {
@@ -122,6 +169,125 @@ describe('ContractVoidRequestsService', () => {
       ),
     };
   }
+
+  function refreshService(requestOverrides: Record<string, unknown> = {}) {
+    const { input, snapshot, hash } = refreshedImpact();
+    const request = {
+      id: 9,
+      requestNo: 'HTZF20260826000009',
+      contractId: 7,
+      status: 'PENDING',
+      submittedBy: admin.id,
+      impactHash,
+      ...requestOverrides,
+    };
+    const detailed = {
+      ...request,
+      impactSnapshot: snapshot,
+      impactHash: hash,
+      files: [],
+      reversals: [],
+    };
+    const tx = {
+      $queryRaw: jest.fn((query: { strings: string[] }) => {
+        const sql = query.strings.join('?');
+        if (sql.includes('contract_void_requests'))
+          return Promise.resolve([request]);
+        if (sql.includes('contracts')) {
+          return Promise.resolve([
+            { id: 7, status: requestOverrides.contractStatus ?? 'ACTIVE' },
+          ]);
+        }
+        return Promise.resolve([]);
+      }),
+      contractVoidRequest: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce({ contractId: 7 })
+          .mockResolvedValueOnce(detailed),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const db = {
+      $transaction: jest.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const preview = {
+      loadInput: jest.fn().mockResolvedValue(input),
+    };
+    return {
+      db,
+      tx,
+      preview,
+      request,
+      snapshot,
+      hash,
+      service: new ContractVoidRequestsService(
+        { db } as never,
+        preview as never,
+      ),
+    };
+  }
+
+  it('exposes refresh-snapshot to admins and delegates the authenticated user', async () => {
+    const prototype = ContractVoidController.prototype as unknown as Record<
+      string,
+      object
+    >;
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.refreshSnapshot)).toBe(
+      'void-requests/:id/refresh-snapshot',
+    );
+    expect(Reflect.getMetadata(ROLES_KEY, prototype.refreshSnapshot)).toEqual([
+      UserRole.SUPER_ADMIN,
+      UserRole.ADMIN,
+    ]);
+    const requests = {
+      refreshSnapshot: jest.fn().mockResolvedValue({ id: 9 }),
+    };
+    const controller = Reflect.construct(ContractVoidController, [
+      requests,
+      {},
+      {},
+    ]) as ContractVoidController;
+
+    await expect(controller.refreshSnapshot(9, admin)).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: { id: 9 },
+    });
+    expect(requests.refreshSnapshot).toHaveBeenCalledWith(9, admin);
+  });
+
+  it('refreshes a pending snapshot under contract-first deterministic row locks', async () => {
+    const { service, tx, db, preview, hash, snapshot } = refreshService();
+
+    await expect(service.refreshSnapshot(9, admin)).resolves.toMatchObject({
+      id: 9,
+      impactHash: hash,
+      impactSnapshot: snapshot,
+    });
+
+    const lockOrder = tx.$queryRaw.mock.calls.map(([query]) =>
+      query.strings.join('?'),
+    );
+    expect(lockOrder[0]).toContain('contracts');
+    expect(lockOrder[1]).toContain('contract_void_requests');
+    expect(preview.loadInput.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.$queryRaw.mock.invocationCallOrder.at(-1)!,
+    );
+    expect(tx.contractVoidRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: 9, status: 'PENDING', impactHash },
+      data: {
+        impactSnapshot: snapshot,
+        impactHash: hash,
+        updatedAt: expect.any(Date),
+      },
+    });
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
+  });
 
   it('returns JSON-safe attachment metadata from request detail', async () => {
     const findUnique = jest.fn().mockImplementation(({ include }) => {
@@ -497,6 +663,56 @@ describe('ContractVoidRequestsService', () => {
       '申请状态已变化，请刷新后重试',
     );
     expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('allows a super admin to refresh another submitter pending request', async () => {
+    const { service } = refreshService({ submittedBy: 99 });
+    await expect(service.refreshSnapshot(9, superAdmin)).resolves.toMatchObject(
+      { id: 9 },
+    );
+  });
+
+  it('rejects refresh by a different admin before loading the snapshot', async () => {
+    const { service, preview, tx } = refreshService({ submittedBy: 99 });
+    await expect(service.refreshSnapshot(9, admin)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(preview.loadInput).not.toHaveBeenCalled();
+    expect(tx.contractVoidRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects terminal and voided requests before loading the snapshot', async () => {
+    const terminal = refreshService({ status: 'COMPLETED' });
+    await expect(
+      terminal.service.refreshSnapshot(9, superAdmin),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(terminal.preview.loadInput).not.toHaveBeenCalled();
+
+    const voided = refreshService({ contractStatus: 'VOIDED' });
+    await expect(voided.service.refreshSnapshot(9, superAdmin)).rejects.toThrow(
+      '已作废合同不能刷新影响快照',
+    );
+    expect(voided.preview.loadInput).not.toHaveBeenCalled();
+  });
+
+  it('reports a concurrent request mutation without overwriting it', async () => {
+    const { service, tx } = refreshService();
+    tx.contractVoidRequest.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.refreshSnapshot(9, admin)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    await expect(service.refreshSnapshot(9, admin)).rejects.toThrow(
+      '申请状态或影响快照已变化，请刷新后重试',
+    );
+  });
+
+  it('rejects roles outside admin before starting a refresh transaction', async () => {
+    const { service, db } = refreshService();
+    await expect(service.refreshSnapshot(9, visitor)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 });
 

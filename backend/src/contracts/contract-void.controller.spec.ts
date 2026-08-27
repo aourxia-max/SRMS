@@ -134,6 +134,33 @@ describe('ContractVoidController proof downloads', () => {
     );
     expect(response.send).toHaveBeenCalledWith(Buffer.from('proof'));
   });
+
+  it('registers an admin-only staged-proof deletion route and delegates ownership checks', async () => {
+    const prototype = ContractVoidController.prototype as unknown as Record<
+      string,
+      object
+    >;
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.deleteFile)).toBe(
+      'void-request-files/:fileId',
+    );
+    expect(Reflect.getMetadata(ROLES_KEY, prototype.deleteFile)).toEqual([
+      UserRole.SUPER_ADMIN,
+      UserRole.ADMIN,
+    ]);
+    const deleteContractVoidProof = jest.fn().mockResolvedValue({ id: 501 });
+    const controller = Reflect.construct(ContractVoidController, [
+      {},
+      {},
+      { deleteContractVoidProof },
+    ]) as ContractVoidController;
+
+    await expect(controller.deleteFile(501, admin)).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: { id: 501 },
+    });
+    expect(deleteContractVoidProof).toHaveBeenCalledWith(501, admin);
+  });
 });
 
 describe('ContractVoidController HTTP errors', () => {

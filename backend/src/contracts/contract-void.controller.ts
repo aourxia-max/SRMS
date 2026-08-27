@@ -3,6 +3,7 @@ import {
   Body,
   Catch,
   Controller,
+  Delete,
   ExceptionFilter,
   Get,
   HttpException,
@@ -140,6 +141,19 @@ export class ContractVoidController {
     };
   }
 
+  @Post('void-requests/:id/refresh-snapshot')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async refreshSnapshot(
+    @Param('id', positiveIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.requests.refreshSnapshot(id, user),
+    };
+  }
+
   @Post('void-requests/:id/approve')
   @Roles(UserRole.SUPER_ADMIN)
   async approve(
@@ -199,6 +213,18 @@ export class ContractVoidController {
     };
   }
 
+  @Delete('void-request-files/:fileId')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async deleteFile(
+    @Param('fileId', positiveIntPipe) fileId: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.files.deleteContractVoidProof(fileId, user),
+    };
+  }
   @Get('void-requests/:id/files/:fileId/download')
   @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   async downloadFile(

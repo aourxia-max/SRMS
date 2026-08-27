@@ -233,6 +233,10 @@ export async function cancelContractVoidRequest(id: number) {
   return (await http.post<ApiResponse<ContractVoidRequest>>(`/contracts/void-requests/${id}/cancel`)).data.data
 }
 
+export async function refreshContractVoidRequestSnapshot(id: number) {
+  return (await http.post<ApiResponse<ContractVoidRequest>>(`/contracts/void-requests/${id}/refresh-snapshot`)).data.data
+}
+
 export async function approveContractVoidRequest(id: number, payload: ApproveContractVoidRequestInput) {
   return (await http.post<ApiResponse<ContractVoidExecutionResult>>(`/contracts/void-requests/${id}/approve`, payload)).data.data
 }
@@ -244,6 +248,10 @@ export async function uploadContractVoidProof(file: File) {
   const body = new FormData()
   body.append('file', file)
   return (await http.post<ApiResponse<ContractVoidProofFile>>('/contracts/void-request-files', body)).data.data
+}
+
+export async function deleteContractVoidProof(fileId: number) {
+  return (await http.delete<ApiResponse<{ id: number }>>(`/contracts/void-request-files/${fileId}`)).data.data
 }
 
 export async function downloadContractVoidProof(requestId: number, fileId: number) {

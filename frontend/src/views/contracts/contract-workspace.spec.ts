@@ -7,6 +7,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
+import ContractVoidPanel from '../../components/contracts/voids/ContractVoidPanel.vue'
 import ContractsWorkspace from './ContractsWorkspace.vue'
 import ContractFormPanel from '../../components/contracts/ContractFormPanel.vue'
 import ContractListPanel from '../../components/contracts/ContractListPanel.vue'
@@ -16,16 +17,7 @@ import * as contractService from '../../services/contracts'
 import { http } from '../../services/http'
 import * as paymentService from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
-import {
-  buildFixedRentRebatePayload,
-  contractConcessionError,
-  createLatestRequestGuard,
-  filterFixedRentRebateContracts,
-  fixedRentRebateContractLabel,
-  isFixedRentRebateEligible,
-  normalizeConcessionType,
-  toContractPayload,
-} from '../../services/contracts'
+import { buildFixedRentRebatePayload, contractConcessionError, createLatestRequestGuard, filterFixedRentRebateContracts, fixedRentRebateContractLabel, isFixedRentRebateEligible, normalizeConcessionType, toContractPayload } from '../../services/contracts'
 import { emptyContractForm, type ContractDetail, type ContractFormModel } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
@@ -234,9 +226,12 @@ const activeContract = (): ContractDetail => ({
 
 describe('合同工作区复审边界', () => {
   it('详情事件打开作废纠错页并预选当前合同', async () => {
-    vi.spyOn(http, 'get').mockImplementation((url: string) => Promise.resolve({
-      data: { data: url === '/properties/rooms' ? [] : { items: [] } },
-    }) as never)
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
     vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
     vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
     vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
@@ -247,23 +242,68 @@ describe('合同工作区复审边界', () => {
     vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
     const previewVoid = vi.spyOn(contractService, 'previewContractVoid').mockResolvedValue({
       contract: { id: 12, status: 'ACTIVE', roomId: 8 },
-      summary: { rentBillPayable: '2200.00', effectivePayment: '2200.00', depositBalance: '4400.00', prepaymentBalance: '0.00', refundNet: '0.00', currentNetImpact: '6600.00', plannedReversal: '-6600.00', postReversalNetImpact: '0.00' },
+      summary: {
+        rentBillPayable: '2200.00',
+        effectivePayment: '2200.00',
+        depositBalance: '4400.00',
+        prepaymentBalance: '0.00',
+        refundNet: '0.00',
+        currentNetImpact: '6600.00',
+        plannedReversal: '-6600.00',
+        postReversalNetImpact: '0.00',
+      },
       rows: [],
-      pending: { adjustments: [], refunds: [], voidRequests: [], depositRefunds: [], changes: [], rebates: [], checkouts: [] },
+      pending: {
+        adjustments: [],
+        refunds: [],
+        voidRequests: [],
+        depositRefunds: [],
+        changes: [],
+        rebates: [],
+        checkouts: [],
+      },
       completedCheckoutIds: [],
-      room: { currentStatus: 'RENTED', hasLaterContract: false, action: 'RECALCULATE' },
-      flags: { hasPendingWorkflows: false, hasCompletedCheckout: false, hasLaterContract: false },
-      sourceSnapshot: { prepaymentBalanceSource: null, depositBalanceSource: null, contractMembers: [], paymentAllocations: [], adjustments: [], rebates: [], checkoutSettlements: [], commissions: [] },
+      room: {
+        currentStatus: 'RENTED',
+        hasLaterContract: false,
+        action: 'RECALCULATE',
+      },
+      flags: {
+        hasPendingWorkflows: false,
+        hasCompletedCheckout: false,
+        hasLaterContract: false,
+      },
+      sourceSnapshot: {
+        prepaymentBalanceSource: null,
+        depositBalanceSource: null,
+        contractMembers: [],
+        paymentAllocations: [],
+        adjustments: [],
+        rebates: [],
+        checkoutSettlements: [],
+        commissions: [],
+      },
       impactHash: 'a'.repeat(64),
     })
 
     const pinia = createPinia()
     const session = useSessionStore(pinia)
-    session.user = { id: 2, username: 'admin', displayName: '管理员', role: 'ADMIN' }
+    session.user = {
+      id: 2,
+      username: 'admin',
+      displayName: '管理员',
+      role: 'ADMIN',
+    }
     session.accessToken = 'access-token'
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+      routes: [
+        {
+          path: '/contracts',
+          name: 'contracts',
+          component: ContractsWorkspace,
+        },
+      ],
     })
     await router.push('/contracts?tab=detail&contractId=12')
     await router.isReady()
@@ -277,15 +317,137 @@ describe('合同工作区复审边界', () => {
 
     expect(wrapper.get('[data-test="contract-void-panel"]').text()).toContain(activeContract().contractNo)
     expect(previewVoid).toHaveBeenCalledWith(12)
-    expect(router.currentRoute.value.query).toMatchObject({ tab: 'void-correction', contractId: '12' })
+    expect(router.currentRoute.value.query).toMatchObject({
+      tab: 'void-correction',
+      contractId: '12',
+    })
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  it('作废完成后重载合同与当前详情并立即隐藏危险操作', async () => {
+    const active = activeContract()
+    const voided = { ...active, status: 'VOIDED' as const }
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
+    const listContracts = vi.spyOn(contractService, 'listContracts').mockResolvedValueOnce([active]).mockResolvedValueOnce([voided])
+    const getContract = vi.spyOn(contractService, 'getContract').mockResolvedValueOnce(active).mockResolvedValueOnce(voided)
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([
+      {
+        id: 44,
+        originalName: '原合同.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: '1024',
+      },
+    ])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(contractService, 'listContractVoidRequests').mockResolvedValue([])
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+    vi.spyOn(contractService, 'previewContractVoid').mockResolvedValue({
+      contract: { id: 12, status: 'ACTIVE', roomId: 8 },
+      summary: {
+        rentBillPayable: '2200.00',
+        effectivePayment: '2200.00',
+        depositBalance: '4400.00',
+        prepaymentBalance: '0.00',
+        refundNet: '0.00',
+        currentNetImpact: '6600.00',
+        plannedReversal: '-6600.00',
+        postReversalNetImpact: '0.00',
+      },
+      rows: [],
+      pending: {
+        adjustments: [],
+        refunds: [],
+        voidRequests: [],
+        depositRefunds: [],
+        changes: [],
+        rebates: [],
+        checkouts: [],
+      },
+      completedCheckoutIds: [],
+      room: {
+        currentStatus: 'RENTED',
+        hasLaterContract: false,
+        action: 'RECALCULATE',
+      },
+      flags: {
+        hasPendingWorkflows: false,
+        hasCompletedCheckout: false,
+        hasLaterContract: false,
+      },
+      sourceSnapshot: {
+        prepaymentBalanceSource: null,
+        depositBalanceSource: null,
+        contractMembers: [],
+        paymentAllocations: [],
+        adjustments: [],
+        rebates: [],
+        checkoutSettlements: [],
+        commissions: [],
+      },
+      impactHash: 'a'.repeat(64),
+    })
+
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = {
+      id: 1,
+      username: 'root',
+      displayName: '超级管理员',
+      role: 'SUPER_ADMIN',
+    }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        {
+          path: '/contracts',
+          name: 'contracts',
+          component: ContractsWorkspace,
+        },
+      ],
+    })
+    await router.push('/contracts?tab=void-correction&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+
+    wrapper.getComponent(ContractVoidPanel).vm.$emit('completed', 12)
+    await flushPromises()
+
+    expect(listContracts).toHaveBeenCalledTimes(2)
+    expect(getContract).toHaveBeenCalledTimes(2)
+    expect(wrapper.findComponent(ContractDetailPanel).exists()).toBe(true)
+    expect(wrapper.get('[data-test="contract-status-tag"]').text()).toBe('已作废')
+    expect(wrapper.get('[data-test="contract-status-tag"]').classes()).toContain('el-tag--danger')
+    expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-contract-void-correction"]').exists()).toBe(false)
+    expect(router.currentRoute.value.query).toMatchObject({
+      tab: 'detail',
+      contractId: '12',
+    })
     wrapper.unmount()
     vi.restoreAllMocks()
   })
 
   it('访客不能通过查询参数强制进入合同作废纠错工作区', async () => {
-    vi.spyOn(http, 'get').mockImplementation((url: string) => Promise.resolve({
-      data: { data: url === '/properties/rooms' ? [] : { items: [] } },
-    }) as never)
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
     vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
     vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
     vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
@@ -297,11 +459,22 @@ describe('合同工作区复审边界', () => {
 
     const pinia = createPinia()
     const session = useSessionStore(pinia)
-    session.user = { id: 9, username: 'visitor', displayName: '访客', role: 'VISITOR' }
+    session.user = {
+      id: 9,
+      username: 'visitor',
+      displayName: '访客',
+      role: 'VISITOR',
+    }
     session.accessToken = 'access-token'
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+      routes: [
+        {
+          path: '/contracts',
+          name: 'contracts',
+          component: ContractsWorkspace,
+        },
+      ],
     })
     await router.push('/contracts?tab=void-correction&contractId=12')
     await router.isReady()
@@ -352,14 +525,34 @@ describe('合同工作区复审边界', () => {
   })
 
   it('合同详情将合同、账单和收款状态显示为中文', async () => {
-    const payments: PaymentListItem[] = [{
-      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentCategory: 'RENT', paymentDate: '2026-08-02', amount: '2200.00',
-      method: 'WECHAT', status: 'CONFIRMED', contract: { id: 12, contractNo: activeContract().contractNo }, tenant: { id: 19, name: '张三' },
-    }]
+    const payments: PaymentListItem[] = [
+      {
+        id: 71,
+        receiptNo: 'SK2026080071',
+        receiptType: '正式收款',
+        paymentCategory: 'RENT',
+        paymentDate: '2026-08-02',
+        amount: '2200.00',
+        method: 'WECHAT',
+        status: 'CONFIRMED',
+        contract: { id: 12, contractNo: activeContract().contractNo },
+        tenant: { id: 19, name: '张三' },
+      },
+    ]
     const wrapper = mount(ContractDetailPanel, {
       props: {
         contract: activeContract(),
-        bills: [{ id: 1, periodSeq: 1, periodStart: '2026-08-01', periodEnd: '2026-08-31', payableAmount: '2200.00', outstandingAmount: '2200.00', status: 'OVERDUE' }],
+        bills: [
+          {
+            id: 1,
+            periodSeq: 1,
+            periodStart: '2026-08-01',
+            periodEnd: '2026-08-31',
+            payableAmount: '2200.00',
+            outstandingAmount: '2200.00',
+            status: 'OVERDUE',
+          },
+        ],
         payments,
         role: 'ADMIN',
       },
@@ -386,8 +579,18 @@ describe('合同工作区复审边界', () => {
   })
   it('只把履行中的固定月租合同认定为可退差', () => {
     expect(isFixedRentRebateEligible(activeContract())).toBe(true)
-    expect(isFixedRentRebateEligible({ ...activeContract(), status: 'PENDING_START' })).toBe(false)
-    expect(isFixedRentRebateEligible({ ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' })).toBe(false)
+    expect(
+      isFixedRentRebateEligible({
+        ...activeContract(),
+        status: 'PENDING_START',
+      }),
+    ).toBe(false)
+    expect(
+      isFixedRentRebateEligible({
+        ...activeContract(),
+        pricingMode: 'TIERED_RETROACTIVE',
+      }),
+    ).toBe(false)
     expect(isFixedRentRebateEligible(null)).toBe(false)
   })
 
@@ -398,7 +601,9 @@ describe('合同工作区复审边界', () => {
     })
 
     expect(wrapper.text()).toContain('履约中')
-    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_CHECKOUT' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), status: 'PENDING_CHECKOUT' },
+    })
     expect(wrapper.get('[data-test="contract-status-tag"]').classes()).toContain('contract-status-tag--pending-checkout')
   })
 
@@ -408,7 +613,12 @@ describe('合同工作区复审边界', () => {
     ['主租户姓名', '张三'],
   ])('按%s搜索符合退差条件的合同', (_field, keyword) => {
     const eligible = activeContract()
-    const ineligible = { ...activeContract(), id: 13, contractNo: 'HT-OTHER', status: 'PENDING_START' }
+    const ineligible = {
+      ...activeContract(),
+      id: 13,
+      contractNo: 'HT-OTHER',
+      status: 'PENDING_START',
+    }
     expect(filterFixedRentRebateContracts([eligible, ineligible], keyword).map((item) => item.id)).toEqual([12])
   })
 
@@ -434,21 +644,49 @@ describe('合同工作区复审边界', () => {
   })
 
   it('按优惠类型重置字段、校验并生成无越界字段的载荷', () => {
-    const percentage = normalizeConcessionType({
-      concessionType: 'FIXED_AMOUNT', applyMode: 'DATE_RANGE', startDate: '2026-08-01', endDate: '2026-08-10',
-      fixedAmount: '300.00', reason: '测试',
-    }, 'PERCENTAGE')
+    const percentage = normalizeConcessionType(
+      {
+        concessionType: 'FIXED_AMOUNT',
+        applyMode: 'DATE_RANGE',
+        startDate: '2026-08-01',
+        endDate: '2026-08-10',
+        fixedAmount: '300.00',
+        reason: '测试',
+      },
+      'PERCENTAGE',
+    )
     expect(percentage).toEqual({
-      concessionType: 'PERCENTAGE', applyMode: 'BILLING_PERIODS', billingPeriodCount: 1,
-      discountRate: '', reason: '测试',
+      concessionType: 'PERCENTAGE',
+      applyMode: 'BILLING_PERIODS',
+      billingPeriodCount: 1,
+      discountRate: '',
+      reason: '测试',
     })
     expect(contractConcessionError([percentage])).toContain('优惠比例')
 
     const form = completeForm()
     form.concessions = [
-      { concessionType: 'RENT_FREE', applyMode: 'DATE_RANGE', startDate: '2026-08-01', endDate: '2026-08-03', reason: '维修免租' },
-      { concessionType: 'FIXED_AMOUNT', applyMode: 'BILLING_PERIODS', billingPeriodCount: 1, fixedAmount: '300.00', reason: '首期优惠' },
-      { concessionType: 'PERCENTAGE', applyMode: 'BILLING_PERIODS', billingPeriodCount: 2, discountRate: '0.10', reason: '两期九折' },
+      {
+        concessionType: 'RENT_FREE',
+        applyMode: 'DATE_RANGE',
+        startDate: '2026-08-01',
+        endDate: '2026-08-03',
+        reason: '维修免租',
+      },
+      {
+        concessionType: 'FIXED_AMOUNT',
+        applyMode: 'BILLING_PERIODS',
+        billingPeriodCount: 1,
+        fixedAmount: '300.00',
+        reason: '首期优惠',
+      },
+      {
+        concessionType: 'PERCENTAGE',
+        applyMode: 'BILLING_PERIODS',
+        billingPeriodCount: 2,
+        discountRate: '0.10',
+        reason: '两期九折',
+      },
     ]
     expect(contractConcessionError(form.concessions)).toBeNull()
     expect(toContractPayload(form, 'ADMIN').concessions).toEqual(form.concessions)
@@ -464,10 +702,14 @@ describe('合同工作区复审边界', () => {
     await button.trigger('click')
     expect(wrapper.emitted('rebate')).toEqual([[12]])
 
-    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_START' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), status: 'PENDING_START' },
+    })
     expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
 
-    await wrapper.setProps({ contract: { ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), pricingMode: 'TIERED_RETROACTIVE' },
+    })
     expect(wrapper.find('[data-test="open-fixed-rent-rebate"]').exists()).toBe(false)
   })
 
@@ -481,9 +723,18 @@ describe('合同工作区复审边界', () => {
       room: { id: 22, fullHouseNo: '2栋602' },
       members: [{ memberRole: 'PRIMARY' as const, tenant: { id: 31, name: '李四' } }],
     }
-    const ineligible = { ...activeContract(), id: 15, contractNo: 'HT-NOT-ELIGIBLE', status: 'PENDING_START' }
+    const ineligible = {
+      ...activeContract(),
+      id: 15,
+      contractNo: 'HT-NOT-ELIGIBLE',
+      status: 'PENDING_START',
+    }
     const wrapper = mount(FixedRentRebatePanel, {
-      props: { contracts: [eligible, second, ineligible], contract: eligible, role: 'ADMIN' },
+      props: {
+        contracts: [eligible, second, ineligible],
+        contract: eligible,
+        role: 'ADMIN',
+      },
       global: { plugins: [ElementPlus] },
     })
 
@@ -526,19 +777,47 @@ describe('合同工作区复审边界', () => {
     expect(wrapper.text()).not.toContain('金额与原因')
     expect(() => buildFixedRentRebatePayload(inactive, {})).toThrow('履行中的固定月租合同')
     expect(() => buildFixedRentRebatePayload(tiered, {})).toThrow('履行中的固定月租合同')
-    expect(buildFixedRentRebatePayload(activeContract(), {
-      rentBillId: 99, periodStart: '2026-08-01', periodEnd: '2026-08-31', actualAmount: '100.00',
-      differenceReason: '维修协商', settlementMethod: 'PREPAYMENT_CREDIT',
-    })).toMatchObject({ contractId: 12, sourceType: 'FIXED_RENT_MANUAL', rebateType: 'MANUAL', rentBillId: 99 })
+    expect(
+      buildFixedRentRebatePayload(activeContract(), {
+        rentBillId: 99,
+        periodStart: '2026-08-01',
+        periodEnd: '2026-08-31',
+        actualAmount: '100.00',
+        differenceReason: '维修协商',
+        settlementMethod: 'PREPAYMENT_CREDIT',
+      }),
+    ).toMatchObject({
+      contractId: 12,
+      sourceType: 'FIXED_RENT_MANUAL',
+      rebateType: 'MANUAL',
+      rentBillId: 99,
+    })
   })
 
   it('合同详情展示仅属于当前合同的收款记录', async () => {
-    const payments: PaymentListItem[] = [{
-      id: 71, receiptNo: 'SK2026080071', receiptType: '正式收款', paymentCategory: 'RENT', paymentDate: '2026-08-02', amount: '2200.00',
-      method: 'WECHAT', status: 'CONFIRMED', contract: { id: 12, contractNo: activeContract().contractNo }, tenant: { id: 19, name: '张三' },
-    }]
+    const payments: PaymentListItem[] = [
+      {
+        id: 71,
+        receiptNo: 'SK2026080071',
+        receiptType: '正式收款',
+        paymentCategory: 'RENT',
+        paymentDate: '2026-08-02',
+        amount: '2200.00',
+        method: 'WECHAT',
+        status: 'CONFIRMED',
+        contract: { id: 12, contractNo: activeContract().contractNo },
+        tenant: { id: 19, name: '张三' },
+      },
+    ]
     const wrapper = mount(ContractDetailPanel, {
-      props: { contract: activeContract(), bills: [], files: [], changes: [], payments, role: 'ADMIN' },
+      props: {
+        contract: activeContract(),
+        bills: [],
+        files: [],
+        changes: [],
+        payments,
+        role: 'ADMIN',
+      },
       global: { plugins: [ElementPlus] },
     })
     const tab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('收款记录'))
@@ -549,10 +828,27 @@ describe('合同工作区复审边界', () => {
   })
 
   it('合同图片附件提供预览和下载动作，非图片附件仅可下载', async () => {
-    const jpeg = { id: 44, originalName: '合同.jpg', mimeType: 'image/jpeg', sizeBytes: '1024' }
-    const pdf = { id: 45, originalName: '合同.pdf', mimeType: 'application/pdf', sizeBytes: '2048' }
+    const jpeg = {
+      id: 44,
+      originalName: '合同.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: '1024',
+    }
+    const pdf = {
+      id: 45,
+      originalName: '合同.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: '2048',
+    }
     const wrapper = mount(ContractDetailPanel, {
-      props: { contract: activeContract(), bills: [], files: [jpeg, pdf], changes: [], payments: [], role: 'ADMIN' },
+      props: {
+        contract: activeContract(),
+        bills: [],
+        files: [jpeg, pdf],
+        changes: [],
+        payments: [],
+        role: 'ADMIN',
+      },
       global: { plugins: [ElementPlus] },
     })
     const tab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes('附件'))
@@ -580,14 +876,17 @@ describe('????????', () => {
     await button.trigger('click')
     expect(wrapper.emitted('checkout')).toEqual([[12]])
 
-    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_CHECKOUT' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), status: 'PENDING_CHECKOUT' },
+    })
     expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
 
-    await wrapper.setProps({ contract: { ...activeContract(), status: 'ENDED' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), status: 'ENDED' },
+    })
     expect(wrapper.find('[data-test="open-checkout"]').exists()).toBe(false)
   })
 })
-
 
 describe('??????????', () => {
   it('????????????????????', async () => {
@@ -600,10 +899,14 @@ describe('??????????', () => {
     expect(button.exists()).toBe(true)
     await button.trigger('click')
     expect(wrapper.emitted('payment')).toEqual([[12]])
-    await wrapper.setProps({ contract: { ...activeContract(), status: 'PENDING_CHECKOUT' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), status: 'PENDING_CHECKOUT' },
+    })
     expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
 
-    await wrapper.setProps({ contract: { ...activeContract(), status: 'ENDED' } })
+    await wrapper.setProps({
+      contract: { ...activeContract(), status: 'ENDED' },
+    })
     expect(wrapper.find('[data-test="open-payment-collect"]').exists()).toBe(false)
   })
 })
@@ -622,11 +925,24 @@ describe('合同附件图片预览生命周期', () => {
   })
 
   async function mountWorkspace(download: DownloadContractFile) {
-    const jpeg = { id: 44, originalName: '合同.jpg', mimeType: 'image/jpeg', sizeBytes: '1024' }
-    const png = { id: 45, originalName: '补充条款.png', mimeType: 'image/png', sizeBytes: '2048' }
-    vi.spyOn(http, 'get').mockImplementation((url: string) => Promise.resolve({
-      data: { data: url === '/properties/rooms' ? [] : { items: [] } },
-    }) as never)
+    const jpeg = {
+      id: 44,
+      originalName: '合同.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: '1024',
+    }
+    const png = {
+      id: 45,
+      originalName: '补充条款.png',
+      mimeType: 'image/png',
+      sizeBytes: '2048',
+    }
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
     vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
     vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
     vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
@@ -638,7 +954,13 @@ describe('合同附件图片预览生命周期', () => {
 
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+      routes: [
+        {
+          path: '/contracts',
+          name: 'contracts',
+          component: ContractsWorkspace,
+        },
+      ],
     })
     await router.push('/contracts?tab=detail&contractId=12')
     await router.isReady()
@@ -650,12 +972,16 @@ describe('合同附件图片预览生命周期', () => {
   }
 
   it('提供可见缩放控件并在切换附件时重置缩放比例', async () => {
-    const createObjectURL = vi.fn()
-      .mockReturnValueOnce('blob:contract-image-1')
-      .mockReturnValueOnce('blob:contract-image-2')
+    const createObjectURL = vi.fn().mockReturnValueOnce('blob:contract-image-1').mockReturnValueOnce('blob:contract-image-2')
     const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
     const { wrapper } = await mountWorkspace(vi.fn<DownloadContractFile>().mockResolvedValue(new Blob(['image'])))
 
     await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
@@ -678,13 +1004,16 @@ describe('合同附件图片预览生命周期', () => {
     wrapper.unmount()
   })
   it('预览关闭、切换附件和卸载时各释放一次临时对象地址', async () => {
-    const createObjectURL = vi.fn()
-      .mockReturnValueOnce('blob:contract-image-1')
-      .mockReturnValueOnce('blob:contract-image-2')
-      .mockReturnValueOnce('blob:contract-image-3')
+    const createObjectURL = vi.fn().mockReturnValueOnce('blob:contract-image-1').mockReturnValueOnce('blob:contract-image-2').mockReturnValueOnce('blob:contract-image-3')
     const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
     const { wrapper } = await mountWorkspace(vi.fn<DownloadContractFile>().mockResolvedValue(new Blob(['image'])))
 
     await wrapper.get('[data-test="preview-contract-file-44"]').trigger('click')
@@ -696,7 +1025,10 @@ describe('合同附件图片预览生命周期', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:contract-image-1')
     expect(wrapper.get('[data-test="contract-image-preview"]').attributes('src')).toBe('blob:contract-image-2')
 
-    wrapper.findAllComponents(ElDialog).find((dialog) => dialog.props('modelValue'))!.vm.$emit('closed')
+    wrapper
+      .findAllComponents(ElDialog)
+      .find((dialog) => dialog.props('modelValue'))!
+      .vm.$emit('closed')
     await nextTick()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:contract-image-2')
 
@@ -710,15 +1042,24 @@ describe('合同附件图片预览生命周期', () => {
   it('旧预览请求晚于新请求返回时不覆盖当前图片且释放自身对象地址', async () => {
     let resolveOld!: (blob: Blob) => void
     let resolveNew!: (blob: Blob) => void
-    const oldPreview = new Promise<Blob>((resolve) => { resolveOld = resolve })
-    const newPreview = new Promise<Blob>((resolve) => { resolveNew = resolve })
-    const createObjectURL = vi.fn()
-      .mockReturnValueOnce('blob:contract-image-new')
-      .mockReturnValueOnce('blob:contract-image-stale')
+    const oldPreview = new Promise<Blob>((resolve) => {
+      resolveOld = resolve
+    })
+    const newPreview = new Promise<Blob>((resolve) => {
+      resolveNew = resolve
+    })
+    const createObjectURL = vi.fn().mockReturnValueOnce('blob:contract-image-new').mockReturnValueOnce('blob:contract-image-stale')
     const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
-    const download = vi.fn<DownloadContractFile>()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
+    const download = vi
+      .fn<DownloadContractFile>()
       .mockImplementationOnce(() => oldPreview)
       .mockImplementationOnce(() => newPreview)
     const { wrapper } = await mountWorkspace(download)
@@ -740,7 +1081,10 @@ describe('合同附件图片预览生命周期', () => {
   })
   it('预览请求失败显示中文错误且不保留临时对象地址', async () => {
     const createObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
     const messageError = vi.spyOn(ElMessage, 'error')
     const { wrapper } = await mountWorkspace(vi.fn<DownloadContractFile>().mockRejectedValue(new Error('network failed')))
 

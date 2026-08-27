@@ -4,22 +4,18 @@ import ElementPlus, { ElMessage, ElMessageBox, ElSelect, ElUpload } from 'elemen
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as contractService from '../../../services/contracts'
-import type {
-  ContractListItem,
-  ContractRole,
-  ContractVoidImpact,
-  ContractVoidRequest,
-  ContractVoidRequestStatus,
-} from '../../../types/contracts'
+import type { ContractListItem, ContractRole, ContractVoidImpact, ContractVoidRequest, ContractVoidRequestStatus } from '../../../types/contracts'
 import ContractVoidPanel from './ContractVoidPanel.vue'
 
 vi.mock('../../../services/contracts', () => ({
   approveContractVoidRequest: vi.fn(),
   cancelContractVoidRequest: vi.fn(),
+  deleteContractVoidProof: vi.fn(),
   downloadContractVoidProof: vi.fn(),
   getContractVoidRequest: vi.fn(),
   listContractVoidRequests: vi.fn(),
   previewContractVoid: vi.fn(),
+  refreshContractVoidRequestSnapshot: vi.fn(),
   rejectContractVoidRequest: vi.fn(),
   submitContractVoidRequest: vi.fn(),
   uploadContractVoidProof: vi.fn(),
@@ -70,21 +66,39 @@ function impact(impactHash = hashA): ContractVoidImpact {
       plannedReversal: '-18203.50',
       postReversalNetImpact: '0.00',
     },
-    rows: [{
-      category: 'PAYMENT',
-      originalEntityType: 'Payment',
-      originalEntityId: 701,
-      amount: '-8800.10',
-      balanceBefore: '8800.10',
-      balanceAfter: '0.00',
-      originalOccurredAt: '2026-08-03T09:10:00.000Z',
-      affectsNetImpact: true,
-      metadata: {},
-    }],
-    pending: { adjustments: [31], refunds: [32], voidRequests: [], depositRefunds: [], changes: [33], rebates: [], checkouts: [] },
+    rows: [
+      {
+        category: 'PAYMENT',
+        originalEntityType: 'Payment',
+        originalEntityId: 701,
+        amount: '-8800.10',
+        balanceBefore: '8800.10',
+        balanceAfter: '0.00',
+        originalOccurredAt: '2026-08-03T09:10:00.000Z',
+        affectsNetImpact: true,
+        metadata: {},
+      },
+    ],
+    pending: {
+      adjustments: [31],
+      refunds: [32],
+      voidRequests: [],
+      depositRefunds: [],
+      changes: [33],
+      rebates: [],
+      checkouts: [],
+    },
     completedCheckoutIds: [902],
-    room: { currentStatus: 'RENTED', hasLaterContract: true, action: 'KEEP_CURRENT_STATUS' },
-    flags: { hasPendingWorkflows: true, hasCompletedCheckout: true, hasLaterContract: true },
+    room: {
+      currentStatus: 'RENTED',
+      hasLaterContract: true,
+      action: 'KEEP_CURRENT_STATUS',
+    },
+    flags: {
+      hasPendingWorkflows: true,
+      hasCompletedCheckout: true,
+      hasLaterContract: true,
+    },
     sourceSnapshot: {
       prepaymentBalanceSource: null,
       depositBalanceSource: null,
@@ -132,7 +146,15 @@ function request(status: ContractVoidRequestStatus = 'PENDING', overrides: Parti
       roomId: 803,
       status: 'ACTIVE',
       room: { id: 803, fullHouseNo: '8栋1203' },
-      members: [{ id: 401, tenantId: 305, memberRole: 'PRIMARY', isCurrent: true, tenant: { id: 305, name: '陈晨' } }],
+      members: [
+        {
+          id: 401,
+          tenantId: 305,
+          memberRole: 'PRIMARY',
+          isCurrent: true,
+          tenant: { id: 305, name: '陈晨' },
+        },
+      ],
     },
     files: [],
     reversals: [],
@@ -178,6 +200,10 @@ describe('合同作废纠错面板', () => {
     })
     vi.mocked(contractService.rejectContractVoidRequest).mockResolvedValue(request('REJECTED'))
     vi.mocked(contractService.cancelContractVoidRequest).mockResolvedValue(request('CANCELLED'))
+    vi.mocked(contractService.deleteContractVoidProof).mockResolvedValue({
+      id: 501,
+    })
+    vi.mocked(contractService.refreshContractVoidRequestSnapshot).mockResolvedValue(request())
     vi.mocked(contractService.downloadContractVoidProof).mockResolvedValue(new Blob(['history-proof'], { type: 'image/png' }))
     vi.mocked(contractService.uploadContractVoidProof).mockResolvedValue({
       id: 501,
@@ -275,7 +301,9 @@ describe('合同作废纠错面板', () => {
 
   it('超级管理员可驳回待确认申请', async () => {
     vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([request()])
-    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '证明材料与合同不一致' } as never)
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({
+      value: '证明材料与合同不一致',
+    } as never)
     const wrapper = mountPanel('SUPER_ADMIN', null, 1)
     await flushPromises()
     await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
@@ -303,10 +331,96 @@ describe('合同作废纠错面板', () => {
     expect(others.find('[data-test="cancel-void-request"]').exists()).toBe(false)
   })
 
+  it('提交响应超时后重试复用同一 submission key 并取回原申请', async () => {
+    vi.mocked(contractService.submitContractVoidRequest).mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce(request())
+    const wrapper = mountPanel('ADMIN')
+    await flushPromises()
+    await setReason(wrapper, '提交响应丢失后恢复')
+
+    await wrapper.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="submit-void-request"]').trigger('click')
+    await flushPromises()
+
+    const firstKey = vi.mocked(contractService.submitContractVoidRequest).mock.calls[0][0].idempotencyKey
+    const secondKey = vi.mocked(contractService.submitContractVoidRequest).mock.calls[1][0].idempotencyKey
+    expect(secondKey).toBe(firstKey)
+    expect(wrapper.text()).toContain('HTZF20260826000901')
+  })
+
+  it('确认响应超时后保留待确认详情并复用同一 execution key', async () => {
+    const pending = request()
+    const completed = request('COMPLETED')
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([pending])
+    vi.mocked(contractService.getContractVoidRequest).mockResolvedValueOnce(pending).mockResolvedValueOnce(completed)
+    vi.mocked(contractService.approveContractVoidRequest)
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValueOnce({
+        requestId: 901,
+        requestNo: pending.requestNo,
+        status: 'COMPLETED',
+        contractId: 86,
+        contractNo: contracts[0].contractNo,
+        contractStatus: 'VOIDED',
+        impactHash: hashA,
+        executionBatchNo: 'HTZXP202608260901',
+        reversalCount: 1,
+        categoryTotals: { PAYMENT: '-8800.10' },
+        roomAction: 'KEEP_CURRENT_STATUS',
+        roomStatusBefore: 'RENTED',
+        roomStatusAfter: 'RENTED',
+      })
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({
+      value: '确认作废合同',
+    } as never)
+    const error = vi.spyOn(ElMessage, 'error')
+    const wrapper = mountPanel('SUPER_ADMIN', null, 1)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="approve-void-request"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="approve-void-request"]').exists()).toBe(true)
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('申请仍为待确认'))
+    await wrapper.get('[data-test="approve-void-request"]').trigger('click')
+    await flushPromises()
+
+    const firstKey = vi.mocked(contractService.approveContractVoidRequest).mock.calls[0][1].idempotencyKey
+    const secondKey = vi.mocked(contractService.approveContractVoidRequest).mock.calls[1][1].idempotencyKey
+    expect(secondKey).toBe(firstKey)
+    expect(wrapper.text()).toContain('终态申请仅可查看')
+    expect(wrapper.emitted('completed')).toEqual([[86]])
+  })
+
+  it('直接执行在 submit 成功后立即展示待确认申请，approve 失败可继续确认', async () => {
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({
+      value: '确认作废合同',
+    } as never)
+    vi.mocked(contractService.approveContractVoidRequest).mockRejectedValue(new Error('timeout'))
+    const error = vi.spyOn(ElMessage, 'error')
+    const wrapper = mountPanel('SUPER_ADMIN')
+    await flushPromises()
+    await setReason(wrapper, '直接执行响应恢复')
+
+    await wrapper.get('[data-test="direct-execute-void"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('HTZF20260826000901')
+    expect(wrapper.find('[data-test="approve-void-request"]').exists()).toBe(true)
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('申请已提交，可在当前详情继续确认'))
+  })
+
   it('stale 响应只重新预览并替换 impactHash，不自动再次提交', async () => {
     vi.mocked(contractService.previewContractVoid).mockReset().mockResolvedValueOnce(impact(hashA)).mockResolvedValueOnce(impact(hashB))
     vi.mocked(contractService.submitContractVoidRequest).mockRejectedValue({
-      response: { data: { code: 400, message: '合同关联数据已变化，请重新预览', data: null } },
+      response: {
+        data: {
+          code: 400,
+          message: '合同关联数据已变化，请重新预览',
+          data: null,
+        },
+      },
     })
     const warning = vi.spyOn(ElMessage, 'warning')
     const wrapper = mountPanel('ADMIN')
@@ -321,14 +435,86 @@ describe('合同作废纠错面板', () => {
     expect(warning).toHaveBeenCalledWith('合同关联数据已变化，已为你重新计算，请再次核对')
   })
 
+  it.each([
+    [400, '合同关联数据已变化，请重新预览', 'status'],
+    [409, '合同关联审批状态已并发变化，请重新预览', 'code'],
+  ])('审批 stale %s 时刷新原待确认申请且绝不自动再次确认', async (status, message, codeLocation) => {
+    const pending = request()
+    const nextImpact = impact(hashB)
+    const { impactHash, ...impactSnapshot } = nextImpact
+    const refreshed = request('PENDING', { impactHash, impactSnapshot })
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([pending])
+    vi.mocked(contractService.getContractVoidRequest).mockResolvedValue(pending)
+    vi.mocked(contractService.refreshContractVoidRequestSnapshot).mockResolvedValue(refreshed)
+    vi.mocked(contractService.approveContractVoidRequest).mockRejectedValue({
+      response: codeLocation === 'status' ? { status, data: { message } } : { data: { code: status, message } },
+    })
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({
+      value: '确认作废合同',
+    } as never)
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const wrapper = mountPanel('SUPER_ADMIN', null, 1)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="approve-void-request"]').trigger('click')
+    await flushPromises()
+
+    expect(contractService.approveContractVoidRequest).toHaveBeenCalledTimes(1)
+    expect(contractService.refreshContractVoidRequestSnapshot).toHaveBeenCalledTimes(1)
+    expect(contractService.refreshContractVoidRequestSnapshot).toHaveBeenCalledWith(901)
+    expect(wrapper.find('[data-test="approve-void-request"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="void-impact-cards"]').attributes('data-impact-hash')).toBe(hashB)
+    expect(warning).toHaveBeenCalledWith('合同关联数据已变化，已为你重新计算，请再次核对')
+  })
+
+  it('直接执行的审批 stale 只刷新已创建申请且不自动重复提交或确认', async () => {
+    const pending = request()
+    const nextImpact = impact(hashB)
+    const { impactHash, ...impactSnapshot } = nextImpact
+    vi.mocked(contractService.submitContractVoidRequest).mockResolvedValue(pending)
+    vi.mocked(contractService.approveContractVoidRequest).mockRejectedValue({
+      response: {
+        data: { code: 400, message: '合同关联数据已变化，请重新预览' },
+      },
+    })
+    vi.mocked(contractService.refreshContractVoidRequestSnapshot).mockResolvedValue(request('PENDING', { impactHash, impactSnapshot }))
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({
+      value: '确认作废合同',
+    } as never)
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const wrapper = mountPanel('SUPER_ADMIN')
+    await flushPromises()
+    await setReason(wrapper, '直接执行前发现关联数据变化')
+
+    await wrapper.get('[data-test="direct-execute-void"]').trigger('click')
+    await flushPromises()
+
+    expect(contractService.submitContractVoidRequest).toHaveBeenCalledTimes(1)
+    expect(contractService.approveContractVoidRequest).toHaveBeenCalledTimes(1)
+    expect(contractService.refreshContractVoidRequestSnapshot).toHaveBeenCalledWith(901)
+    expect(wrapper.get('[data-test="void-impact-cards"]').attributes('data-impact-hash')).toBe(hashB)
+    expect(wrapper.find('[data-test="approve-void-request"]').exists()).toBe(true)
+    expect(warning).toHaveBeenCalledWith('合同关联数据已变化，已为你重新计算，请再次核对')
+  })
+
   it('上传成功后才建立附件预览并将后端资产编号关联到申请', async () => {
     const createObjectURL = vi.fn().mockReturnValue('blob:void-proof-501')
     const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
     const wrapper = mountPanel('ADMIN')
     await flushPromises()
-    const file = new File(['proof-image'], '作废证明.png', { type: 'image/png' })
+    const file = new File(['proof-image'], '作废证明.png', {
+      type: 'image/png',
+    })
     const upload = wrapper.findComponent(ElUpload)
 
     await (upload.props('onChange') as (value: { raw: File }) => Promise<void>)({ raw: file })
@@ -346,28 +532,123 @@ describe('合同作废纠错面板', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:void-proof-501')
   })
 
+  it('明确移除附件时调用后端删除并在成功后撤下本地预览', async () => {
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn().mockReturnValue('blob:void-proof-501'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
+    const wrapper = mountPanel('ADMIN')
+    await flushPromises()
+    const file = new File(['proof-image'], '作废证明.png', {
+      type: 'image/png',
+    })
+    const upload = wrapper.findComponent(ElUpload)
+    await (upload.props('onChange') as (value: { raw: File }) => Promise<void>)({ raw: file })
+    await flushPromises()
+
+    await wrapper.get('[data-test="remove-void-proof-501"]').trigger('click')
+    await flushPromises()
+
+    expect(contractService.deleteContractVoidProof).toHaveBeenCalledWith(501)
+    expect(wrapper.find('[data-test="preview-void-proof-501"]').exists()).toBe(false)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:void-proof-501')
+  })
+
+  it('删除失败时保留附件并给出中文错误，切换合同也不会假装清理成功', async () => {
+    const second = {
+      ...contracts[0],
+      id: 88,
+      contractNo: 'HT202608260088 | 10栋602 | 王芳',
+      roomId: 1002,
+      room: { id: 1002, fullHouseNo: '10栋602' },
+      members: [{ memberRole: 'PRIMARY' as const, tenant: { id: 307, name: '王芳' } }],
+    }
+    vi.mocked(contractService.deleteContractVoidProof).mockRejectedValue({
+      response: {
+        data: { code: 503, message: '证明附件删除失败，请稍后重试' },
+      },
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn().mockReturnValue('blob:void-proof-501'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
+    const error = vi.spyOn(ElMessage, 'error')
+    const wrapper = mountPanel('ADMIN')
+    await wrapper.setProps({ contracts: [contracts[0], second] })
+    await flushPromises()
+    const file = new File(['proof-image'], '作废证明.png', {
+      type: 'image/png',
+    })
+    const upload = wrapper.findComponent(ElUpload)
+    await (upload.props('onChange') as (value: { raw: File }) => Promise<void>)({ raw: file })
+    await flushPromises()
+
+    await wrapper.get('[data-test="remove-void-proof-501"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="preview-void-proof-501"]').exists()).toBe(true)
+    expect(error).toHaveBeenCalledWith('证明附件删除失败，请稍后重试')
+
+    const select = wrapper.findAllComponents(ElSelect).find((component) => component.attributes('data-test') === 'void-contract-select')
+    expect(select).toBeDefined()
+    await select!.vm.$emit('change', 88)
+    await flushPromises()
+    expect(contractService.deleteContractVoidProof).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain(contracts[0].contractNo)
+    expect(wrapper.text()).not.toContain(second.contractNo)
+    expect(wrapper.find('[data-test="preview-void-proof-501"]').exists()).toBe(true)
+  })
+
   it('终态申请只读并展示冲销来源、金额和原纠错日期', async () => {
     const createObjectURL = vi.fn().mockReturnValue('blob:void-history-proof-501')
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
     const completed = request('COMPLETED', {
-      reversals: [{
-        id: 9901,
-        contractVoidRequestId: 901,
-        category: 'PAYMENT',
-        originalEntityType: 'Payment',
-        originalEntityId: 701,
-        amount: '-8800.10',
-        balanceBefore: '8800.10',
-        balanceAfter: '0.00',
-        generatedEntityType: 'PaymentReversal',
-        generatedEntityId: 9701,
-        originalOccurredAt: '2026-08-03T09:10:00.000Z',
-        correctionOccurredAt: '2026-08-26T09:00:00.000Z',
-        idempotencyKey: 'contract-void:901:PAYMENT:701',
-        metadata: null,
-      }],
-      files: [{ contractVoidRequestId: 901, fileAssetId: 501, createdAt: '2026-08-26T08:00:00.000Z', fileAsset: { id: 501, originalName: '作废证明.png', mimeType: 'image/png', uploadedAt: '2026-08-26T08:00:00.000Z' } }],
+      reversals: [
+        {
+          id: 9901,
+          contractVoidRequestId: 901,
+          category: 'PAYMENT',
+          originalEntityType: 'Payment',
+          originalEntityId: 701,
+          amount: '-8800.10',
+          balanceBefore: '8800.10',
+          balanceAfter: '0.00',
+          generatedEntityType: 'PaymentReversal',
+          generatedEntityId: 9701,
+          originalOccurredAt: '2026-08-03T09:10:00.000Z',
+          correctionOccurredAt: '2026-08-26T09:00:00.000Z',
+          idempotencyKey: 'contract-void:901:PAYMENT:701',
+          metadata: null,
+        },
+      ],
+      files: [
+        {
+          contractVoidRequestId: 901,
+          fileAssetId: 501,
+          createdAt: '2026-08-26T08:00:00.000Z',
+          fileAsset: {
+            id: 501,
+            originalName: '作废证明.png',
+            mimeType: 'image/png',
+            uploadedAt: '2026-08-26T08:00:00.000Z',
+          },
+        },
+      ],
     })
     vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([completed])
     vi.mocked(contractService.getContractVoidRequest).mockResolvedValue(completed)
@@ -396,7 +677,12 @@ describe('合同作废纠错面板', () => {
 
   it('保存期间禁用相关动作并阻止重复提交，失败后恢复', async () => {
     let rejectSubmit!: (reason: unknown) => void
-    vi.mocked(contractService.submitContractVoidRequest).mockImplementation(() => new Promise((_resolve, reject) => { rejectSubmit = reject }))
+    vi.mocked(contractService.submitContractVoidRequest).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSubmit = reject
+        }),
+    )
     const error = vi.spyOn(ElMessage, 'error')
     const wrapper = mountPanel('ADMIN')
     await flushPromises()
@@ -408,7 +694,9 @@ describe('合同作废纠错面板', () => {
     expect(contractService.submitContractVoidRequest).toHaveBeenCalledTimes(1)
     expect(submit.attributes()).toHaveProperty('disabled')
 
-    rejectSubmit({ response: { data: { code: 409, message: '该合同已有待确认的作废申请' } } })
+    rejectSubmit({
+      response: { data: { code: 409, message: '该合同已有待确认的作废申请' } },
+    })
     await flushPromises()
     expect(error).toHaveBeenCalledWith('该合同已有待确认的作废申请')
     expect(wrapper.get('[data-test="submit-void-request"]').attributes()).not.toHaveProperty('disabled')

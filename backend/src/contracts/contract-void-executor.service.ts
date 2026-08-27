@@ -14,6 +14,10 @@ import {
   computeContractVoidImpact,
   hashContractVoidImpact,
 } from './contract-void-impact';
+import {
+  lockContractVoidContract,
+  lockContractVoidRelatedRows,
+} from './contract-void-locks';
 import { resolveRoomStatusAfterContractVoid } from './contract-room-reconciliation';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
 import {
@@ -135,6 +139,15 @@ export class ContractVoidExecutorService {
     try {
       return await this.prisma.db.$transaction(
         async (tx) => {
+          const reference = await tx.contractVoidRequest.findUnique({
+            where: { id: requestId },
+            select: { contractId: true },
+          });
+          if (!reference) {
+            throw new NotFoundException('合同作废申请不存在');
+          }
+          await lockContractVoidContract(tx, reference.contractId);
+
           const requests = await tx.$queryRaw<RawLockedRequest[]>(
             Prisma.sql`SELECT id, request_no AS requestNo, contract_id AS contractId, status, impact_hash AS impactHash, execution_batch_no AS executionBatchNo, execution_idempotency_key AS executionIdempotencyKey, result_snapshot AS resultSnapshot FROM contract_void_requests WHERE id = ${requestId} FOR UPDATE`,
           );
@@ -156,7 +169,7 @@ export class ContractVoidExecutorService {
             throw new BadRequestException('合同关联数据已变化，请重新预览');
           }
 
-          await this.lockRelatedRows(tx, request.contractId);
+          await lockContractVoidRelatedRows(tx, request.contractId);
           const contract = await tx.contract.findUnique({
             where: { id: request.contractId },
             select: { contractNo: true, status: true },
@@ -333,65 +346,6 @@ export class ContractVoidExecutorService {
       }
       throw new ConflictException('合同作废执行遇到唯一性冲突，请重试');
     }
-  }
-
-  private async lockRelatedRows(
-    tx: Prisma.TransactionClient,
-    contractId: number,
-  ) {
-    // Deterministic parent-before-child order closes FK insert windows for every
-    // mutable table contributing to the combined impact/sourceSnapshot hash.
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM contracts WHERE id = ${contractId} FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT room_id FROM contracts WHERE id = ${contractId}) FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT related.id FROM contracts related JOIN contracts source ON source.room_id = related.room_id WHERE source.id = ${contractId} ORDER BY related.id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM contract_members WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM payments WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM contract_changes WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT ba.id FROM bill_adjustments ba JOIN rent_bills rb ON rb.id = ba.rent_bill_id WHERE rb.contract_id = ${contractId} ORDER BY ba.id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT pa.id FROM payment_allocations pa JOIN payments p ON p.id = pa.payment_id WHERE p.contract_id = ${contractId} ORDER BY pa.id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM payment_refunds WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT pvr.id FROM payment_void_requests pvr JOIN payments p ON p.id = pvr.payment_id WHERE p.contract_id = ${contractId} ORDER BY pvr.id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM prepayment_transactions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM pricing_rebates WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM deposit_refunds WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM deposit_transactions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
-    await tx.$queryRaw(
-      Prisma.sql`SELECT id FROM contract_commissions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-    );
   }
 
   private categoryTotals(

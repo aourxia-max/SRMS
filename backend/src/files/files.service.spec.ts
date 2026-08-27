@@ -1,17 +1,23 @@
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, unlink, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
-import { FilesService } from './files.service';
+import {
+  CONTRACT_VOID_PROOF_STAGED_TTL_MS,
+  FilesService,
+} from './files.service';
 
 jest.mock('fs/promises', () => ({
   mkdir: jest.fn().mockResolvedValue(undefined),
   writeFile: jest.fn().mockResolvedValue(undefined),
   readFile: jest.fn(),
+  unlink: jest.fn().mockResolvedValue(undefined),
 }));
 
 describe('FilesService payment proofs', () => {
@@ -568,6 +574,19 @@ describe('FilesService contract files', () => {
 });
 
 describe('FilesService contract void proofs', () => {
+  beforeEach(() => {
+    jest.mocked(readFile).mockReset();
+    jest.mocked(writeFile).mockReset().mockResolvedValue(undefined);
+    jest.mocked(unlink).mockReset().mockResolvedValue(undefined);
+  });
+
+  const admin = {
+    id: 2,
+    username: 'admin',
+    displayName: '管理员',
+    role: UserRole.ADMIN,
+  };
+
   it('stores a validated proof as a staged contract-void asset', async () => {
     const create = jest.fn().mockResolvedValue({
       id: 61,
@@ -580,7 +599,7 @@ describe('FilesService contract void proofs', () => {
       {
         db: {
           systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
-          fileAsset: { create },
+          fileAsset: { findMany: jest.fn().mockResolvedValue([]), create },
         },
       } as never,
       {
@@ -729,5 +748,349 @@ describe('FilesService contract void proofs', () => {
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('removes the just-written physical proof if FileAsset creation fails', async () => {
+    const failure = new Error('database unavailable');
+    const create = jest.fn().mockRejectedValue(failure);
+    const service = new FilesService(
+      {
+        db: {
+          systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
+          fileAsset: {
+            findMany: jest.fn().mockResolvedValue([]),
+            create,
+          },
+        },
+      } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'TENANT_FILE_MAX_SIZE_BYTES'
+            ? '10485760'
+            : 'application/pdf,image/jpeg,image/png,image/webp',
+        ),
+      } as never,
+    );
+    const content = Buffer.from('%PDF-1.7');
+
+    await expect(
+      service.saveContractVoidProof(
+        {
+          originalname: 'proof.pdf',
+          mimetype: 'application/pdf',
+          size: content.length,
+          buffer: content,
+        },
+        admin,
+      ),
+    ).rejects.toBe(failure);
+
+    const writtenPath = jest.mocked(writeFile).mock.calls.at(-1)?.[0];
+    expect(unlink).toHaveBeenCalledWith(writtenPath);
+  });
+
+  it('lets only the uploader delete an unlocked unassociated staged proof', async () => {
+    const asset = {
+      id: 61,
+      category: 'CONTRACT_VOID_PROOF',
+      uploadedBy: admin.id,
+      lockedAt: null,
+      storedName: '../../staged-proof.pdf',
+      contractVoidRequestFiles: [],
+    };
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    const service = new FilesService(
+      {
+        db: {
+          fileAsset: {
+            findUnique: jest.fn().mockResolvedValue(asset),
+            updateMany,
+            deleteMany,
+          },
+        },
+      } as never,
+      {} as never,
+    );
+
+    await expect(service.deleteContractVoidProof(61, admin)).resolves.toEqual({
+      id: 61,
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 61,
+        category: 'CONTRACT_VOID_PROOF',
+        uploadedBy: admin.id,
+        lockedAt: null,
+        contractVoidRequestFiles: { none: {} },
+      },
+      data: { lockedAt: expect.any(Date) },
+    });
+    expect(unlink).toHaveBeenCalledWith(
+      resolve(
+        process.cwd(),
+        '..',
+        'uploads',
+        'contract-void-proofs',
+        'staged-proof.pdf',
+      ),
+    );
+    expect(deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 61,
+          contractVoidRequestFiles: { none: {} },
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    [
+      'other uploader',
+      { uploadedBy: 99, lockedAt: null, contractVoidRequestFiles: [] },
+      ForbiddenException,
+    ],
+    [
+      'locked',
+      {
+        uploadedBy: admin.id,
+        lockedAt: new Date(),
+        contractVoidRequestFiles: [],
+      },
+      ConflictException,
+    ],
+    [
+      'associated',
+      {
+        uploadedBy: admin.id,
+        lockedAt: null,
+        contractVoidRequestFiles: [{ contractVoidRequestId: 901 }],
+      },
+      ConflictException,
+    ],
+  ])(
+    'rejects deletion of a %s proof without touching disk',
+    async (_case, state, errorType) => {
+      const service = new FilesService(
+        {
+          db: {
+            fileAsset: {
+              findUnique: jest.fn().mockResolvedValue({
+                id: 61,
+                category: 'CONTRACT_VOID_PROOF',
+                storedName: 'proof.pdf',
+                ...state,
+              }),
+              updateMany: jest.fn(),
+              deleteMany: jest.fn(),
+            },
+          },
+        } as never,
+        {} as never,
+      );
+
+      await expect(
+        service.deleteContractVoidProof(61, admin),
+      ).rejects.toBeInstanceOf(errorType);
+      expect(unlink).not.toHaveBeenCalled();
+    },
+  );
+
+  it('opportunistically removes unlocked proofs older than the named 24-hour TTL', async () => {
+    expect(CONTRACT_VOID_PROOF_STAGED_TTL_MS).toBe(24 * 60 * 60 * 1000);
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 50,
+        storedName: '../../expired.pdf',
+        uploadedAt: new Date('2026-08-24T00:00:00.000Z'),
+      },
+    ]);
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    const create = jest.fn().mockResolvedValue({
+      id: 61,
+      originalName: 'new.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 9n,
+      uploadedAt: new Date(),
+    });
+    const service = new FilesService(
+      {
+        db: {
+          systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
+          fileAsset: { findMany, updateMany, deleteMany, create },
+        },
+      } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'TENANT_FILE_MAX_SIZE_BYTES'
+            ? '10485760'
+            : 'application/pdf,image/jpeg,image/png,image/webp',
+        ),
+      } as never,
+    );
+    const before = Date.now() - CONTRACT_VOID_PROOF_STAGED_TTL_MS;
+    const content = Buffer.from('%PDF-1.7');
+
+    await service.saveContractVoidProof(
+      {
+        originalname: 'new.pdf',
+        mimetype: 'application/pdf',
+        size: content.length,
+        buffer: content,
+      },
+      admin,
+    );
+
+    const cutoff = findMany.mock.calls[0][0].where.uploadedAt.lt as Date;
+    expect(cutoff.getTime()).toBeLessThanOrEqual(before);
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        category: 'CONTRACT_VOID_PROOF',
+        lockedAt: null,
+        uploadedAt: { lt: expect.any(Date) },
+        contractVoidRequestFiles: { none: {} },
+      },
+      select: { id: true, storedName: true, uploadedAt: true },
+    });
+    expect(unlink).toHaveBeenCalledWith(
+      resolve(
+        process.cwd(),
+        '..',
+        'uploads',
+        'contract-void-proofs',
+        'expired.pdf',
+      ),
+    );
+    expect(deleteMany).toHaveBeenCalled();
+    expect(create).toHaveBeenCalled();
+  });
+
+  it('does not block a new upload when expired-proof physical cleanup fails', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 50,
+        storedName: 'expired.pdf',
+        uploadedAt: new Date('2026-08-24T00:00:00.000Z'),
+      },
+    ]);
+    const updateMany = jest
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+    const create = jest.fn().mockResolvedValue({
+      id: 61,
+      originalName: 'new.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 9n,
+      uploadedAt: new Date(),
+    });
+    jest
+      .mocked(unlink)
+      .mockRejectedValueOnce(
+        Object.assign(new Error('permission denied'), { code: 'EACCES' }),
+      );
+    const service = new FilesService(
+      {
+        db: {
+          systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
+          fileAsset: { findMany, updateMany, deleteMany: jest.fn(), create },
+        },
+      } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'TENANT_FILE_MAX_SIZE_BYTES'
+            ? '10485760'
+            : 'application/pdf,image/jpeg,image/png,image/webp',
+        ),
+      } as never,
+    );
+    const content = Buffer.from('%PDF-1.7');
+
+    await expect(
+      service.saveContractVoidProof(
+        {
+          originalname: 'new.pdf',
+          mimetype: 'application/pdf',
+          size: content.length,
+          buffer: content,
+        },
+        admin,
+      ),
+    ).resolves.toMatchObject({ id: 61 });
+    expect(updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: 50,
+        category: 'CONTRACT_VOID_PROOF',
+        lockedAt: expect.any(Date),
+      },
+      data: { lockedAt: null },
+    });
+    expect(create).toHaveBeenCalled();
+  });
+
+  it('maps a missing physical proof to a Chinese 404 without leaking its path', async () => {
+    const findFirst = jest.fn().mockResolvedValue({
+      fileAsset: {
+        category: 'CONTRACT_VOID_PROOF',
+        storedName: 'missing-secret.pdf',
+      },
+    });
+    jest.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error('ENOENT D:/secret/missing-secret.pdf'), {
+        code: 'ENOENT',
+      }),
+    );
+    const service = new FilesService(
+      {
+        db: {
+          contractVoidRequestFile: { findFirst },
+        },
+      } as never,
+      {} as never,
+    );
+
+    await expect(
+      service.downloadContractVoidProof(901, 501, admin),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '合同作废证明文件不存在' }),
+    );
+    await expect(
+      service.downloadContractVoidProof(901, 501, admin),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('maps other proof read failures to a Chinese service error without leaking its path', async () => {
+    const findFirst = jest.fn().mockResolvedValue({
+      fileAsset: {
+        category: 'CONTRACT_VOID_PROOF',
+        storedName: 'private-secret.pdf',
+      },
+    });
+    jest.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error('EACCES D:/secret/private-secret.pdf'), {
+        code: 'EACCES',
+      }),
+    );
+    const service = new FilesService(
+      {
+        db: {
+          contractVoidRequestFile: { findFirst },
+        },
+      } as never,
+      {} as never,
+    );
+
+    const failure = service.downloadContractVoidProof(901, 501, admin);
+    await expect(failure).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(failure).rejects.toEqual(
+      expect.objectContaining({
+        message: '合同作废证明文件读取失败，请稍后重试',
+      }),
+    );
+    await failure.catch((error: Error) =>
+      expect(error.message).not.toContain('secret'),
+    );
   });
 });
