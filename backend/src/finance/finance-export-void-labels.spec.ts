@@ -157,6 +157,41 @@ describe('FinanceExportService cash-flow labels and references', () => {
       categories.map(([category]) => category),
     );
   });
+
+  it('keeps non-correction internal offsets labeled as internal offsets', async () => {
+    const offsetReport = {
+      ...report,
+      flows: [
+        {
+          ...report.flows[0],
+          flowType: 'DEPOSIT_OFFSET',
+          type: '押金内部抵扣',
+          amount: new Prisma.Decimal('-30.00'),
+          direction: 'OUT',
+          external: false,
+          countsAsRentReceipt: false,
+          reference: 'YJ-30',
+          requestNo: null,
+          contractNo: null,
+          category: null,
+          correctionOccurredAt: null,
+          source: { entityType: 'DepositTransaction', entityId: 30 },
+        },
+      ],
+    };
+    const bytes = await service(offsetReport).cashFlowWorkbook(
+      undefined,
+      undefined,
+      user,
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const row = workbook.getWorksheet('资金流水')!.getRow(4);
+
+    expect(row.getCell(3).value).toBe('押金内部抵扣');
+    expect(row.getCell(7).value).toBe('否（内部抵扣）');
+  });
+
   it('passes the same Chinese labels and split references to PDF and returns a readable PDF', async () => {
     const exportService = service();
     const tablePdf = jest

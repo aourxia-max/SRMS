@@ -18,9 +18,37 @@ import { PrismaService } from '../src/prisma/prisma.service';
 type SourceIds = {
   bills: number[];
   payments: number[];
+  allocations: number[];
   deposits: number[];
   prepayments: number[];
   checkouts: number[];
+};
+
+type AllocationSource = {
+  id: number;
+  paymentId: number;
+  rentBillId: number;
+  allocatedAmount: string;
+  reversedAmount: string;
+  allocationType: string;
+};
+
+type ExpectedReversal = {
+  category: string;
+  originalEntityType: string;
+  originalEntityId: number;
+  amount: string;
+  balanceBefore: string | null;
+  balanceAfter: string | null;
+  generatedEntityType: string | null;
+};
+
+type CleanupEntry = {
+  label: string;
+  buildingIds: number[];
+  roomIds: number[];
+  tenantIds: number[];
+  contractIds: number[];
 };
 
 type ScenarioFixture = {
@@ -37,6 +65,10 @@ type ScenarioFixture = {
   roomStatusBefore: string;
   successorContractId?: number;
   sources: SourceIds;
+  allocationSources: AllocationSource[];
+  expectedReversals: ExpectedReversal[];
+  expectedCurrentNetImpact: string;
+  cleanup: CleanupEntry;
 };
 
 type CompletedScenario = {
@@ -112,7 +144,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
   let admin: AuthUser;
   let superAdmin: AuthUser;
   let sequence = 0;
-  const fixtures: ScenarioFixture[] = [];
+  const cleanupRegistry: CleanupEntry[] = [];
   const completed: CompletedScenario[] = [];
   const marker = `${Date.now().toString(36)}${Math.random()
     .toString(36)
@@ -164,19 +196,22 @@ describe('contract void correction API and financial invariants (e2e)', () => {
 
   afterAll(async () => {
     if (prisma) {
-      for (const fixture of fixtures) {
-        const completedRequest = await prisma.db.contractVoidRequest.findFirst({
-          where: {
-            contractId: fixture.contractId,
-            status: 'COMPLETED',
-          },
-          select: { id: true },
-        });
-        if (!completedRequest) await cleanupFixture(fixture);
-      }
+      for (const entry of cleanupRegistry) await cleanupEntry(entry);
     }
     if (app) await app.close();
   });
+
+  function registerCleanup(label: string): CleanupEntry {
+    const entry = {
+      label,
+      buildingIds: [],
+      roomIds: [],
+      tenantIds: [],
+      contractIds: [],
+    };
+    cleanupRegistry.push(entry);
+    return entry;
+  }
 
   function nextCode() {
     sequence += 1;
@@ -184,6 +219,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
   }
 
   async function createLocation(label: string, roomStatus: 'EMPTY' | 'RENTED') {
+    const cleanup = registerCleanup(label);
     const code = nextCode();
     const building = await prisma.db.building.create({
       data: {
@@ -193,6 +229,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         remark: `${prefix}-可清理fixture`,
       },
     });
+    cleanup.buildingIds.push(building.id);
     const roomKeyword = `CV10${code}室`;
     const room = await prisma.db.room.create({
       data: {
@@ -207,15 +244,17 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         remark: `${prefix}-${label}`,
       },
     });
+    cleanup.roomIds.push(room.id);
     const tenantName = `${prefix}-${label}-租户`;
     const tenant = await prisma.db.tenant.create({
       data: { name: tenantName, remark: `${prefix}-可清理fixture` },
     });
-    return { code, building, room, tenant, tenantName, roomKeyword };
+    cleanup.tenantIds.push(tenant.id);
+    return { code, building, room, tenant, tenantName, roomKeyword, cleanup };
   }
 
   async function sourceIds(contractId: number): Promise<SourceIds> {
-    const [bills, payments, deposits, prepayments, checkouts] =
+    const [bills, payments, allocations, deposits, prepayments, checkouts] =
       await Promise.all([
         prisma.db.rentBill.findMany({
           where: { contractId },
@@ -224,6 +263,11 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         }),
         prisma.db.payment.findMany({
           where: { contractId },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        }),
+        prisma.db.paymentAllocation.findMany({
+          where: { payment: { contractId } },
           select: { id: true },
           orderBy: { id: 'asc' },
         }),
@@ -246,10 +290,37 @@ describe('contract void correction API and financial invariants (e2e)', () => {
     return {
       bills: bills.map(({ id }) => id),
       payments: payments.map(({ id }) => id),
+      allocations: allocations.map(({ id }) => id),
       deposits: deposits.map(({ id }) => id),
       prepayments: prepayments.map(({ id }) => id),
       checkouts: checkouts.map(({ id }) => id),
     };
+  }
+
+  async function loadAllocationSources(
+    allocationIds: number[],
+  ): Promise<AllocationSource[]> {
+    if (!allocationIds.length) return [];
+    const allocations = await prisma.db.paymentAllocation.findMany({
+      where: { id: { in: allocationIds } },
+      select: {
+        id: true,
+        paymentId: true,
+        rentBillId: true,
+        allocatedAmount: true,
+        reversedAmount: true,
+        allocationType: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+    return allocations.map((allocation) => ({
+      id: allocation.id,
+      paymentId: allocation.paymentId,
+      rentBillId: allocation.rentBillId,
+      allocatedAmount: allocation.allocatedAmount.toFixed(2),
+      reversedAmount: allocation.reversedAmount.toFixed(2),
+      allocationType: allocation.allocationType,
+    }));
   }
 
   async function createDirectContract(input: {
@@ -258,6 +329,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
     contractStatus: 'ACTIVE' | 'ENDED';
     billStatus: 'PENDING' | 'PAID';
     billAmount: string;
+    expectedCurrentNetImpact: string;
     withPayment?: boolean;
     withCompletedCheckout?: boolean;
     withSuccessor?: boolean;
@@ -287,6 +359,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         },
       },
     });
+    location.cleanup.contractIds.push(contract.id);
     const bill = await prisma.db.rentBill.create({
       data: {
         billNo: `CV10-ZD-${location.code}`,
@@ -307,6 +380,9 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         status: input.billStatus,
       },
     });
+    let paymentId: number | undefined;
+    let allocationId: number | undefined;
+    let checkoutId: number | undefined;
     if (input.withPayment) {
       const payment = await prisma.db.payment.create({
         data: {
@@ -321,16 +397,18 @@ describe('contract void correction API and financial invariants (e2e)', () => {
           remark: `${prefix}-${input.label}`,
         },
       });
-      await prisma.db.paymentAllocation.create({
+      paymentId = payment.id;
+      const allocation = await prisma.db.paymentAllocation.create({
         data: {
           paymentId: payment.id,
           rentBillId: bill.id,
           allocatedAmount: new Prisma.Decimal(input.billAmount),
         },
       });
+      allocationId = allocation.id;
     }
     if (input.withCompletedCheckout) {
-      await prisma.db.checkoutSettlement.create({
+      const checkout = await prisma.db.checkoutSettlement.create({
         data: {
           settlementNo: `CV10-TZ-${location.code}`.slice(0, 40),
           contractId: contract.id,
@@ -351,9 +429,10 @@ describe('contract void correction API and financial invariants (e2e)', () => {
           remark: `${prefix}-必须保留的历史来源`,
         },
       });
+      checkoutId = checkout.id;
     }
-    const tenantIds = [location.tenant.id];
-    const contractIds = [contract.id];
+    const tenantIds = [...location.cleanup.tenantIds];
+    const contractIds = [...location.cleanup.contractIds];
     let successorContractId: number | undefined;
     if (input.withSuccessor) {
       const successorTenant = await prisma.db.tenant.create({
@@ -362,6 +441,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
           remark: `${prefix}-后续合同`,
         },
       });
+      location.cleanup.tenantIds.push(successorTenant.id);
       tenantIds.push(successorTenant.id);
       const successor = await prisma.db.contract.create({
         data: {
@@ -384,9 +464,65 @@ describe('contract void correction API and financial invariants (e2e)', () => {
           },
         },
       });
+      location.cleanup.contractIds.push(successor.id);
       successorContractId = successor.id;
       contractIds.push(successor.id);
     }
+    const sources = await sourceIds(contract.id);
+    const allocationSources = await loadAllocationSources(sources.allocations);
+    const expectedReversals: ExpectedReversal[] = [
+      {
+        category: 'RENT_BILL',
+        originalEntityType: 'RentBill',
+        originalEntityId: bill.id,
+        amount: `-${input.billAmount}`,
+        balanceBefore: input.billAmount,
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      },
+    ];
+    if (paymentId) {
+      expectedReversals.push({
+        category: 'PAYMENT',
+        originalEntityType: 'Payment',
+        originalEntityId: paymentId,
+        amount: `-${input.billAmount}`,
+        balanceBefore: input.billAmount,
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      });
+    }
+    if (allocationId) {
+      expectedReversals.push({
+        category: 'PAYMENT_ALLOCATION',
+        originalEntityType: 'PaymentAllocation',
+        originalEntityId: allocationId,
+        amount: `-${input.billAmount}`,
+        balanceBefore: input.billAmount,
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      });
+    }
+    if (checkoutId) {
+      expectedReversals.push({
+        category: 'CHECKOUT',
+        originalEntityType: 'CheckoutSettlement',
+        originalEntityId: checkoutId,
+        amount: '0.00',
+        balanceBefore: null,
+        balanceAfter: null,
+        generatedEntityType: null,
+      });
+    }
+    expectedReversals.push({
+      category: 'ROOM_STATUS',
+      originalEntityType: 'Room',
+      originalEntityId: location.room.id,
+      amount: '0.00',
+      balanceBefore: null,
+      balanceAfter: null,
+      generatedEntityType: null,
+    });
     const fixture: ScenarioFixture = {
       sequence,
       label: input.label,
@@ -400,9 +536,12 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       roomKeyword: location.roomKeyword,
       roomStatusBefore: input.roomStatus,
       successorContractId,
-      sources: await sourceIds(contract.id),
+      sources,
+      allocationSources,
+      expectedReversals,
+      expectedCurrentNetImpact: input.expectedCurrentNetImpact,
+      cleanup: location.cleanup,
     };
-    fixtures.push(fixture);
     return fixture;
   }
 
@@ -425,9 +564,59 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       })
       .expect(201);
     const contractId = response.body.data.id as number;
+    location.cleanup.contractIds.push(contractId);
     const contract = await prisma.db.contract.findUniqueOrThrow({
       where: { id: contractId },
       select: { contractNo: true },
+    });
+    const autoDepositPayment = await prisma.db.payment.findUniqueOrThrow({
+      where: { autoSourceKey: `CONTRACT_INITIAL_DEPOSIT:${contractId}` },
+      select: {
+        id: true,
+        contractId: true,
+        paymentCategory: true,
+        amount: true,
+        method: true,
+        autoSourceKey: true,
+        status: true,
+      },
+    });
+    expect({
+      contractId: autoDepositPayment.contractId,
+      purpose: autoDepositPayment.paymentCategory,
+      amount: autoDepositPayment.amount.toFixed(2),
+      origin: autoDepositPayment.method,
+      source: autoDepositPayment.autoSourceKey,
+      status: autoDepositPayment.status,
+    }).toEqual({
+      contractId,
+      purpose: 'DEPOSIT',
+      amount: '50.00',
+      origin: 'SYSTEM_AUTO',
+      source: `CONTRACT_INITIAL_DEPOSIT:${contractId}`,
+      status: 'CONFIRMED',
+    });
+    const autoDepositTransaction =
+      await prisma.db.depositTransaction.findFirstOrThrow({
+        where: { contractId, paymentId: autoDepositPayment.id },
+        select: {
+          id: true,
+          paymentId: true,
+          transactionType: true,
+          amount: true,
+          balanceAfter: true,
+        },
+      });
+    expect({
+      paymentId: autoDepositTransaction.paymentId,
+      transactionType: autoDepositTransaction.transactionType,
+      amount: autoDepositTransaction.amount.toFixed(2),
+      balanceAfter: autoDepositTransaction.balanceAfter.toFixed(2),
+    }).toEqual({
+      paymentId: autoDepositPayment.id,
+      transactionType: 'RECEIPT',
+      amount: '50.00',
+      balanceAfter: '50.00',
     });
     const bill = await prisma.db.rentBill.findFirstOrThrow({
       where: { contractId },
@@ -446,7 +635,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         remark: `${prefix}-已收租金`,
       },
     });
-    await prisma.db.paymentAllocation.create({
+    const rentAllocation = await prisma.db.paymentAllocation.create({
       data: {
         paymentId: rentPayment.id,
         rentBillId: bill.id,
@@ -474,7 +663,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         remark: `${prefix}-预收款余额`,
       },
     });
-    await prisma.db.prepaymentTransaction.create({
+    const prepaymentTransaction = await prisma.db.prepaymentTransaction.create({
       data: {
         contractId,
         transactionNo: `CV10-YSLS-${location.code}`.slice(0, 40),
@@ -486,26 +675,143 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         occurredAt: new Date('2026-08-03T00:00:00.000Z'),
       },
     });
+    const sources = await sourceIds(contractId);
+    expect(sources.allocations).toEqual([rentAllocation.id]);
+    expect(sources.deposits).toEqual([autoDepositTransaction.id]);
+    expect(sources.prepayments).toEqual([prepaymentTransaction.id]);
+    const allocationSources = await loadAllocationSources(sources.allocations);
+    const expectedReversals: ExpectedReversal[] = [
+      {
+        category: 'RENT_BILL',
+        originalEntityType: 'RentBill',
+        originalEntityId: bill.id,
+        amount: '-100.00',
+        balanceBefore: '100.00',
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      },
+      {
+        category: 'PAYMENT',
+        originalEntityType: 'Payment',
+        originalEntityId: autoDepositPayment.id,
+        amount: '-50.00',
+        balanceBefore: '50.00',
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      },
+      {
+        category: 'PAYMENT',
+        originalEntityType: 'Payment',
+        originalEntityId: rentPayment.id,
+        amount: '-100.00',
+        balanceBefore: '100.00',
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      },
+      {
+        category: 'PAYMENT',
+        originalEntityType: 'Payment',
+        originalEntityId: prepayment.id,
+        amount: '-25.00',
+        balanceBefore: '25.00',
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      },
+      {
+        category: 'PAYMENT_ALLOCATION',
+        originalEntityType: 'PaymentAllocation',
+        originalEntityId: rentAllocation.id,
+        amount: '-100.00',
+        balanceBefore: '100.00',
+        balanceAfter: '0.00',
+        generatedEntityType: null,
+      },
+      {
+        category: 'DEPOSIT',
+        originalEntityType: 'ContractDepositBalance',
+        originalEntityId: contractId,
+        amount: '-50.00',
+        balanceBefore: '50.00',
+        balanceAfter: '0.00',
+        generatedEntityType: 'DepositTransaction',
+      },
+      {
+        category: 'PREPAYMENT',
+        originalEntityType: 'ContractPrepaymentBalance',
+        originalEntityId: contractId,
+        amount: '-25.00',
+        balanceBefore: '25.00',
+        balanceAfter: '0.00',
+        generatedEntityType: 'PrepaymentTransaction',
+      },
+      {
+        category: 'ROOM_STATUS',
+        originalEntityType: 'Room',
+        originalEntityId: location.room.id,
+        amount: '0.00',
+        balanceBefore: null,
+        balanceAfter: null,
+        generatedEntityType: null,
+      },
+    ];
     const fixture: ScenarioFixture = {
       sequence,
       label,
       buildingId: location.building.id,
       roomId: location.room.id,
-      tenantIds: [location.tenant.id],
-      contractIds: [contractId],
+      tenantIds: [...location.cleanup.tenantIds],
+      contractIds: [...location.cleanup.contractIds],
       contractId,
       contractNo: contract.contractNo,
       tenantName: location.tenantName,
       roomKeyword: location.roomKeyword,
       roomStatusBefore: 'RENTED',
-      sources: await sourceIds(contractId),
+      sources,
+      allocationSources,
+      expectedReversals,
+      expectedCurrentNetImpact: '250.00',
+      cleanup: location.cleanup,
     };
-    fixtures.push(fixture);
     return fixture;
   }
 
-  async function cleanupFixture(fixture: ScenarioFixture) {
-    const contractIds = fixture.contractIds;
+  function mergeIds(target: number[], discovered: Array<{ id: number }>) {
+    const ids = new Set(target);
+    for (const { id } of discovered) ids.add(id);
+    target.splice(0, target.length, ...ids);
+  }
+
+  async function hydrateCleanupEntry(entry: CleanupEntry) {
+    const buildings = await prisma.db.building.findMany({
+      where: { buildingName: `${prefix}-${entry.label}` },
+      select: { id: true },
+    });
+    mergeIds(entry.buildingIds, buildings);
+    const rooms = await prisma.db.room.findMany({
+      where: {
+        OR: [
+          { buildingId: { in: entry.buildingIds } },
+          { remark: `${prefix}-${entry.label}` },
+        ],
+      },
+      select: { id: true },
+    });
+    mergeIds(entry.roomIds, rooms);
+    const tenants = await prisma.db.tenant.findMany({
+      where: { name: { startsWith: `${prefix}-${entry.label}-` } },
+      select: { id: true },
+    });
+    mergeIds(entry.tenantIds, tenants);
+    const contracts = await prisma.db.contract.findMany({
+      where: { roomId: { in: entry.roomIds } },
+      select: { id: true },
+    });
+    mergeIds(entry.contractIds, contracts);
+  }
+
+  async function cleanupEntry(entry: CleanupEntry) {
+    await hydrateCleanupEntry(entry);
+    const contractIds = entry.contractIds;
     await prisma.db.$transaction(async (tx) => {
       const requests = await tx.contractVoidRequest.findMany({
         where: { contractId: { in: contractIds } },
@@ -573,13 +879,15 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       });
       await tx.contract.deleteMany({ where: { id: { in: contractIds } } });
       await tx.roomStatusHistory.deleteMany({
-        where: { roomId: fixture.roomId },
+        where: { roomId: { in: entry.roomIds } },
       });
       await tx.tenant.deleteMany({
-        where: { id: { in: fixture.tenantIds } },
+        where: { id: { in: entry.tenantIds } },
       });
-      await tx.room.deleteMany({ where: { id: fixture.roomId } });
-      await tx.building.deleteMany({ where: { id: fixture.buildingId } });
+      await tx.room.deleteMany({ where: { id: { in: entry.roomIds } } });
+      await tx.building.deleteMany({
+        where: { id: { in: entry.buildingIds } },
+      });
     });
   }
 
@@ -696,36 +1004,85 @@ describe('contract void correction API and financial invariants (e2e)', () => {
     requestId: number,
     result: {
       roomStatusAfter: string;
-      reversalCount: number;
     },
   ) {
-    const [contract, bills, payments, sourceDeposits, sourcePrepayments] =
-      await Promise.all([
-        prisma.db.contract.findUniqueOrThrow({
-          where: { id: fixture.contractId },
-          select: { status: true },
-        }),
-        prisma.db.rentBill.findMany({
-          where: { id: { in: fixture.sources.bills } },
-          select: { id: true, status: true },
-        }),
-        prisma.db.payment.findMany({
-          where: { id: { in: fixture.sources.payments } },
-          select: { id: true },
-        }),
-        prisma.db.depositTransaction.findMany({
-          where: { id: { in: fixture.sources.deposits } },
-          select: { id: true },
-        }),
-        prisma.db.prepaymentTransaction.findMany({
-          where: { id: { in: fixture.sources.prepayments } },
-          select: { id: true },
-        }),
-      ]);
+    const [
+      contract,
+      bills,
+      payments,
+      allocations,
+      sourceDeposits,
+      sourcePrepayments,
+    ] = await Promise.all([
+      prisma.db.contract.findUniqueOrThrow({
+        where: { id: fixture.contractId },
+        select: { status: true },
+      }),
+      prisma.db.rentBill.findMany({
+        where: { id: { in: fixture.sources.bills } },
+        select: { id: true, status: true },
+      }),
+      prisma.db.payment.findMany({
+        where: { id: { in: fixture.sources.payments } },
+        select: { id: true, contractId: true, status: true },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.db.paymentAllocation.findMany({
+        where: { id: { in: fixture.sources.allocations } },
+        select: {
+          id: true,
+          paymentId: true,
+          rentBillId: true,
+          allocatedAmount: true,
+          reversedAmount: true,
+          allocationType: true,
+          payment: { select: { contractId: true } },
+          rentBill: { select: { contractId: true } },
+        },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.db.depositTransaction.findMany({
+        where: { id: { in: fixture.sources.deposits } },
+        select: { id: true },
+      }),
+      prisma.db.prepaymentTransaction.findMany({
+        where: { id: { in: fixture.sources.prepayments } },
+        select: { id: true },
+      }),
+    ]);
     expect(contract.status).toBe('VOIDED');
     expect(bills).toHaveLength(fixture.sources.bills.length);
     expect(bills.every((bill) => bill.status === 'VOIDED')).toBe(true);
-    expect(payments).toHaveLength(fixture.sources.payments.length);
+    expect(
+      payments.map(({ id, contractId, status }) => ({
+        id,
+        contractId,
+        status,
+      })),
+    ).toEqual(
+      fixture.sources.payments.map((id) => ({
+        id,
+        contractId: fixture.contractId,
+        status: 'VOIDED',
+      })),
+    );
+    expect(
+      allocations.map((allocation) => ({
+        id: allocation.id,
+        paymentId: allocation.paymentId,
+        rentBillId: allocation.rentBillId,
+        allocatedAmount: allocation.allocatedAmount.toFixed(2),
+        reversedAmount: allocation.reversedAmount.toFixed(2),
+        allocationType: allocation.allocationType,
+      })),
+    ).toEqual(fixture.allocationSources);
+    expect(
+      allocations.every(
+        (allocation) =>
+          allocation.payment.contractId === fixture.contractId &&
+          allocation.rentBill.contractId === fixture.contractId,
+      ),
+    ).toBe(true);
     expect(sourceDeposits).toHaveLength(fixture.sources.deposits.length);
     expect(sourcePrepayments).toHaveLength(fixture.sources.prepayments.length);
 
@@ -746,7 +1103,6 @@ describe('contract void correction API and financial invariants (e2e)', () => {
           status: true,
           impactSnapshot: true,
           resultSnapshot: true,
-          reversals: { select: { id: true } },
         },
       }),
     ]);
@@ -760,8 +1116,126 @@ describe('contract void correction API and financial invariants (e2e)', () => {
         }
       ).summary.postReversalNetImpact,
     ).toBe('0.00');
-    expect(storedRequest.reversals).toHaveLength(result.reversalCount);
     expect(storedRequest.resultSnapshot).not.toBeNull();
+    const reversals = await prisma.db.contractVoidReversal.findMany({
+      where: { contractVoidRequestId: requestId },
+      select: {
+        category: true,
+        originalEntityType: true,
+        originalEntityId: true,
+        amount: true,
+        balanceBefore: true,
+        balanceAfter: true,
+        generatedEntityType: true,
+        generatedEntityId: true,
+        metadata: true,
+      },
+    });
+    const bySource = (
+      left: {
+        category: string;
+        originalEntityType: string;
+        originalEntityId: number | null;
+      },
+      right: {
+        category: string;
+        originalEntityType: string;
+        originalEntityId: number | null;
+      },
+    ) =>
+      `${left.category}:${left.originalEntityType}:${left.originalEntityId ?? 0}`.localeCompare(
+        `${right.category}:${right.originalEntityType}:${right.originalEntityId ?? 0}`,
+      );
+    expect(
+      reversals
+        .map((reversal) => ({
+          category: reversal.category,
+          originalEntityType: reversal.originalEntityType,
+          originalEntityId: reversal.originalEntityId,
+          amount: reversal.amount.toFixed(2),
+          balanceBefore: reversal.balanceBefore?.toFixed(2) ?? null,
+          balanceAfter: reversal.balanceAfter?.toFixed(2) ?? null,
+          generatedEntityType: reversal.generatedEntityType,
+        }))
+        .sort(bySource),
+    ).toEqual([...fixture.expectedReversals].sort(bySource));
+
+    const persistedPlannedNetReversal = reversals.reduce((total, reversal) => {
+      const metadata =
+        reversal.metadata &&
+        typeof reversal.metadata === 'object' &&
+        !Array.isArray(reversal.metadata)
+          ? reversal.metadata
+          : {};
+      return metadata.affectsNetImpact === true
+        ? total.plus(reversal.amount)
+        : total;
+    }, new Prisma.Decimal(0));
+    expect(persistedPlannedNetReversal.toFixed(2)).toBe(
+      new Prisma.Decimal(fixture.expectedCurrentNetImpact).negated().toFixed(2),
+    );
+    expect(
+      new Prisma.Decimal(fixture.expectedCurrentNetImpact)
+        .plus(persistedPlannedNetReversal)
+        .toFixed(2),
+    ).toBe('0.00');
+
+    for (const expected of fixture.expectedReversals.filter(
+      (row) => row.generatedEntityType !== null,
+    )) {
+      const reversal = reversals.find(
+        (row) =>
+          row.category === expected.category &&
+          row.originalEntityType === expected.originalEntityType &&
+          row.originalEntityId === expected.originalEntityId,
+      );
+      expect(reversal?.generatedEntityId).not.toBeNull();
+      if (expected.generatedEntityType === 'DepositTransaction') {
+        const generated = await prisma.db.depositTransaction.findUniqueOrThrow({
+          where: { id: reversal!.generatedEntityId! },
+          select: {
+            contractId: true,
+            transactionType: true,
+            amount: true,
+            balanceAfter: true,
+          },
+        });
+        expect({
+          contractId: generated.contractId,
+          transactionType: generated.transactionType,
+          amount: generated.amount.toFixed(2),
+          balanceAfter: generated.balanceAfter.toFixed(2),
+        }).toEqual({
+          contractId: fixture.contractId,
+          transactionType: 'REVERSAL',
+          amount: expected.balanceBefore,
+          balanceAfter: '0.00',
+        });
+      }
+      if (expected.generatedEntityType === 'PrepaymentTransaction') {
+        const generated =
+          await prisma.db.prepaymentTransaction.findUniqueOrThrow({
+            where: { id: reversal!.generatedEntityId! },
+            select: {
+              contractId: true,
+              transactionType: true,
+              amount: true,
+              balanceAfter: true,
+            },
+          });
+        expect({
+          contractId: generated.contractId,
+          transactionType: generated.transactionType,
+          amount: generated.amount.toFixed(2),
+          balanceAfter: generated.balanceAfter.toFixed(2),
+        }).toEqual({
+          contractId: fixture.contractId,
+          transactionType: 'REVERSAL',
+          amount: expected.balanceBefore,
+          balanceAfter: '0.00',
+        });
+      }
+    }
     const sourceCheckouts = await prisma.db.checkoutSettlement.findMany({
       where: { id: { in: fixture.sources.checkouts } },
       select: { id: true, status: true },
@@ -804,6 +1278,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       contractStatus: 'ACTIVE',
       billStatus: 'PENDING',
       billAmount: '300.00',
+      expectedCurrentNetImpact: '0.00',
     });
     await executeScenario(fixture, true);
   });
@@ -822,6 +1297,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       contractStatus: 'ENDED',
       billStatus: 'PAID',
       billAmount: '400.00',
+      expectedCurrentNetImpact: '400.00',
       withPayment: true,
       withCompletedCheckout: true,
     });
@@ -836,6 +1312,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       contractStatus: 'ENDED',
       billStatus: 'PENDING',
       billAmount: '500.00',
+      expectedCurrentNetImpact: '0.00',
       withSuccessor: true,
     });
     await executeScenario(fixture);
@@ -858,6 +1335,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       contractStatus: 'ENDED',
       billStatus: 'PENDING',
       billAmount: '777.77',
+      expectedCurrentNetImpact: '0.00',
     });
     try {
       await prisma.db.contract.update({
@@ -942,8 +1420,8 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       ).toBe(false);
       expect(commissionsAfter.body.data).toEqual(commissionsBefore.body.data);
     } finally {
-      await cleanupFixture(sentinel);
-      fixtures.splice(fixtures.indexOf(sentinel), 1);
+      await cleanupEntry(sentinel.cleanup);
+      cleanupRegistry.splice(cleanupRegistry.indexOf(sentinel.cleanup), 1);
     }
   });
 

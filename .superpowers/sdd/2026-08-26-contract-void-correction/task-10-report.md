@@ -77,11 +77,33 @@ sentinel 没有纠错申请或安全审计，断言后按精确主键和依赖�
 
 未修改 controller/executor production 或 specs，因为真实 E2E 证明其权限、确认、事务、房态和幂等契约均已满足；唯一缺口位于 finance Excel presentation。
 
+## 独立复审 fix round 1/5
+
+复审指出初版 E2E 的财务断言仍依赖 preview/result 常量，且 source ID、allocation 关系和中途失败清理证据不足。round 1 已补齐：
+
+- `SourceIds` 纳入原始 `PaymentAllocation.id`；fixture 同时保存 allocation 的 `paymentId`、`rentBillId`、分配金额、已冲销金额和来源类型。
+- 四场景分别维护手工推导的持久化 reversal 表，逐行精确比较 category、original entity type/id、signed amount、balance before/after 和 generated entity type，不再用 executor 的 `reversalCount` 代替内容证据。
+- 执行后直接读取原 `Payment`，验证全部变为 VOIDED；直接读取原 allocation，验证 ID、payment/bill 外键、金额和两侧合同关系均未改变。
+- 对押金／预收款余额冲销，沿 reversal 的 `generatedEntityId` 读取新台账，验证类型为 REVERSAL、金额分别为 `50.00`／`25.00`、余额为 `0.00`。
+- 从持久化 reversal 的 `metadata.affectsNetImpact=true` 行独立求和，再与 fixture 手工给定的当前净影响相加，四场景均必须得到 `0.00`。
+- 自动押金在作废前直接验证：Payment purpose/category 为 DEPOSIT、origin/method 为 SYSTEM_AUTO、金额与余额均为 `50.00`、`autoSourceKey` 和 DepositTransaction.paymentId 均指向正确合同／支付来源。
+- cleanup entry 在创建任何 DB 实体前登记；building、room、tenant、contract 创建后即时登记，并在清理前用本次唯一中文 prefix + scenario label 补发现遗漏 ID。因而任一步中途失败时，afterAll 仍能按合同关系清除 bill/payment/allocation 等未完成且无 append-only audit 的来源。
+- finance export 增加真实形态的非纠错 `DEPOSIT_OFFSET + external=false` 回归样本，精确断言仍为“否（内部抵扣）”。
+
+### round 1 RED/GREEN
+
+- 测试补齐后，原生产代码自然通过目标 E2E 6/6。
+- 为证明新断言独立有效，临时把 production writer 的 allocation 输入变为空，仅运行 paid 场景；测试以缺少 `PAYMENT_ALLOCATION`、source id 和 `-100.00` 精确失败（1 failed / 5 skipped）。
+- 立即恢复 production，确认 writer 无 Git diff；同一 paid 场景自然通过 1/1。mutation RED 产生的 COMPLETED 链使用专用唯一前缀，因 append-only SecurityAuditLog 要求保留并可识别。
+- 新 finance 回归首跑曾因测试误把第 4 列“类别”当成第 3 列“流水类型”失败；修正测试索引后 focused finance 为 2 suites / 5 tests。该测试索引错误不计为业务 RED。
+- round 1 未暴露新的真实生产缺口，未修改任何 production 文件；初版 Excel 文案最小修复保持不变。
+
 ## 最终验证
 
 - `npm run test:e2e -- --runInBand contract-void-correction.e2e-spec.ts`：1 suite / 6 tests passed。
+- round 1 focused finance：2 suites / 5 tests passed。
 - 相关 unit：9 suites / 85 tests passed。
-- `npm test -- --runInBand`：79 suites / 477 tests passed。
+- `npm test -- --runInBand`：79 suites / 478 tests passed。
 - `npm run lint:check`：通过。
 - `npm run build`：通过。
 - `git diff --check`：通过；仅 Git 的既有 LF→CRLF advisory，无空白错误。
