@@ -67,10 +67,18 @@ function message(error: unknown, fallback: string) {
   );
   return chineseMessages.length ? chineseMessages.join("；") : fallback;
 }
+function positiveQueryId(value: unknown) {
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : null;
+}
 function applyRouteState() {
   const requestedTab = String(route.query.tab || "");
   if (["initiate", "settlement", "refund", "completed"].includes(requestedTab)) {
     activeTab.value = requestedTab as CheckoutTab;
+  }
+  if (positiveQueryId(route.query.settlementId)) {
+    activeTab.value = "completed";
   }
   const contractId = Number(route.query.contractId);
   selectedInitiateContractId.value = Number.isInteger(contractId) && contractId > 0 ? contractId : null;
@@ -327,7 +335,13 @@ async function completeZeroRefund(id: number) {
     actionError.value = message(error, "最终确认失败，请稍后重试");
   }
 }
-onMounted(loadData);
+async function initialize() {
+  await loadData();
+  const settlementId = positiveQueryId(route.query.settlementId);
+  if (!settlementId) return;
+  await Promise.all([loadCompletedContracts(), openCompletedDetail(settlementId)]);
+}
+onMounted(initialize);
 </script>
 
 <template>

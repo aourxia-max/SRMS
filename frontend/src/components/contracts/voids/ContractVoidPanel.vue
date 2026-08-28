@@ -5,7 +5,7 @@ import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'v
 import { approveContractVoidRequest, cancelContractVoidRequest, deleteContractVoidProof, downloadContractVoidProof, getContractVoidRequest, listContractVoidRequests, previewContractVoid, refreshContractVoidRequestSnapshot, rejectContractVoidRequest, submitContractVoidRequest, uploadContractVoidProof } from '../../../services/contracts'
 import type { ContractListItem, ContractRole, ContractVoidImpact, ContractVoidProofFile, ContractVoidRequest, ContractVoidRequestQuery, ContractVoidRequestStatus } from '../../../types/contracts'
 import { contractVoidConfirmationText } from '../../../types/contracts'
-import { contractVoidCategoryLabel, contractVoidSourceLabel, contractVoidStatusLabel } from './contract-void-presentation'
+import { contractVoidCategoryLabel, contractVoidSourceHref, contractVoidSourceLabel, contractVoidStatusLabel } from './contract-void-presentation'
 import { createContractVoidActionSession } from './contract-void-action-session'
 import ContractVoidImpactCards from './ContractVoidImpactCards.vue'
 
@@ -750,7 +750,8 @@ onBeforeUnmount(() => {
               <div>
                 <h2>{{ selectedRequest.requestNo }}</h2>
                 <p>
-                  {{ selectedRequest.contract?.contractNo || `合同 #${selectedRequest.contractId}` }}
+                  <a v-if="contractVoidSourceHref('Contract', selectedRequest.contractId)" data-test="original-contract-link" :href="contractVoidSourceHref('Contract', selectedRequest.contractId) || undefined">{{ selectedRequest.contract?.contractNo || `合同 #${selectedRequest.contractId}` }}</a>
+                  <span v-else>{{ selectedRequest.contract?.contractNo || `合同 #${selectedRequest.contractId}` }}</span>
                 </p>
               </div>
               <el-tag :type="statusTagType(selectedRequest.status)" effect="dark">{{ contractVoidStatusLabel(selectedRequest.status) }}</el-tag>
@@ -782,7 +783,8 @@ onBeforeUnmount(() => {
             <article v-for="row in selectedRequest.reversals" :key="row.id" class="reversal-card">
               <header>
                 <b>{{ contractVoidCategoryLabel(row.category) }}</b
-                ><span>原记录 #{{ row.originalEntityId ?? '未记录' }}</span>
+                ><a v-if="contractVoidSourceHref(row.originalEntityType, row.originalEntityId)" :data-test="`original-record-link-${row.id}`" :href="contractVoidSourceHref(row.originalEntityType, row.originalEntityId) || undefined">原记录 #{{ row.originalEntityId }}</a>
+                <span v-else :data-test="`original-record-text-${row.id}`">原记录 #{{ row.originalEntityId ?? '未记录' }}</span>
               </header>
               <div>
                 <span>来源：{{ contractVoidSourceLabel(row.originalEntityType) }}</span

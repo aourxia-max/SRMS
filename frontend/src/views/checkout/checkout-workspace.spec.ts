@@ -1,5 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
 import { checkoutApi } from "../../services/checkout";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
@@ -8,6 +8,11 @@ import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
 import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
 import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
+const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock("vue-router", () => ({
+  useRoute: () => ({ query: routeQuery.value }),
+  useRouter: () => ({ push: vi.fn() }),
+}));
 vi.mock("../../services/checkout", () => ({
   checkoutApi: {
     contracts: vi
@@ -102,6 +107,11 @@ vi.mock("../../services/checkout", () => ({
 }));
 
 describe("CheckoutTopNav", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    routeQuery.value = {};
+  });
+
   it("renders the three checkout workflow tabs in Chinese", () => {
     const wrapper = mount(CheckoutTopNav, { props: { activeTab: "initiate" } });
 
@@ -223,6 +233,32 @@ describe("CheckoutTopNav", () => {
       false,
     );
   });
+  it("opens an existing settlement in the completed read-only detail from a valid route query", async () => {
+    routeQuery.value = { settlementId: "17" };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+
+    expect(checkoutApi.detail).toHaveBeenCalledWith(17);
+    expect(wrapper.text()).toContain("只读详情");
+    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+  it.each(["0", "-1", "1.5", "abc", " 17 "])(
+    "does not request settlement detail for invalid settlementId=%s",
+    async (settlementId) => {
+      routeQuery.value = { settlementId };
+      const wrapper = mount(CheckoutWorkspace, {
+        global: { plugins: [createPinia()] },
+      });
+      await flushPromises();
+
+      expect(checkoutApi.detail).toHaveBeenCalledTimes(1);
+      expect(checkoutApi.detail).toHaveBeenCalledWith(9);
+      wrapper.unmount();
+    },
+  );
   it("sends the keyword search and opens an existing checkout detail in read-only mode", async () => {
     const completedResult = {
       items: [

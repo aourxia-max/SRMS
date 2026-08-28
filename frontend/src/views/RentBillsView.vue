@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { fetchRentBill, fetchRentBills, http, type RentBillDetail, type RentBillListItem, type RentBillQuery } from '../services/http'
 import { currentRentBillMonth, rentBillStatusInfo, rentBillStatusMap } from '../services/rentBillDisplay'
 import { approvalStatusLabel, billAdjustmentTypeLabel } from '../utils/status-labels'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const detailLoading = ref(false)
@@ -37,15 +38,24 @@ async function loadBills() {
   } finally { loading.value = false }
 }
 async function search() { filters.page = 1; await loadBills() }
-async function openDetail(row: RentBillListItem) {
+async function openDetail(row: { id: number }) {
   drawer.value = true; detailLoading.value = true; detail.value = null
   try { detail.value = await fetchRentBill(row.id) } catch { ElMessage.error('账单详情加载失败') } finally { detailLoading.value = false }
+}
+function positiveQueryId(value: unknown) {
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return null
+  const id = Number(value)
+  return Number.isSafeInteger(id) ? id : null
 }
 function goCollect() { if (detail.value) router.push({ path: '/payments/collect', query: { contractId: detail.value.contract.id, rentBillId: detail.value.id } }) }
 function goContract() { if (detail.value) router.push(`/contracts?contractId=${detail.value.contract.id}`) }
 function resetFilters() { filters.keyword = ''; filters.buildingId = undefined; filters.status = undefined; filters.month = currentRentBillMonth(); search() }
 
-onMounted(async () => { await Promise.all([loadBuildings(), loadBills()]) })
+onMounted(async () => {
+  await Promise.all([loadBuildings(), loadBills()])
+  const rentBillId = positiveQueryId(route.query.rentBillId)
+  if (rentBillId) await openDetail({ id: rentBillId })
+})
 </script>
 
 <template>

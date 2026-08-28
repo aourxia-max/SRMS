@@ -984,6 +984,33 @@ describe('合同作废纠错面板', () => {
     expect(wrapper.find('[data-test="submit-void-request"]').exists()).toBe(false)
   })
 
+
+  it('只将可安全定位的合同和原记录渲染为链接', async () => {
+    const completed = request('COMPLETED', {
+      reversals: [
+        { id: 9901, contractVoidRequestId: 901, category: 'RENT_BILL', originalEntityType: 'RentBill', originalEntityId: 42, amount: '-100.00', balanceBefore: '100.00', balanceAfter: '0.00', generatedEntityType: 'RentBillReversal', generatedEntityId: 1, originalOccurredAt: null, correctionOccurredAt: '2026-08-26T09:00:00.000Z', idempotencyKey: 'rent-bill', metadata: null },
+        { id: 9902, contractVoidRequestId: 901, category: 'PAYMENT', originalEntityType: 'Payment', originalEntityId: 701, amount: '-100.00', balanceBefore: '100.00', balanceAfter: '0.00', generatedEntityType: 'PaymentReversal', generatedEntityId: 2, originalOccurredAt: null, correctionOccurredAt: '2026-08-26T09:00:00.000Z', idempotencyKey: 'payment', metadata: null },
+        { id: 9903, contractVoidRequestId: 901, category: 'CHECKOUT', originalEntityType: 'CheckoutSettlement', originalEntityId: 9, amount: '0.00', balanceBefore: null, balanceAfter: null, generatedEntityType: 'CheckoutSettlementReversal', generatedEntityId: 3, originalOccurredAt: null, correctionOccurredAt: '2026-08-26T09:00:00.000Z', idempotencyKey: 'checkout', metadata: null },
+        { id: 9904, contractVoidRequestId: 901, category: 'PAYMENT_ALLOCATION', originalEntityType: 'PaymentAllocation', originalEntityId: 33, amount: '-100.00', balanceBefore: '100.00', balanceAfter: '0.00', generatedEntityType: 'PaymentAllocationReversal', generatedEntityId: 4, originalOccurredAt: null, correctionOccurredAt: '2026-08-26T09:00:00.000Z', idempotencyKey: 'allocation', metadata: null },
+        { id: 9905, contractVoidRequestId: 901, category: 'PAYMENT', originalEntityType: 'Payment', originalEntityId: 0, amount: '0.00', balanceBefore: null, balanceAfter: null, generatedEntityType: null, generatedEntityId: null, originalOccurredAt: null, correctionOccurredAt: '2026-08-26T09:00:00.000Z', idempotencyKey: 'invalid-payment', metadata: null },
+      ],
+    })
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([completed])
+    vi.mocked(contractService.getContractVoidRequest).mockResolvedValue(completed)
+    const wrapper = mountPanel('SUPER_ADMIN', null, 1)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="original-contract-link"]').attributes('href')).toBe('/contracts?tab=detail&contractId=86')
+    expect(wrapper.get('[data-test="original-record-link-9901"]').attributes('href')).toBe('/rent-bills?rentBillId=42')
+    expect(wrapper.get('[data-test="original-record-link-9902"]').attributes('href')).toBe('/payments/detail/701')
+    expect(wrapper.get('[data-test="original-record-link-9903"]').attributes('href')).toBe('/checkout?tab=completed&settlementId=9')
+    expect(wrapper.find('[data-test="original-record-link-9904"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="original-record-text-9904"]').text()).toBe('原记录 #33')
+    expect(wrapper.find('[data-test="original-record-link-9905"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="original-record-text-9905"]').text()).toBe('原记录 #0')
+  })
   it('管理员查看申请详情时不渲染完整冲销明细', async () => {
     const completed = request('COMPLETED')
     vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([completed])

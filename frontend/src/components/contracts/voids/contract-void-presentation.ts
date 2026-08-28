@@ -59,3 +59,14 @@ export const contractVoidCategoryLabel = (value?: ContractVoidReversalCategory |
 export const contractVoidRoomActionLabel = (value?: string | null) => contractVoidRoomActionLabels[value ?? ''] ?? unknownStatusLabel(value)
 export const contractVoidSourceLabel = (value?: string | null) => contractVoidSourceLabels[value ?? ''] ?? unknownStatusLabel(value)
 export const contractVoidWorkflowLabel = (value?: string | null) => contractVoidWorkflowLabels[value ?? ''] ?? unknownStatusLabel(value)
+
+export function contractVoidSourceHref(sourceType?: string | null, sourceId?: number | null) {
+  if (!Number.isSafeInteger(sourceId) || Number(sourceId) <= 0) return null
+  switch (sourceType) {
+    case 'Contract': return `/contracts?tab=detail&contractId=${sourceId}`
+    case 'RentBill': return `/rent-bills?rentBillId=${sourceId}`
+    case 'Payment': return `/payments/detail/${sourceId}`
+    case 'CheckoutSettlement': return `/checkout?tab=completed&settlementId=${sourceId}`
+    default: return null
+  }
+}
