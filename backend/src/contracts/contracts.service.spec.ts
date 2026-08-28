@@ -3,7 +3,7 @@ import {
   ForbiddenException,
   GoneException,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { ContractsService } from './contracts.service';
 
@@ -169,6 +169,7 @@ describe('ContractsService', () => {
 
   it('rejects an overlapping effective contract before creating any data', async () => {
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       room: {
         findFirstOrThrow: jest
           .fn()
@@ -197,6 +198,7 @@ describe('ContractsService', () => {
       contractNo: 'HT202601010001 | 1栋101 | 李四',
     });
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       room: {
         findFirstOrThrow: jest
           .fn()
@@ -632,6 +634,7 @@ describe('ContractsService', () => {
   function confirmationTx() {
     const contractNo = 'HT202601010010 | 1栋101 | 李四';
     return {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       room: {
         findFirstOrThrow: jest.fn().mockResolvedValue({
           id: 1,
@@ -666,6 +669,48 @@ describe('ContractsService', () => {
         ),
       },
     } as never);
+  }
+  function fixedConfirmationHarness(tx = confirmationTx()) {
+    const transaction = jest.fn(
+      (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+    return {
+      tx,
+      transaction,
+      service: new ContractsService({
+        db: { $transaction: transaction },
+      } as never),
+    };
+  }
+
+  function expectRoomFirstFixedConfirmationGate(
+    entry: string,
+    tx: ReturnType<typeof confirmationTx>,
+  ) {
+    const roomLockCall = tx.$queryRaw.mock.calls.findIndex((call) => {
+      const sql = call[0] as { strings?: readonly string[] } | undefined;
+      const statement = sql?.strings?.join('?') ?? '';
+      return (
+        statement.includes('FROM rooms') && statement.includes('FOR UPDATE')
+      );
+    });
+    const roomLockOrder = tx.$queryRaw.mock.invocationCallOrder[roomLockCall];
+    expect({
+      entry,
+      locksRoomForUpdate: roomLockCall >= 0,
+      lockBeforeRoomReload:
+        roomLockOrder < tx.room.findFirstOrThrow.mock.invocationCallOrder[0],
+      lockBeforeConflictQuery:
+        roomLockOrder < tx.contract.findFirst.mock.invocationCallOrder[0],
+      lockBeforeContractCreate:
+        roomLockOrder < tx.contract.create.mock.invocationCallOrder[0],
+    }).toEqual({
+      entry,
+      locksRoomForUpdate: true,
+      lockBeforeRoomReload: true,
+      lockBeforeConflictQuery: true,
+      lockBeforeContractCreate: true,
+    });
   }
 
   it('previews fixed bills and totals without reading or writing the database', () => {
@@ -726,6 +771,58 @@ describe('ContractsService', () => {
       }),
     );
   });
+
+  it.each(['direct', 'draft'] as const)(
+    'locks the room before fixed-contract conflict checks and writes for %s confirmation',
+    async (entry) => {
+      const { service, tx } = fixedConfirmationHarness();
+      if (entry === 'draft') {
+        tx.contractDraft.findFirst.mockResolvedValue({
+          id: 25,
+          roomId: 1,
+          status: 'DRAFT',
+          createdBy: admin.id,
+          payload: {
+            ...input,
+            startDate: '2026-01-01',
+            endDate: '2026-02-05',
+          },
+        });
+        await service.confirmFixedContractDraft(25, admin);
+      } else {
+        await service.createFixedContract(input, admin);
+      }
+
+      expectRoomFirstFixedConfirmationGate(entry, tx);
+    },
+  );
+
+  it.each(['direct', 'draft'] as const)(
+    'uses read committed for %s fixed-contract confirmation',
+    async (entry) => {
+      const { service, transaction, tx } = fixedConfirmationHarness();
+      if (entry === 'draft') {
+        tx.contractDraft.findFirst.mockResolvedValue({
+          id: 26,
+          roomId: 1,
+          status: 'DRAFT',
+          createdBy: admin.id,
+          payload: {
+            ...input,
+            startDate: '2026-01-01',
+            endDate: '2026-02-05',
+          },
+        });
+        await service.confirmFixedContractDraft(26, admin);
+      } else {
+        await service.createFixedContract(input, admin);
+      }
+
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      });
+    },
+  );
 
   it('immediately activates a contract whose China start date has arrived', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-21T01:00:00.000Z'));
@@ -1043,6 +1140,7 @@ describe('ContractsService', () => {
       draftStatus: 'DRAFT',
     };
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       room: {
         findFirstOrThrow: jest.fn().mockResolvedValue({
           id: 1,

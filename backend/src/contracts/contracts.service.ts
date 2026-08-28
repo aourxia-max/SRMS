@@ -694,7 +694,7 @@ export class ContractsService {
     user: AuthUser,
     draftId?: number,
   ) {
-    return this.prisma.db.$transaction(async (tx) => {
+    const confirm = async (tx: Prisma.TransactionClient) => {
       let input = directInput;
       if (draftId !== undefined) {
         const draft = await tx.contractDraft.findFirst({
@@ -711,6 +711,9 @@ export class ContractsService {
       if (!input) throw new BadRequestException('合同确认信息不完整');
 
       this.validateFixedConfirmation(input, user);
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM rooms WHERE id = ${input.roomId} FOR UPDATE`,
+      );
       const confirmedAt = new Date();
       const startsImmediately =
         input.startDate <= contractBusinessDay(confirmedAt);
@@ -868,6 +871,9 @@ export class ContractsService {
         if (!confirmed.count) throw new BadRequestException('草稿已确认');
       }
       return finalizedContract;
+    };
+    return this.prisma.db.$transaction(confirm, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
   }
 
