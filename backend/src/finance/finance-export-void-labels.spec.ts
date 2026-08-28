@@ -116,7 +116,7 @@ describe('FinanceExportService cash-flow labels and references', () => {
     ]);
   });
 
-  it('maps every correction category to a Chinese export label', async () => {
+  it('maps every cash-flow correction category to a Chinese export label', async () => {
     const categories = [
       ['RENT_BILL', '租金账单'],
       ['PAYMENT', '收款'],
@@ -127,7 +127,6 @@ describe('FinanceExportService cash-flow labels and references', () => {
       ['ADJUSTMENT', '账单调整'],
       ['PRICING_REBATE', '固定月租退差'],
       ['CHECKOUT', '退租结算'],
-      ['COMMISSION', '租房提成'],
       ['ROOM_STATUS', '房间状态'],
     ] as const;
     const allCategoriesReport = {

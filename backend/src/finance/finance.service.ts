@@ -12,7 +12,6 @@ const financialReversalCategories: ContractVoidReversalCategory[] = [
   'REFUND',
   'ADJUSTMENT',
   'PRICING_REBATE',
-  'COMMISSION',
 ];
 
 type CashFlowSource = { entityType: string; entityId: number | null };
@@ -158,12 +157,26 @@ export class FinanceService {
   }
   async cashFlows(from?: string, to?: string) {
     const date = contractBusinessDateRange(from, to);
+    const terminalPaymentIds = (
+      await this.prisma.db.contractVoidReversal.findMany({
+        where: {
+          category: 'PAYMENT',
+          originalEntityType: 'Payment',
+          originalEntityId: { not: null },
+        },
+        select: { originalEntityId: true },
+        orderBy: { originalEntityId: 'asc' },
+      })
+    )
+      .map((item) => item.originalEntityId)
+      .filter((id): id is number => id !== null);
     const [payments, refunds, deposits, reversals] = await Promise.all([
       this.prisma.db.payment.findMany({
         where: {
-          status: {
-            in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED', 'VOIDED'],
-          },
+          OR: [
+            { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+            { id: { in: terminalPaymentIds } },
+          ],
           ...(date ? { paymentDate: date } : {}),
         },
       }),
@@ -261,28 +274,30 @@ export class FinanceService {
           source: source('DepositTransaction', item.id),
           generatedSource: null,
         })),
-      ...reversals.map((item) => ({
-        date: item.correctionOccurredAt,
-        flowType: 'CONTRACT_VOID_REVERSAL',
-        type: '合同纠错冲销',
-        category: item.category,
-        amount: item.amount,
-        direction: item.amount.isNegative()
-          ? ('OUT' as const)
-          : ('IN' as const),
-        external: false,
-        countsAsRentReceipt: false,
-        reference: item.request.requestNo,
-        requestNo: item.request.requestNo,
-        contractNo: item.request.contract.contractNo,
-        correctionOccurredAt: item.correctionOccurredAt,
-        originalOccurredAt: item.originalOccurredAt,
-        source: source(item.originalEntityType, item.originalEntityId),
-        generatedSource: source(
-          item.generatedEntityType,
-          item.generatedEntityId,
-        ),
-      })),
+      ...reversals
+        .filter((item) => item.category !== 'COMMISSION')
+        .map((item) => ({
+          date: item.correctionOccurredAt,
+          flowType: 'CONTRACT_VOID_REVERSAL',
+          type: '合同纠错冲销',
+          category: item.category,
+          amount: item.amount,
+          direction: item.amount.isNegative()
+            ? ('OUT' as const)
+            : ('IN' as const),
+          external: false,
+          countsAsRentReceipt: false,
+          reference: item.request.requestNo,
+          requestNo: item.request.requestNo,
+          contractNo: item.request.contract.contractNo,
+          correctionOccurredAt: item.correctionOccurredAt,
+          originalOccurredAt: item.originalOccurredAt,
+          source: source(item.originalEntityType, item.originalEntityId),
+          generatedSource: source(
+            item.generatedEntityType,
+            item.generatedEntityId,
+          ),
+        })),
     ].sort((left, right) => {
       const byDate = right.date.getTime() - left.date.getTime();
       if (byDate !== 0) return byDate;

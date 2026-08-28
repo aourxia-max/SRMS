@@ -144,9 +144,10 @@ describe('FinanceService rent collection category isolation', () => {
 
     expect(paymentFindMany).toHaveBeenCalledWith({
       where: {
-        status: {
-          in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED', 'VOIDED'],
-        },
+        OR: [
+          { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+          { id: { in: expect.any(Array) } },
+        ],
         paymentDate: {
           gte: new Date('2026-07-31T16:00:00.000Z'),
           lt: new Date('2026-08-31T16:00:00.000Z'),
@@ -166,7 +167,6 @@ describe('FinanceService rent collection category isolation', () => {
               'REFUND',
               'ADJUSTMENT',
               'PRICING_REBATE',
-              'COMMISSION',
             ],
           },
           correctionOccurredAt: {

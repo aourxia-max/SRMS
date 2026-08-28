@@ -427,15 +427,17 @@ export class ContractVoidReversalWriter {
       (item) => item.deletedAt === null,
     )) {
       add(
-        financialRow({
+        indicatorRow({
           requestId: request.id,
           category: 'COMMISSION',
           entityType: 'ContractCommission',
           entityId: commission.id,
-          balanceBefore: commission.amount,
           originalOccurredAt: commission.occurredAt,
           correctionOccurredAt: now,
-          metadata: { affectsNetImpact: false },
+          metadata: {
+            originalAmount: decimal(commission.amount).toFixed(2),
+            affectsNetImpact: false,
+          },
         }),
       );
     }

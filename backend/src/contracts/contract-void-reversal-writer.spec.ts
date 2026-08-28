@@ -505,6 +505,17 @@ describe('ContractVoidReversalWriter', () => {
     });
 
     const rows = inserted();
+    expect(rows.find((row) => row.category === 'COMMISSION')).toEqual(
+      expect.objectContaining({
+        amount: expect.objectContaining({}),
+        balanceBefore: null,
+        balanceAfter: null,
+        metadata: expect.objectContaining({
+          originalAmount: '40.00',
+          affectsNetImpact: false,
+        }),
+      }),
+    );
     const values = rows.map((row) => ({
       category: row.category,
       type: row.originalEntityType,
@@ -585,9 +596,9 @@ describe('ContractVoidReversalWriter', () => {
           category: 'COMMISSION',
           type: 'ContractCommission',
           id: 91,
-          amount: '-40.00',
-          before: '40.00',
-          after: '0.00',
+          amount: '0.00',
+          before: null,
+          after: null,
         },
         {
           category: 'CHECKOUT',
