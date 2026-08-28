@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import { unlink, writeFile } from 'fs/promises';
 import { FilesService } from './files.service';
@@ -280,5 +280,60 @@ describe('FilesService append contract file', () => {
     expect(unlink).toHaveBeenCalledWith(writtenPath);
     expect(transactionFixture.fileAssetCreate).toHaveBeenCalledTimes(1);
     expect(transactionFixture.contractFileCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed physical cleanup without logging when the retry succeeds', async () => {
+    const transactionFailure = new Error('file asset create failed');
+    const cleanupFailure = Object.assign(new Error('permission denied'), {
+      code: 'EACCES',
+    });
+    jest
+      .mocked(unlink)
+      .mockRejectedValueOnce(cleanupFailure)
+      .mockResolvedValueOnce(undefined);
+    const loggerError = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    const transactionFixture = activeTransaction({
+      fileAssetCreate: jest.fn().mockRejectedValue(transactionFailure),
+    });
+    const fixture = serviceWith({ transaction: transactionFixture });
+
+    await expect(
+      fixture.service.saveAndLinkContractFile(12, file, user),
+    ).rejects.toBe(transactionFailure);
+
+    expect(unlink).toHaveBeenCalledTimes(2);
+    expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  it('preserves the transaction error and logs one sanitized record after cleanup retries are exhausted', async () => {
+    const transactionFailure = new Error('commit failed');
+    const cleanupFailure = Object.assign(
+      new Error('EACCES D:/private/contract-secret.pdf'),
+      { code: 'EACCES' },
+    );
+    jest.mocked(unlink).mockRejectedValue(cleanupFailure);
+    const loggerError = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    const transactionFixture = activeTransaction();
+    const fixture = serviceWith({
+      transaction: transactionFixture,
+      transactionFailureAfterCallback: transactionFailure,
+    });
+
+    await expect(
+      fixture.service.saveAndLinkContractFile(12, file, user),
+    ).rejects.toBe(transactionFailure);
+
+    expect(unlink).toHaveBeenCalledTimes(3);
+    expect(loggerError).toHaveBeenCalledTimes(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      '合同附件物理文件补偿清理失败（错误代码：EACCES）',
+    );
+    expect(JSON.stringify(loggerError.mock.calls)).not.toContain(
+      'contract-secret.pdf',
+    );
   });
 });

@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -59,6 +60,8 @@ export const CONTRACT_VOID_PROOF_STAGED_TTL_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class FilesService {
+  private readonly logger = new Logger(FilesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -163,6 +166,23 @@ export class FilesService {
     return resolve(process.cwd(), '..', 'uploads', 'contract-files');
   }
 
+  private async cleanupFailedContractFile(path: string) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await unlink(path);
+        return;
+      } catch (error) {
+        if ((error as { code?: unknown })?.code === 'ENOENT') return;
+        lastError = error;
+      }
+    }
+    const code = (lastError as { code?: unknown })?.code;
+    this.logger.error(
+      `合同附件物理文件补偿清理失败（错误代码：${typeof code === 'string' ? code : 'UNKNOWN'}）`,
+    );
+  }
+
   private async writeContractFile(file: UploadedFile, user: AuthUser) {
     if (!file || !file.buffer) throw new BadRequestException('请上传合同附件');
     const limit = await this.configLimit();
@@ -254,7 +274,7 @@ export class FilesService {
         { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
       );
     } catch (error) {
-      await unlink(pending.path);
+      await this.cleanupFailedContractFile(pending.path);
       throw error;
     }
   }
