@@ -274,3 +274,45 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 - 未记录或提交密码、令牌或密钥。
 - 未物理删除完成的合同纠错、冲销或安全审计。
 - 未 merge、push、创建 PR 或部署生产。
+
+## 2026-08-28 最终验证更新
+
+本节为 Task 12 修复及最终发布门禁的最新证据；若与上文早期快照、测试计数或“未再次重建数据库”的阶段性描述冲突，以本节为准。
+
+### 最终修复范围
+
+- 权限与预览／执行口径一致：管理员不可读取冲销明细，超级管理员后端强制校验；房态预览和执行使用同一有效合同集合。
+- 冲销写入 fail-closed：拒绝无法安全配对的预收款转账；来源快照、哈希、幂等键集合与写入数量完整校验。
+- 资金流水兼容：普通已作废／已退款收款不再误计现金流，合同纠错来源收款保留历史发生日；提成冲销只写 0.00 审计指示行。
+- 房间／合同锁序统一为 room → contract → children，交互式事务使用 ReadCommitted；固定合同直接确认和草稿确认共用同房门闩。
+- 已作废合同不能通过后端绕过前端继续追加附件；物理文件与数据库写入失败有重试、脱敏记录和原始异常保留。
+- 安全审计链区分事务内追加与原子追加，数据库恢复不再通过自动提交释放链头锁。
+- 合同、租金账单、收款和退租结算的原记录支持安全深链；未知来源保持普通文本。
+- 受合同纠错影响的原收款详情和可打印收据显著显示“因合同纠错已冲销”，普通退款不会误标。
+
+### 新鲜自动化证据
+
+| 命令／检查 | 最终结果 |
+| --- | --- |
+| `npm run lint` | 通过；0 errors |
+| `npm test -- --runInBand` | 80/80 suites、516/516 tests |
+| `npm --prefix backend run test:e2e -- --runInBand` | 7/7 suites、40/40 tests；普通 GREEN，mutation proof 未设置 |
+| `npm --prefix frontend run test:unit -- --testTimeout=15000` | 39/39 files、248/248 tests |
+| `npm run build` | 前端 vue-tsc + Vite、后端 Nest build 均通过；仅保留既有大 chunk warning |
+| `npm run db:validate` | Prisma schema valid |
+| 独立全分支审查 | Critical / Important / Minor 均为 0；最终结论 APPROVED |
+
+### 本机测试库最终状态
+
+- 用户明确授权的唯一目标：Docker project `srms_test`、container `srms_test-mysql-1`、port `13306`、database `srms_docker`。
+- 重建前已核验兜底：`current-before-rebuild-20260828-094555/database.sql`，SHA-256 `AF4F96ADC08A21AD636BCBA3909314AE3744526FE80EC72C54C25796A80667E2`。
+- 完整 E2E 通过后，因测试套件保留业务夹具，再次按同一授权整体 DROP／CREATE `srms_docker`，重新应用 26/26 migrations，并重启 `srms_test-api-1` 触发首名超级管理员初始化。
+- 最终只读核验：45 tables、1 名启用超级管理员；buildings／rooms／tenants／contracts／rent_bills／payments／contract_void_requests 均为 0。
+- `srms_test-api-1` 与 `srms_test-mysql-1` healthy；`srms_test-web-1` running。
+- 未修改或提交 `deploy/.env.test`，未输出任何密码、令牌或密钥，未接触生产数据库。
+
+### 非阻塞遗留
+
+- Vite 仍提示单个压缩 chunk 大于 500 kB；构建成功，本次不调整拆包策略。
+- 早期一次错误 E2E 连接在本机 `localhost:3306/srms` 创建了精确可识别的测试夹具（building 7、rooms 279/280、tenants 4/5/6），只读确认没有合同或审计关联。该数据库不在本轮 `srms_docker` 删除授权范围内，因此保持未删，等待单独授权处理。
+- 未 merge、push、创建 PR 或部署生产。
