@@ -493,13 +493,15 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
       observedInsertedReversals = rows.length > 0;
       return rows;
     });
+    const auditChain = new SecurityAuditChainService();
+    jest
+      .spyOn(auditChain, 'appendInTransaction')
+      .mockRejectedValue(new Error('强制审计失败'));
     const executor = new ContractVoidExecutorService(
       prisma,
       previews,
       observingWriter,
-      {
-        append: () => Promise.reject(new Error('强制审计失败')),
-      },
+      auditChain,
     );
     const headBefore = await prisma.db.securityAuditChainHead.findUniqueOrThrow(
       {

@@ -304,7 +304,7 @@ export class ContractVoidExecutorService {
               occurredAt: now,
             },
           });
-          await this.auditChain.append(tx, {
+          await this.auditChain.appendInTransaction(tx, {
             eventType: 'CONTRACT_VOID_COMPLETED',
             entityType: 'CONTRACT_VOID_REQUEST',
             entityId: request.id,

@@ -134,7 +134,7 @@ export class SystemService {
     filters: Prisma.InputJsonValue,
   ) {
     await this.prisma.db.$transaction((tx) =>
-      this.appendAudit(
+      this.appendAuditInTransaction(
         tx,
         'FINANCE_REPORT_EXPORTED',
         'FINANCE_REPORT',
@@ -179,7 +179,7 @@ export class SystemService {
           operatorRole: user.role,
         },
       });
-      await this.appendAudit(
+      await this.appendAuditInTransaction(
         tx,
         'SYSTEM_SETTINGS_UPDATED',
         'SYSTEM_SETTING',
@@ -250,7 +250,7 @@ export class SystemService {
               hiddenReason: reason,
             },
       });
-      await this.appendAudit(
+      await this.appendAuditInTransaction(
         tx,
         restore ? 'OPERATION_LOG_RESTORED' : 'OPERATION_LOG_HIDDEN',
         'OPERATION_LOG',
@@ -415,7 +415,7 @@ export class SystemService {
           operatorRole: user.role,
         },
       });
-      await this.appendAudit(
+      await this.appendAuditInTransaction(
         tx,
         'BACKUP_CREATION_REQUESTED',
         'BACKUP',
@@ -539,8 +539,7 @@ export class SystemService {
           restoredAt: new Date(),
         },
       });
-      await this.appendAudit(
-        this.prisma.db,
+      await this.appendAuditAtomically(
         'DATABASE_RESTORED',
         'BACKUP',
         backup.id,
@@ -569,7 +568,7 @@ export class SystemService {
     }
   }
 
-  private async appendAudit(
+  private async appendAuditInTransaction(
     tx: Prisma.TransactionClient,
     eventType: string,
     entityType: string,
@@ -577,7 +576,24 @@ export class SystemService {
     user: AuthUser,
     eventData: Prisma.InputJsonValue,
   ) {
-    return this.auditChain.append(tx, {
+    return this.auditChain.appendInTransaction(tx, {
+      eventType,
+      entityType,
+      entityId,
+      operatorId: user.id,
+      eventData,
+      reason: null,
+    });
+  }
+
+  private async appendAuditAtomically(
+    eventType: string,
+    entityType: string,
+    entityId: number | null,
+    user: AuthUser,
+    eventData: Prisma.InputJsonValue,
+  ) {
+    return this.auditChain.appendAtomically(this.prisma.db, {
       eventType,
       entityType,
       entityId,

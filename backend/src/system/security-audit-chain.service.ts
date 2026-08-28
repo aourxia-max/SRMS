@@ -1,6 +1,10 @@
 import { createHash } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { Prisma, type SecurityAuditLog } from '@prisma/client';
+import {
+  Prisma,
+  type PrismaClient,
+  type SecurityAuditLog,
+} from '@prisma/client';
 
 type JsonObject = { [key: string]: JsonLike };
 type JsonLike = null | boolean | number | string | JsonLike[] | JsonObject;
@@ -53,7 +57,14 @@ export function hashSecurityAuditRecord(input: SecurityAuditHashInput) {
 
 @Injectable()
 export class SecurityAuditChainService {
-  async append(
+  async appendAtomically(
+    prisma: PrismaClient,
+    event: SecurityAuditChainEvent,
+  ): Promise<SecurityAuditLog> {
+    return prisma.$transaction((tx) => this.appendInTransaction(tx, event));
+  }
+
+  async appendInTransaction(
     tx: Prisma.TransactionClient,
     event: SecurityAuditChainEvent,
   ): Promise<SecurityAuditLog> {

@@ -3,6 +3,16 @@ import { readFile } from 'fs/promises';
 import { SystemService } from './system.service';
 
 jest.mock('fs/promises', () => ({ readFile: jest.fn() }));
+jest.mock('child_process', () => ({
+  execFile: jest.fn(
+    (
+      _file: string,
+      _args: string[],
+      _options: object,
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => callback(null, '', ''),
+  ),
+}));
 
 describe('SystemService', () => {
   it('rehydrates restored backup metadata from controlled backup files', async () => {
@@ -134,5 +144,74 @@ describe('SystemService', () => {
       legacyIds: [1],
       total: 1,
     });
+  });
+
+  it('records a completed database restore through the atomic audit entry', async () => {
+    const database = Buffer.from('restorable database');
+    const backup = {
+      id: 7,
+      backupNo: 'BK-7',
+      backupType: 'MANUAL',
+      status: 'SUCCESS',
+      databasePath: 'D:/backups/BK-7.sql',
+      checksum: createHash('sha256').update(database).digest('hex'),
+      retentionUntil: new Date('2026-09-30T00:00:00.000Z'),
+      createdBy: 1,
+      startedAt: new Date('2026-08-26T00:00:00.000Z'),
+    };
+    const preRestore = {
+      backupNo: 'BK-PRE-7',
+      status: 'SUCCESS',
+      databasePath: 'D:/backups/BK-PRE-7.sql',
+      manifestPath: 'D:/backups/BK-PRE-7.manifest.json',
+      sizeBytes: '1024',
+      checksum: 'b'.repeat(64),
+      retentionUntil: new Date('2026-09-30T00:00:00.000Z'),
+      createdBy: 1,
+      startedAt: new Date('2026-08-26T00:00:00.000Z'),
+      completedAt: new Date('2026-08-26T00:01:00.000Z'),
+    };
+    const db = {
+      backupRecord: {
+        findUnique: jest.fn().mockResolvedValue(backup),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      authRefreshToken: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const audit = {
+      appendInTransaction: jest.fn().mockResolvedValue({ id: 1 }),
+      appendAtomically: jest.fn().mockResolvedValue({ id: 2 }),
+    };
+    const service = new SystemService(
+      { db } as never,
+      {
+        getOrThrow: jest.fn((key: string) =>
+          key === 'DATABASE_URL'
+            ? 'mysql://user:password@localhost/test'
+            : 'mysql',
+        ),
+      } as never,
+      audit,
+    );
+    jest.spyOn(service, 'createBackup').mockResolvedValue(preRestore as never);
+    jest
+      .spyOn(service, 'rehydrateBackupMetadata')
+      .mockResolvedValue({} as never);
+    jest
+      .spyOn(service, 'persistPreRestoreBackup')
+      .mockResolvedValue({} as never);
+    jest.mocked(readFile).mockResolvedValue(database);
+
+    await expect(
+      service.restoreBackup(7, '灾备演练', '确认恢复', { id: 1 } as never),
+    ).resolves.toEqual({ restored: true, preRestoreBackupNo: 'BK-PRE-7' });
+
+    expect(audit.appendAtomically).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ eventType: 'DATABASE_RESTORED', entityId: 7 }),
+    );
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
   });
 });

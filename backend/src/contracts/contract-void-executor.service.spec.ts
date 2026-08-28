@@ -158,7 +158,10 @@ function harness() {
     },
   ];
   const writer = { write: jest.fn().mockResolvedValue(reversals) };
-  const audit = { append: jest.fn().mockResolvedValue({ id: 1 }) };
+  const audit = {
+    appendInTransaction: jest.fn().mockResolvedValue({ id: 1 }),
+    appendAtomically: jest.fn().mockResolvedValue({ id: 1 }),
+  };
   const service = new ContractVoidExecutorService(
     { db } as never,
     previews as never,
@@ -259,6 +262,7 @@ describe('ContractVoidExecutorService', () => {
       expect.stringContaining('deposit_transactions'),
       expect.stringContaining('contract_commissions'),
     ]);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
     expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
@@ -321,7 +325,7 @@ describe('ContractVoidExecutorService', () => {
         resultSnapshot: expect.objectContaining({ status: 'COMPLETED' }),
       }),
     });
-    expect(audit.append).toHaveBeenCalledWith(
+    expect(audit.appendInTransaction).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({
         eventType: 'CONTRACT_VOID_COMPLETED',
@@ -341,6 +345,7 @@ describe('ContractVoidExecutorService', () => {
         }),
       }),
     );
+    expect(audit.appendAtomically).not.toHaveBeenCalled();
   });
 
   it('keeps the current room status when another active contract exists', async () => {
@@ -368,7 +373,7 @@ describe('ContractVoidExecutorService', () => {
     expect(tx.contract.update).not.toHaveBeenCalled();
     expect(tx.contractVoidRequest.update).not.toHaveBeenCalled();
     expect(tx.room.update).not.toHaveBeenCalled();
-    expect(audit.append).not.toHaveBeenCalled();
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
   });
 
   it('fails closed inside the locked execution when a prepayment transfer appears after preview', async () => {

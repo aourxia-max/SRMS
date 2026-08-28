@@ -32,17 +32,20 @@ describe('SecurityAuditChainService', () => {
       .update(canonicalPayload)
       .digest('hex');
 
-    const result = await new SecurityAuditChainService().append(tx as never, {
-      eventType: 'CONTRACT_VOID_COMPLETED',
-      entityType: 'CONTRACT_VOID_REQUEST',
-      entityId: 9,
-      operatorId: 1,
-      eventData: {
-        nested: { z: 2, a: 1 },
-        impactHash: 'bbb',
+    const result = await new SecurityAuditChainService().appendInTransaction(
+      tx as never,
+      {
+        eventType: 'CONTRACT_VOID_COMPLETED',
+        entityType: 'CONTRACT_VOID_REQUEST',
+        entityId: 9,
+        operatorId: 1,
+        eventData: {
+          nested: { z: 2, a: 1 },
+          impactHash: 'bbb',
+        },
+        occurredAt,
       },
-      occurredAt,
-    });
+    );
 
     expect(result).toEqual(
       expect.objectContaining({ id: 8, recordHash: expectedHash }),
@@ -85,14 +88,17 @@ describe('SecurityAuditChainService', () => {
       },
     };
 
-    const result = await new SecurityAuditChainService().append(tx as never, {
-      eventType: 'EMPTY_TAIL',
-      entityType: 'SYSTEM',
-      entityId: null,
-      operatorId: 1,
-      eventData: {},
-      occurredAt: new Date('2026-08-26T00:00:00.000Z'),
-    });
+    const result = await new SecurityAuditChainService().appendInTransaction(
+      tx as never,
+      {
+        eventType: 'EMPTY_TAIL',
+        entityType: 'SYSTEM',
+        entityId: null,
+        operatorId: 1,
+        eventData: {},
+        occurredAt: new Date('2026-08-26T00:00:00.000Z'),
+      },
+    );
 
     expect(result.previousHash).toBeNull();
     expect(tx.securityAuditChainHead.update).toHaveBeenCalledWith({
@@ -136,7 +142,7 @@ describe('SecurityAuditChainService', () => {
     const service = new SecurityAuditChainService();
 
     const [left, right] = await Promise.all([
-      service.append(leftTx as never, {
+      service.appendInTransaction(leftTx as never, {
         eventType: 'LEFT',
         entityType: 'SYSTEM',
         entityId: null,
@@ -144,7 +150,7 @@ describe('SecurityAuditChainService', () => {
         eventData: {},
         occurredAt: new Date('2026-08-26T00:00:00.000Z'),
       }),
-      service.append(rightTx as never, {
+      service.appendInTransaction(rightTx as never, {
         eventType: 'RIGHT',
         entityType: 'SYSTEM',
         entityId: null,
@@ -157,5 +163,43 @@ describe('SecurityAuditChainService', () => {
     expect(left.previousHash).toBeNull();
     expect(right.previousHash).toBe(left.recordHash);
     expect(new Set([left.recordHash, right.recordHash]).size).toBe(2);
+  });
+
+  it('keeps the head lock and both writes inside one root transaction', async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ latestRecordHash: null }]),
+      securityAuditLog: {
+        create: jest.fn(({ data }) => Promise.resolve({ id: 1, ...data })),
+      },
+      securityAuditChainHead: {
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const root = {
+      $queryRaw: jest.fn(() => {
+        throw new Error('root client must not execute the head lock directly');
+      }),
+      $transaction: jest.fn(
+        (callback: (transaction: typeof tx) => Promise<unknown>) =>
+          callback(tx),
+      ),
+    };
+
+    await expect(
+      new SecurityAuditChainService().appendAtomically(root as never, {
+        eventType: 'DATABASE_RESTORED',
+        entityType: 'BACKUP',
+        entityId: 7,
+        operatorId: 1,
+        eventData: { backupNo: 'BK-7' },
+        occurredAt: new Date('2026-08-26T00:00:00.000Z'),
+      }),
+    ).resolves.toEqual(expect.objectContaining({ id: 1 }));
+
+    expect(root.$transaction).toHaveBeenCalledWith(expect.any(Function));
+    expect(root.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.securityAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.securityAuditChainHead.update).toHaveBeenCalledTimes(1);
   });
 });
