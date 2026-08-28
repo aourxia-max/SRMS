@@ -119,6 +119,7 @@ function contractFixture() {
       },
     ],
     changes: [{ id: 81, approvalStatus: 'DRAFT' }],
+    concessions: [],
     pricingRebates: [
       {
         id: 91,
@@ -188,7 +189,17 @@ function contractFixture() {
     ],
     depositRefunds: [
       { id: 103, approvalStatus: 'PENDING' },
-      { id: 104, approvalStatus: 'APPROVED' },
+      {
+        id: 104,
+        refundNo: 'YJTK20260826000104',
+        checkoutSettlementId: 101,
+        refundAmount: new Prisma.Decimal('1000.00'),
+        refundDate: new Date('2026-08-08T00:00:00.000Z'),
+        refundMethod: 'BANK_TRANSFER',
+        approvalStatus: 'APPROVED',
+        approvedAt: new Date('2026-08-08T03:00:00.000Z'),
+        transactions: [{ id: 73 }],
+      },
     ],
     commissions: [
       {
@@ -343,6 +354,86 @@ describe('ContractVoidPreviewService', () => {
 
     expect(right.pending.depositRefunds).toEqual([105]);
     expect(right.impactHash).not.toBe(left.impactHash);
+  });
+
+  it('retains terminal workflow and concession sources that change the canonical snapshot', async () => {
+    const fixture = contractFixture() as Record<string, unknown>;
+    const payment = (fixture.payments as Array<Record<string, unknown>>)[0];
+    payment.voidRequests = [
+      { id: 61, approvalStatus: 'PENDING' },
+      {
+        id: 62,
+        requestNo: 'SKZF20260826000062',
+        paymentId: 21,
+        approvalStatus: 'APPROVED',
+        approvedAt: new Date('2026-08-05T03:00:00.000Z'),
+      },
+    ];
+    fixture.concessions = [
+      {
+        id: 89,
+        concessionType: 'FIXED_AMOUNT',
+        applyMode: 'BILLING_PERIODS',
+        startDate: new Date('2026-08-01T00:00:00.000Z'),
+        endDate: new Date('2026-08-31T00:00:00.000Z'),
+        fixedAmount: new Prisma.Decimal('100.00'),
+        discountRate: null,
+        billingPeriodCount: 1,
+        reason: 'signing concession',
+        status: 'ACTIVE',
+      },
+    ];
+    fixture.depositRefunds = [
+      {
+        id: 104,
+        refundNo: 'YJTK20260826000104',
+        checkoutSettlementId: 101,
+        refundAmount: new Prisma.Decimal('1000.00'),
+        refundDate: new Date('2026-08-08T00:00:00.000Z'),
+        refundMethod: 'BANK_TRANSFER',
+        approvalStatus: 'APPROVED',
+        approvedAt: new Date('2026-08-08T03:00:00.000Z'),
+        transactions: [{ id: 73 }],
+      },
+    ];
+    const service = new ContractVoidPreviewService({
+      db: buildDb(fixture as never),
+    } as never);
+
+    await expect(
+      service.loadInput(buildDb(fixture as never) as never, 7),
+    ).resolves.toMatchObject({
+      sourceSnapshot: {
+        concessions: [
+          expect.objectContaining({
+            id: 89,
+            status: 'ACTIVE',
+            fixedAmount: '100.00',
+          }),
+        ],
+        approvedPaymentVoidRequests: [
+          expect.objectContaining({
+            id: 62,
+            requestNo: 'SKZF20260826000062',
+            status: 'APPROVED',
+            paymentId: 21,
+            approvedAt: '2026-08-05T03:00:00.000Z',
+          }),
+        ],
+        approvedDepositRefunds: [
+          expect.objectContaining({
+            id: 104,
+            refundNo: 'YJTK20260826000104',
+            amount: '1000.00',
+            refundDate: '2026-08-08T00:00:00.000Z',
+            refundMethod: 'BANK_TRANSFER',
+            checkoutSettlementId: 101,
+            approvedAt: '2026-08-08T03:00:00.000Z',
+            depositTransactionIds: [73],
+          }),
+        ],
+      },
+    });
   });
 
   it('hashes equivalent source snapshots identically regardless of relation order', async () => {

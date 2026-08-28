@@ -1,5 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { lockContractVoidExclusiveScope } from './contract-void-locks';
+import {
+  lockContractVoidExclusiveScope,
+  lockContractVoidRelatedRows,
+} from './contract-void-locks';
 
 describe('contract void exclusive lock scope', () => {
   it('identity-only 读取后统一按 room -> 同房 contracts id ASC 加锁并返回目标合同', async () => {
@@ -75,5 +78,19 @@ describe('contract void exclusive lock scope', () => {
         7,
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+  it('locks every contract concession before recomputing the canonical source snapshot', async () => {
+    const tx = { $queryRaw: jest.fn().mockResolvedValue([]) };
+
+    await lockContractVoidRelatedRows(tx as never, 7);
+
+    const statements = tx.$queryRaw.mock.calls.map(([query]) =>
+      (query as { strings: string[] }).strings.join('?'),
+    );
+    expect(statements).toContainEqual(
+      expect.stringContaining(
+        'SELECT id FROM contract_concessions WHERE contract_id = ? ORDER BY id FOR UPDATE',
+      ),
+    );
   });
 });

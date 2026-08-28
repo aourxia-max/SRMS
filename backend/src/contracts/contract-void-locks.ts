@@ -58,6 +58,9 @@ export async function lockContractVoidRelatedRows(
     Prisma.sql`SELECT id FROM contract_members WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
   );
   await tx.$queryRaw(
+    Prisma.sql`SELECT id FROM contract_concessions WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
+  );
+  await tx.$queryRaw(
     Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
   );
   await tx.$queryRaw(

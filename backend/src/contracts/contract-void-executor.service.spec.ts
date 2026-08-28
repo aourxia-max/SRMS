@@ -244,6 +244,7 @@ describe('ContractVoidExecutorService', () => {
       expect.stringContaining('contracts'),
       expect.stringContaining('contract_void_requests'),
       expect.stringContaining('contract_members'),
+      expect.stringContaining('contract_concessions'),
       expect.stringContaining('rent_bills'),
       expect.stringContaining('payments'),
       expect.stringContaining('contract_changes'),

@@ -95,6 +95,9 @@ function executionImpact(overrides: Record<string, unknown> = {}) {
         occurredAt: '2026-07-05T00:00:00.000Z',
       },
       contractMembers: [],
+      concessions: [],
+      approvedPaymentVoidRequests: [],
+      approvedDepositRefunds: [],
       paymentAllocations: [
         {
           id: 61,
@@ -327,6 +330,109 @@ describe('ContractVoidReversalWriter', () => {
       ]),
     );
   });
+  it('records terminal source indicators without changing their net financial impact', async () => {
+    const impact = executionImpact();
+    Object.assign(impact.sourceSnapshot, {
+      concessions: [
+        {
+          id: 93,
+          concessionType: 'FIXED_AMOUNT',
+          applyMode: 'BILLING_PERIODS',
+          startDate: '2026-07-01T00:00:00.000Z',
+          endDate: '2026-07-31T00:00:00.000Z',
+          fixedAmount: '20.00',
+          discountRate: null,
+          billingPeriodCount: 1,
+          reason: 'signing concession',
+          status: 'INACTIVE',
+        },
+      ],
+      approvedPaymentVoidRequests: [
+        {
+          id: 94,
+          requestNo: 'SKZF202607000094',
+          paymentId: 21,
+          status: 'APPROVED',
+          approvedAt: '2026-07-09T00:00:00.000Z',
+        },
+      ],
+      approvedDepositRefunds: [
+        {
+          id: 95,
+          refundNo: 'YJTK202607000095',
+          amount: '100.00',
+          refundDate: '2026-07-10T00:00:00.000Z',
+          refundMethod: 'BANK_TRANSFER',
+          checkoutSettlementId: 81,
+          approvedAt: '2026-07-10T01:00:00.000Z',
+          depositTransactionIds: [96],
+        },
+      ],
+    });
+    const { tx, inserted } = txFixture();
+
+    await new ContractVoidReversalWriter().write(
+      tx as never,
+      request,
+      impact,
+      now,
+    );
+
+    const terminalRows = inserted().filter((row) =>
+      [93, 94, 95].includes(row.originalEntityId as number),
+    );
+    expect(terminalRows).toHaveLength(3);
+    expect(
+      terminalRows.map((row) => ({
+        category: row.category,
+        type: row.originalEntityType,
+        id: row.originalEntityId,
+        amount: new Prisma.Decimal(row.amount as Prisma.Decimal.Value).toFixed(
+          2,
+        ),
+        metadata: row.metadata,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'PRICING_REBATE',
+          type: 'ContractConcession',
+          id: 93,
+          amount: '0.00',
+          metadata: expect.objectContaining({
+            status: 'INACTIVE',
+            concessionType: 'FIXED_AMOUNT',
+            fixedAmount: '20.00',
+            affectsNetImpact: false,
+          }),
+        }),
+        expect.objectContaining({
+          category: 'PAYMENT',
+          type: 'PaymentVoidRequest',
+          id: 94,
+          amount: '0.00',
+          metadata: expect.objectContaining({
+            requestNo: 'SKZF202607000094',
+            status: 'APPROVED',
+            paymentId: 21,
+            affectsNetImpact: false,
+          }),
+        }),
+        expect.objectContaining({
+          category: 'DEPOSIT',
+          type: 'DepositRefund',
+          id: 95,
+          amount: '0.00',
+          metadata: expect.objectContaining({
+            refundNo: 'YJTK202607000095',
+            depositTransactionIds: [96],
+            affectsNetImpact: false,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it('throws and writes no reversal trace when a cancellation count mismatches', async () => {
     const impact = executionImpact({
       pending: {

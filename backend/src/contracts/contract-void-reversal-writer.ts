@@ -337,6 +337,72 @@ export class ContractVoidReversalWriter {
       );
     }
 
+    for (const concession of impact.sourceSnapshot.concessions) {
+      add(
+        indicatorRow({
+          requestId: request.id,
+          category: 'PRICING_REBATE',
+          entityType: 'ContractConcession',
+          entityId: concession.id,
+          correctionOccurredAt: now,
+          originalOccurredAt: concession.endDate ?? concession.startDate,
+          metadata: {
+            status: concession.status,
+            concessionType: concession.concessionType,
+            applyMode: concession.applyMode,
+            fixedAmount: concession.fixedAmount,
+            discountRate: concession.discountRate,
+            billingPeriodCount: concession.billingPeriodCount,
+            affectsNetImpact: false,
+          },
+        }),
+      );
+    }
+
+    for (const voidRequest of impact.sourceSnapshot
+      .approvedPaymentVoidRequests) {
+      add(
+        indicatorRow({
+          requestId: request.id,
+          category: 'PAYMENT',
+          entityType: 'PaymentVoidRequest',
+          entityId: voidRequest.id,
+          correctionOccurredAt: now,
+          originalOccurredAt: voidRequest.approvedAt,
+          metadata: {
+            requestNo: voidRequest.requestNo,
+            status: voidRequest.status,
+            paymentId: voidRequest.paymentId,
+            approvedAt: voidRequest.approvedAt,
+            affectsNetImpact: false,
+          },
+        }),
+      );
+    }
+
+    for (const refund of impact.sourceSnapshot.approvedDepositRefunds) {
+      add(
+        indicatorRow({
+          requestId: request.id,
+          category: 'DEPOSIT',
+          entityType: 'DepositRefund',
+          entityId: refund.id,
+          correctionOccurredAt: now,
+          originalOccurredAt: refund.approvedAt,
+          metadata: {
+            refundNo: refund.refundNo,
+            amount: refund.amount,
+            refundDate: refund.refundDate,
+            refundMethod: refund.refundMethod,
+            checkoutSettlementId: refund.checkoutSettlementId,
+            approvedAt: refund.approvedAt,
+            depositTransactionIds: refund.depositTransactionIds,
+            affectsNetImpact: false,
+          },
+        }),
+      );
+    }
+
     for (const checkout of impact.sourceSnapshot.checkoutSettlements.filter(
       (item) => item.status === 'COMPLETED',
     )) {

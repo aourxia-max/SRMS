@@ -100,6 +100,35 @@ type ContractVoidSourceSnapshot = {
     occurredAt: string | null;
     approvedAt: string | null;
   }>;
+  concessions: Array<{
+    id: number;
+    concessionType: string;
+    applyMode: string;
+    startDate: string | null;
+    endDate: string | null;
+    fixedAmount: string | null;
+    discountRate: string | null;
+    billingPeriodCount: number | null;
+    reason: string;
+    status: string;
+  }>;
+  approvedPaymentVoidRequests: Array<{
+    id: number;
+    requestNo: string;
+    paymentId: number;
+    status: string;
+    approvedAt: string | null;
+  }>;
+  approvedDepositRefunds: Array<{
+    id: number;
+    refundNo: string;
+    amount: string;
+    refundDate: string;
+    refundMethod: string;
+    checkoutSettlementId: number;
+    approvedAt: string | null;
+    depositTransactionIds: number[];
+  }>;
   commissions: Array<{
     id: number;
     amount: string;
@@ -223,7 +252,13 @@ export class ContractVoidPreviewService {
               },
             },
             voidRequests: {
-              select: { id: true, approvalStatus: true },
+              select: {
+                id: true,
+                requestNo: true,
+                paymentId: true,
+                approvalStatus: true,
+                approvedAt: true,
+              },
             },
           },
         },
@@ -251,6 +286,20 @@ export class ContractVoidPreviewService {
           select: { id: true, balanceAfter: true, occurredAt: true },
         },
         changes: { select: { id: true, approvalStatus: true } },
+        concessions: {
+          select: {
+            id: true,
+            concessionType: true,
+            applyMode: true,
+            startDate: true,
+            endDate: true,
+            fixedAmount: true,
+            discountRate: true,
+            billingPeriodCount: true,
+            reason: true,
+            status: true,
+          },
+        },
         pricingRebates: {
           select: {
             id: true,
@@ -297,7 +346,17 @@ export class ContractVoidPreviewService {
           },
         },
         depositRefunds: {
-          select: { id: true, approvalStatus: true },
+          select: {
+            id: true,
+            refundNo: true,
+            checkoutSettlementId: true,
+            refundAmount: true,
+            refundDate: true,
+            refundMethod: true,
+            approvalStatus: true,
+            approvedAt: true,
+            transactions: { select: { id: true } },
+          },
         },
         commissions: {
           select: { id: true, amount: true, createdAt: true, deletedAt: true },
@@ -458,6 +517,29 @@ export class ContractVoidPreviewService {
             }
           : null,
         contractMembers: sortById(contract.members),
+        concessions: sortById(contract.concessions).map((concession) => ({
+          id: concession.id,
+          concessionType: concession.concessionType,
+          applyMode: concession.applyMode,
+          startDate: dateText(concession.startDate),
+          endDate: dateText(concession.endDate),
+          fixedAmount: nullableMoney(concession.fixedAmount),
+          discountRate: nullableMoney(concession.discountRate),
+          billingPeriodCount: concession.billingPeriodCount,
+          reason: concession.reason,
+          status: concession.status,
+        })),
+        approvedPaymentVoidRequests: sortById(
+          contract.payments.flatMap((payment) => payment.voidRequests),
+        )
+          .filter((request) => request.approvalStatus === 'APPROVED')
+          .map((request) => ({
+            id: request.id,
+            requestNo: request.requestNo,
+            paymentId: request.paymentId,
+            status: request.approvalStatus,
+            approvedAt: dateText(request.approvedAt),
+          })),
         paymentAllocations: paymentAllocations.map((allocation) => ({
           id: allocation.id,
           paymentId: allocation.paymentId,
@@ -536,6 +618,20 @@ export class ContractVoidPreviewService {
             approvedAt: dateText(checkout.approvedAt),
           }),
         ),
+        approvedDepositRefunds: sortById(contract.depositRefunds)
+          .filter((refund) => refund.approvalStatus === 'APPROVED')
+          .map((refund) => ({
+            id: refund.id,
+            refundNo: refund.refundNo,
+            amount: money(refund.refundAmount),
+            refundDate: refund.refundDate.toISOString(),
+            refundMethod: refund.refundMethod,
+            checkoutSettlementId: refund.checkoutSettlementId,
+            approvedAt: dateText(refund.approvedAt),
+            depositTransactionIds: sortById(refund.transactions).map(
+              (transaction) => transaction.id,
+            ),
+          })),
         commissions: sortById(contract.commissions).map((commission) => ({
           id: commission.id,
           amount: money(commission.amount),
