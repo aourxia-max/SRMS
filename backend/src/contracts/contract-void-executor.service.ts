@@ -18,7 +18,10 @@ import {
   lockContractVoidExclusiveScope,
   lockContractVoidRelatedRows,
 } from './contract-void-locks';
-import { EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES, resolveRoomStatusAfterContractVoid } from './contract-room-reconciliation';
+import {
+  EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES,
+  resolveRoomStatusAfterContractVoid,
+} from './contract-room-reconciliation';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
 import {
   ContractVoidReversalWriter,
@@ -176,6 +179,11 @@ export class ContractVoidExecutorService {
           const contract = scope.target;
 
           const input = await this.previews.loadInput(tx, request.contractId);
+          if (input.sourceSnapshot.prepaymentTransfers?.length) {
+            throw new ConflictException(
+              '存在预收款转账记录，暂不支持自动合同纠错，请人工核对',
+            );
+          }
           const computed = computeContractVoidImpact(input);
           const impact: ContractVoidExecutionImpact = {
             ...computed,
@@ -341,6 +349,11 @@ export class ContractVoidExecutorService {
       }
       if (targetsField(targets, 'transactionNo')) {
         throw new ConflictException('合同作废冲销编号冲突，请联系系统管理员');
+      }
+      if (targetsField(targets, 'contractVoidReversal')) {
+        throw new ConflictException(
+          '合同作废冲销记录已存在，已终止执行，请人工核对',
+        );
       }
       throw new ConflictException('合同作废执行遇到唯一性冲突，请重试');
     }

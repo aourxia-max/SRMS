@@ -548,4 +548,54 @@ describe('ContractVoidReversalWriter', () => {
     expect(tx.prepaymentTransaction.create).not.toHaveBeenCalled();
     expect(tx.depositTransaction.create).not.toHaveBeenCalled();
   });
+
+  it('fails closed when the reversal insert count is smaller than the planned rows', async () => {
+    const { tx } = txFixture();
+    tx.contractVoidReversal.createMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      new ContractVoidReversalWriter().write(
+        tx as never,
+        request,
+        executionImpact(),
+        now,
+      ),
+    ).rejects.toThrow('合同作废冲销写入不完整，请重试');
+  });
+
+  it('fails closed when the reloaded reversal idempotency keys differ from the plan', async () => {
+    const { tx } = txFixture();
+    tx.contractVoidReversal.findMany.mockResolvedValue([
+      {
+        id: 1,
+        contractVoidRequestId: request.id,
+        idempotencyKey: 'contract-void:9:PAYMENT:unexpected',
+      },
+    ]);
+
+    await expect(
+      new ContractVoidReversalWriter().write(
+        tx as never,
+        request,
+        executionImpact(),
+        now,
+      ),
+    ).rejects.toThrow('合同作废冲销记录校验失败，请人工核对');
+  });
+
+  it('accepts a complete planned reversal set without silently skipping duplicates', async () => {
+    const { tx } = txFixture();
+
+    await expect(
+      new ContractVoidReversalWriter().write(
+        tx as never,
+        request,
+        executionImpact(),
+        now,
+      ),
+    ).resolves.toHaveLength(13);
+    expect(tx.contractVoidReversal.createMany).toHaveBeenCalledWith({
+      data: expect.any(Array),
+    });
+  });
 });

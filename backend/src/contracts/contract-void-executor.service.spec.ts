@@ -370,6 +370,24 @@ describe('ContractVoidExecutorService', () => {
     expect(audit.append).not.toHaveBeenCalled();
   });
 
+  it('fails closed inside the locked execution when a prepayment transfer appears after preview', async () => {
+    const { service, tx, writer, input, request } = harness();
+    input.sourceSnapshot.prepaymentTransfers = [
+      { id: 301, transactionType: 'TRANSFER_IN' },
+    ];
+
+    const hash = hashContractVoidImpact({
+      ...computeContractVoidImpact(input),
+      sourceSnapshot: input.sourceSnapshot,
+    });
+    request.impactHash = hash;
+    await expect(
+      service.execute(9, hash, '确认作废合同', executionKey, superAdmin),
+    ).rejects.toThrow('存在预收款转账记录，暂不支持自动合同纠错，请人工核对');
+    expect(writer.write).not.toHaveBeenCalled();
+    expect(tx.contract.update).not.toHaveBeenCalled();
+  });
+
   it('rejects a stale combined impact and source-snapshot hash in the transaction', async () => {
     const { service, tx, writer, hash, input } = harness();
     input.sourceSnapshot.commissions.push({

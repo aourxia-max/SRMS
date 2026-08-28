@@ -403,6 +403,34 @@ describe('ContractVoidPreviewService', () => {
     });
   });
 
+  it.each(['TRANSFER_IN', 'TRANSFER_OUT'])(
+    'rejects a historical prepayment %s even when it is not the latest balance row',
+    async (transactionType) => {
+      const fixture = contractFixture();
+      fixture.prepaymentTransactions = [
+        {
+          id: 70,
+          transactionType,
+          balanceAfter: new Prisma.Decimal('200.00'),
+          occurredAt: new Date('2026-08-05T03:00:00.000Z'),
+        },
+        {
+          id: 71,
+          transactionType: 'REVERSAL',
+          balanceAfter: new Prisma.Decimal('0.00'),
+          occurredAt: new Date('2026-08-06T03:00:00.000Z'),
+        },
+      ];
+      const service = new ContractVoidPreviewService({
+        db: buildDb(fixture),
+      } as never);
+
+      await expect(service.preview(7, admin)).rejects.toThrow(
+        '存在预收款转账记录，暂不支持自动合同纠错，请人工核对',
+      );
+    },
+  );
+
   it('allows a super administrator to load the same snapshot through a transaction client', async () => {
     const db = buildDb();
     const service = new ContractVoidPreviewService({ db } as never);

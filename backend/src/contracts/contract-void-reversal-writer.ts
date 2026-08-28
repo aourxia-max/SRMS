@@ -379,15 +379,26 @@ export class ContractVoidReversalWriter {
       idempotencyKey: idempotencyKey(request.id, row),
     }));
     if (data.length) {
-      await tx.contractVoidReversal.createMany({
+      const inserted = await tx.contractVoidReversal.createMany({
         data,
-        skipDuplicates: true,
       });
+      if (inserted.count !== data.length) {
+        throw new ConflictException('合同作废冲销写入不完整，请重试');
+      }
     }
-    return tx.contractVoidReversal.findMany({
+    const reversals = await tx.contractVoidReversal.findMany({
       where: { contractVoidRequestId: request.id },
       orderBy: { id: 'asc' },
     });
+    const plannedKeys = data.map((row) => row.idempotencyKey).sort();
+    const reloadedKeys = reversals.map((row) => row.idempotencyKey).sort();
+    if (
+      plannedKeys.length !== reloadedKeys.length ||
+      plannedKeys.some((key, index) => key !== reloadedKeys[index])
+    ) {
+      throw new ConflictException('合同作废冲销记录校验失败，请人工核对');
+    }
+    return reversals;
   }
 
   private async cancelApprovalWorkflows(

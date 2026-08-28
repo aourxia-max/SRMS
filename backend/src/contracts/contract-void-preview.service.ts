@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
@@ -20,6 +21,10 @@ type ContractVoidSourceSnapshot = {
     balanceAfter: string;
     occurredAt: string;
   } | null;
+  prepaymentTransfers: Array<{
+    id: number;
+    transactionType: 'TRANSFER_IN' | 'TRANSFER_OUT';
+  }>;
   depositBalanceSource: {
     id: number;
     balanceAfter: string;
@@ -233,8 +238,12 @@ export class ContractVoidPreviewService {
         },
         prepaymentTransactions: {
           orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-          take: 1,
-          select: { id: true, balanceAfter: true, occurredAt: true },
+          select: {
+            id: true,
+            transactionType: true,
+            balanceAfter: true,
+            occurredAt: true,
+          },
         },
         depositTransactions: {
           orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
@@ -297,6 +306,15 @@ export class ContractVoidPreviewService {
     });
     if (contract.status === 'VOIDED') {
       throw new BadRequestException('合同已作废，不能再次发起纠错');
+    }
+    if (
+      contract.prepaymentTransactions.some((transaction) =>
+        ['TRANSFER_IN', 'TRANSFER_OUT'].includes(transaction.transactionType),
+      )
+    ) {
+      throw new ConflictException(
+        '存在预收款转账记录，暂不支持自动合同纠错，请人工核对',
+      );
     }
 
     const laterContracts = await db.contract.findMany({
@@ -410,6 +428,17 @@ export class ContractVoidPreviewService {
       laterContractIds: laterContracts.map((item) => item.id),
       currentRoomStatus: contract.room.roomStatus,
       sourceSnapshot: {
+        prepaymentTransfers: contract.prepaymentTransactions
+          .filter((transaction) =>
+            ['TRANSFER_IN', 'TRANSFER_OUT'].includes(
+              transaction.transactionType,
+            ),
+          )
+          .map((transaction) => ({
+            id: transaction.id,
+            transactionType: transaction.transactionType as
+              'TRANSFER_IN' | 'TRANSFER_OUT',
+          })),
         prepaymentBalanceSource: contract.prepaymentTransactions[0]
           ? {
               id: contract.prepaymentTransactions[0].id,
