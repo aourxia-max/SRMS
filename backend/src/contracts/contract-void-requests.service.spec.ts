@@ -600,22 +600,22 @@ describe('ContractVoidRequestsService', () => {
   it.each([admin, superAdmin])(
     'rejects cancellation of another submitter pending request for %s',
     async (cancellingUser) => {
-    const updateMany = jest.fn();
-    const { service } = transactionService({
-      contractVoidRequest: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 9,
-          status: 'PENDING',
-          submittedBy: 99,
-        }),
-        updateMany,
-      },
-    });
+      const updateMany = jest.fn();
+      const { service } = transactionService({
+        contractVoidRequest: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 9,
+            status: 'PENDING',
+            submittedBy: 99,
+          }),
+          updateMany,
+        },
+      });
 
-    await expect(service.cancel(9, cancellingUser)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
-    expect(updateMany).not.toHaveBeenCalled();
+      await expect(service.cancel(9, cancellingUser)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(updateMany).not.toHaveBeenCalled();
     },
   );
 
@@ -798,9 +798,13 @@ describe('ContractVoidRequestsService reversal detail contract', () => {
   });
 
   it('does not query or return full reversals to an admin detail viewer', async () => {
-    const findUnique = jest.fn().mockImplementation(({ include }) =>
-      Promise.resolve(include.reversals ? { id: 9, reversals: [{}] } : { id: 9 }),
-    );
+    const findUnique = jest
+      .fn()
+      .mockImplementation(({ include }) =>
+        Promise.resolve(
+          include.reversals ? { id: 9, reversals: [{}] } : { id: 9 },
+        ),
+      );
     const service = new ContractVoidRequestsService(
       { db: { contractVoidRequest: { findUnique } } } as never,
       {} as never,

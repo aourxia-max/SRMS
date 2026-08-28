@@ -32,7 +32,9 @@ export function resolveRoomStatusAfterContractVoid(
 ): RoomReconciliationResult {
   if (
     PRESERVED_ROOM_STATUSES.has(input.currentStatus) ||
-    input.laterContracts.some((contract) => isEffectiveRoomOccupancyContract(contract.status))
+    input.laterContracts.some((contract) =>
+      isEffectiveRoomOccupancyContract(contract.status),
+    )
   ) {
     return {
       action: 'KEEP_CURRENT_STATUS',

@@ -113,7 +113,10 @@ export class ContractVoidRequestsService {
     this.assertCanView(user);
     const request = await this.prisma.db.contractVoidRequest.findUnique({
       where: { id },
-      include: user.role === UserRole.SUPER_ADMIN ? requestDetailInclude : requestInclude,
+      include:
+        user.role === UserRole.SUPER_ADMIN
+          ? requestDetailInclude
+          : requestInclude,
     });
     if (!request) throw new NotFoundException('合同作废申请不存在');
     return request;
@@ -276,7 +279,10 @@ export class ContractVoidRequestsService {
           throw new ConflictException('申请状态或影响快照已变化，请刷新后重试');
         const refreshed = await tx.contractVoidRequest.findUnique({
           where: { id },
-          include: user.role === UserRole.SUPER_ADMIN ? requestDetailInclude : requestInclude,
+          include:
+            user.role === UserRole.SUPER_ADMIN
+              ? requestDetailInclude
+              : requestInclude,
         });
         if (!refreshed)
           throw new ConflictException('申请刷新后读取失败，请刷新后重试');
