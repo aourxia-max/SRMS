@@ -210,10 +210,14 @@ describe('ContractVoidRequestsService', () => {
         findUnique: jest.fn().mockResolvedValue({ id: 7, roomId: 3 }),
       },
       contractVoidRequest: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValueOnce({ contractId: 7 })
-          .mockResolvedValueOnce(detailed),
+        findUnique: jest.fn().mockImplementation(({ include, select }) => {
+          if (select) return Promise.resolve({ contractId: 7 });
+          return Promise.resolve(
+            include.reversals
+              ? detailed
+              : { ...detailed, reversals: undefined },
+          );
+        }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
@@ -271,10 +275,17 @@ describe('ContractVoidRequestsService', () => {
   it('refreshes a pending snapshot under room-first deterministic row locks', async () => {
     const { service, tx, db, preview, hash, snapshot } = refreshService();
 
-    await expect(service.refreshSnapshot(9, admin)).resolves.toMatchObject({
+    const refreshed = await service.refreshSnapshot(9, admin);
+    expect(refreshed).toMatchObject({
       id: 9,
       impactHash: hash,
       impactSnapshot: snapshot,
+    });
+
+    expect(refreshed).toMatchObject({ reversals: undefined });
+    expect(tx.contractVoidRequest.findUnique).toHaveBeenLastCalledWith({
+      where: { id: 9 },
+      include: expect.not.objectContaining({ reversals: expect.anything() }),
     });
 
     const lockOrder = tx.$queryRaw.mock.calls.map(([query]) =>
@@ -681,7 +692,7 @@ describe('ContractVoidRequestsService', () => {
   it('allows a super admin to refresh another submitter pending request', async () => {
     const { service } = refreshService({ submittedBy: 99 });
     await expect(service.refreshSnapshot(9, superAdmin)).resolves.toMatchObject(
-      { id: 9 },
+      { id: 9, reversals: [] },
     );
   });
 
