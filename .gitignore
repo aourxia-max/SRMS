@@ -21,3 +21,4 @@ frontend/dist/
 backend/node_modules/
 backend/dist/
 backend/generated/
+deploy/test-data/

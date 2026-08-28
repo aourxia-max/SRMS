@@ -115,3 +115,45 @@ sentinel 没有纠错申请或安全审计，断言后按精确主键和依赖�
 - 只对无 append-only audit 的临时 sentinel 和未完成局部测试数据执行精确、安全清理。
 - 后续 ACTIVE 合同及当前房态得到真实数据库断言保护。
 - 无 env、密码、令牌、密钥或部署文件差异。
+
+## Fix round 2：共享测试库重建与 mutation 安全护栏
+
+独立复审确认 round 1 的断言已闭合，但指出：为证明断言敏感性而运行的 production mutation 在共享测试库提交了一条已知不完整的 COMPLETED append-only 链。该链不能逐行删除或事后补写，因此 round 1 中“保留 mutation 链可接受”的表述由本轮裁决取代：mutation proof 只能运行在本机一次性、可整体销毁的专用数据库，普通共享测试库只能运行未修改 production 的 GREEN E2E。
+
+### 用户授权与精确目标
+
+用户明确授权整体重建本机 Docker compose project `srms_test`、container `srms_test-mysql-1`、published port `13306` 内的 `srms_docker`，并接受当前测试库数据丢失，以 `current-before-rebuild-20260828-094555` 备份兜底。执行前再次验证 project、service、container、port、database 四项完全一致；未触碰其他容器、数据库、生产环境或 env 文件。
+
+### 重建前备份与污染清单
+
+- 当前数据库备份：`deploy/test-data/current-before-rebuild-20260828-094555/database.sql`，SHA256 `AF4F96ADC08A21AD636BCBA3909314AE3744526FE80EC72C54C25796A80667E2`。
+- 当前测试附件备份：同目录 `uploads.tar.gz`，SHA256 `C453B401F8C646047342AB56733929464960223DAE1DEE631E3789737175D727`。
+- 备份通过非空、SQL 结构、tar 可读性和 hash 校验。
+- 重建前共有 30 条 Task 10 COMPLETED 链；唯一已知不完整 marker 为 `mtbw7plivhogqc`，request 115、contract 172。其 1 张账单和 3 笔支付已 VOIDED，原 allocation 为 `100.00` 且 reversedAmount 仍为 `0.00`，仅有 7 条 reversal，缺少 `PAYMENT_ALLOCATION -100.00` 及对应 result category，安全审计事件为 1 条。
+- 清单只记录技术标识和聚合财务状态，不记录姓名、电话、密码、令牌或密钥。
+
+### 整体恢复与迁移
+
+- 基线 `backup-before-clear-20260825-081647/database.sql` 的 SHA256 重新校验为 `A3CFECAC425E7D9B0988F9C1CDC1707A64AB29CA72DC4CEF5EFBF17AD4D4D17A`。
+- 仅对目标 `srms_docker` 执行整体 DROP/CREATE；未逐行删除或补写任何 COMPLETED 审计链。
+- 基线恢复后为 41 张表、25 条迁移；随后成功应用 `20260826090000_contract_void_correction`，最终为 45 张表、26 条迁移。
+- 恢复后 Task 10 marker/request/reversal 均为 0；合同纠错 3 张表、14 个索引、4 个 RESTRICT 外键完整。
+- 基线保留 3 栋、195 间房源和 5 个用户；有效角色含 2 个 SUPER_ADMIN、2 个 ADMIN。未输出个人资料。
+- 未覆盖测试 uploads：本轮 GREEN E2E 不依赖历史附件，且现有 uploads 已单独备份。
+
+### mutation 数据库护栏
+
+新增 `assertContractVoidMutationDatabaseSafety`：仅当 `CONTRACT_VOID_MUTATION_PROOF=1` 时启用，并且只允许 host 为 localhost/127.0.0.1/[::1]、数据库名匹配 `srms_contract_void_mutation_<唯一标识>`。其他目标在应用初始化和任何 fixture/数据库写入前以固定中文错误“合同纠错 mutation 只能运行在本机一次性数据库”拒绝。普通 GREEN E2E 不受影响。
+
+TDD 证据：护栏先因 module 缺失 RED；实现后 helper 4/4 GREEN。共享 `srms_docker` 开启 mutation mode 时 6 个测试全部在 beforeAll 安全失败且数据库零写入；关闭 mutation mode 后 guard + 正常 E2E 为 2 suites / 10 tests passed。重建后的首轮 GREEN 产生 4 条完整 COMPLETED/audit 链；后续两次最终复验使用各自唯一 marker，当前合计 12/12，且每次及最终聚合不完整 allocation 链均为 0。
+
+### Fix round 2 最终验证
+
+- focused contract-void + finance：9 suites / 86 tests passed。
+- backend full unit：79 suites / 478 tests passed。
+- Prisma validate：通过。
+- backend lint：通过。
+- backend build：通过。
+- Docker `up -d --build api web`：通过，MySQL container ID 未改变，API/Web 重建后健康。
+- `http://127.0.0.1:13000/api/health` 返回 200；`http://127.0.0.1:15173/` 返回 200。
+- 构建仅有既存前端 chunk 大于 500 kB、npm audit/deprecation 警告，无合同纠错失败。

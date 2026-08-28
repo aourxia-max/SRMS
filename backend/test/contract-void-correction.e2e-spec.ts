@@ -14,6 +14,7 @@ import { AppModule } from '../src/app.module';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { assertContractVoidMutationDatabaseSafety } from './support/contract-void-mutation-database-guard';
 
 type SourceIds = {
   bills: number[];
@@ -112,6 +113,10 @@ function loadLocalTestDatabaseEnvironment() {
   databaseUrl.password = mysql.MYSQL_PASSWORD;
   databaseUrl.port = mysql.MYSQL_PORT;
   databaseUrl.pathname = `/${mysql.MYSQL_DATABASE}`;
+  assertContractVoidMutationDatabaseSafety(
+    databaseUrl.toString(),
+    process.env.CONTRACT_VOID_MUTATION_PROOF === '1',
+  );
   process.env.DATABASE_URL = databaseUrl.toString();
   process.env.NODE_ENV = 'test';
 }
