@@ -13,6 +13,7 @@ import {
   type ContractVoidImpactInput,
 } from './contract-void-impact';
 
+import { EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES } from './contract-room-reconciliation';
 type ContractVoidSourceSnapshot = {
   prepaymentBalanceSource: {
     id: number;
@@ -302,8 +303,9 @@ export class ContractVoidPreviewService {
       where: {
         roomId: contract.roomId,
         id: { not: contractId },
-        status: { not: 'VOIDED' },
+        status: { in: EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES },
       },
+      orderBy: { id: 'asc' },
       select: { id: true },
     });
     const paymentAllocations = sortById(

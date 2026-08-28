@@ -10,6 +10,16 @@ export type RoomReconciliationResult = {
   targetStatus: RoomStatus;
 };
 
+export const EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES: ContractStatus[] = [
+  ContractStatus.PENDING_START,
+  ContractStatus.ACTIVE,
+  ContractStatus.PENDING_CHECKOUT,
+];
+
+export function isEffectiveRoomOccupancyContract(status: ContractStatus) {
+  return EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES.includes(status);
+}
+
 const PRESERVED_ROOM_STATUSES = new Set<RoomStatus>([
   RoomStatus.MAINTENANCE,
   RoomStatus.FOR_SALE,
@@ -22,7 +32,7 @@ export function resolveRoomStatusAfterContractVoid(
 ): RoomReconciliationResult {
   if (
     PRESERVED_ROOM_STATUSES.has(input.currentStatus) ||
-    input.laterContracts.some((contract) => contract.status !== 'VOIDED')
+    input.laterContracts.some((contract) => isEffectiveRoomOccupancyContract(contract.status))
   ) {
     return {
       action: 'KEEP_CURRENT_STATUS',

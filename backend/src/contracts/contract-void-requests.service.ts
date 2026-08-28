@@ -113,7 +113,7 @@ export class ContractVoidRequestsService {
     this.assertCanView(user);
     const request = await this.prisma.db.contractVoidRequest.findUnique({
       where: { id },
-      include: requestDetailInclude,
+      include: user.role === UserRole.SUPER_ADMIN ? requestDetailInclude : requestInclude,
     });
     if (!request) throw new NotFoundException('合同作废申请不存在');
     return request;
@@ -312,7 +312,7 @@ export class ContractVoidRequestsService {
       if (!request) throw new NotFoundException('合同作废申请不存在');
       if (request.status !== 'PENDING')
         throw new BadRequestException('只有待确认的作废申请可以取消');
-      if (user.role !== UserRole.SUPER_ADMIN && request.submittedBy !== user.id)
+      if (request.submittedBy !== user.id)
         throw new ForbiddenException('只能取消本人提交的作废申请');
       const cancelledAt = new Date();
       const changed = await tx.contractVoidRequest.updateMany({

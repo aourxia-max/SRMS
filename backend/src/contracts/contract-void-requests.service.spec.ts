@@ -586,7 +586,9 @@ describe('ContractVoidRequestsService', () => {
     );
   });
 
-  it('rejects cancellation of another submitter pending request', async () => {
+  it.each([admin, superAdmin])(
+    'rejects cancellation of another submitter pending request for %s',
+    async (cancellingUser) => {
     const updateMany = jest.fn();
     const { service } = transactionService({
       contractVoidRequest: {
@@ -599,11 +601,12 @@ describe('ContractVoidRequestsService', () => {
       },
     });
 
-    await expect(service.cancel(9, admin)).rejects.toBeInstanceOf(
+    await expect(service.cancel(9, cancellingUser)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(updateMany).not.toHaveBeenCalled();
-  });
+    },
+  );
 
   it('does not log when cancellation loses the pending-state race', async () => {
     const { service, tx } = transactionService({
@@ -757,7 +760,9 @@ describe('ContractVoidRequestsService reversal detail contract', () => {
       {} as never,
     );
 
-    const result = JSON.parse(JSON.stringify(await service.detail(9, admin)));
+    const result = JSON.parse(
+      JSON.stringify(await service.detail(9, superAdmin)),
+    );
 
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: 9 },
@@ -781,6 +786,21 @@ describe('ContractVoidRequestsService reversal detail contract', () => {
     ]);
   });
 
+  it('does not query or return full reversals to an admin detail viewer', async () => {
+    const findUnique = jest.fn().mockImplementation(({ include }) =>
+      Promise.resolve(include.reversals ? { id: 9, reversals: [{}] } : { id: 9 }),
+    );
+    const service = new ContractVoidRequestsService(
+      { db: { contractVoidRequest: { findUnique } } } as never,
+      {} as never,
+    );
+
+    await expect(service.detail(9, admin)).resolves.toEqual({ id: 9 });
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 9 },
+      include: expect.not.objectContaining({ reversals: expect.anything() }),
+    });
+  });
   it('keeps reversals out of list queries', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const service = new ContractVoidRequestsService(

@@ -34,6 +34,18 @@ describe('resolveRoomStatusAfterContractVoid', () => {
     ).toEqual({ action: 'RECALCULATE', targetStatus: 'EMPTY' });
   });
 
+  it.each(['DRAFT', 'ENDED', 'VOIDED'] as const)(
+    'ignores a non-effective %s same-room contract',
+    (status) => {
+      expect(
+        resolveRoomStatusAfterContractVoid({
+          currentStatus: 'RENTED',
+          laterContracts: [{ status }],
+        }),
+      ).toEqual({ action: 'RECALCULATE', targetStatus: 'EMPTY' });
+    },
+  );
+
   it.each(['MAINTENANCE', 'FOR_SALE', 'SOLD', 'DISABLED'] as const)(
     'preserves the high-priority %s room status',
     (currentStatus) => {

@@ -68,7 +68,7 @@ const visibleContracts = computed(() => {
 })
 const selectedContract = computed(() => props.contracts.find((item) => item.id === selectedId.value) ?? null)
 const terminalRequest = computed(() => Boolean(selectedRequest.value && selectedRequest.value.status !== 'PENDING'))
-const canCancelRequest = computed(() => selectedRequest.value?.status === 'PENDING' && (props.role === 'SUPER_ADMIN' || selectedRequest.value.submittedBy === props.currentUserId))
+const canCancelRequest = computed(() => selectedRequest.value?.status === 'PENDING' && selectedRequest.value.submittedBy === props.currentUserId)
 const submitDisabled = computed(() => !authReady.value || !actionSession || saving.value || attachmentUploading.value || !selectedContract.value || selectedContract.value.status === 'VOIDED' || !impact.value?.impactHash || !reason.value.trim())
 const selectedRequestImpact = computed<ContractVoidImpact | null>(() =>
   selectedRequest.value
@@ -776,7 +776,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </section>
-          <section class="contract-card reversal-card-list">
+          <section v-if="role === 'SUPER_ADMIN'" class="contract-card reversal-card-list">
             <header class="card-head"><h2>纠错冲销明细</h2></header>
             <el-empty v-if="!selectedRequest.reversals?.length" :image-size="48" description="暂无冲销明细" />
             <article v-for="row in selectedRequest.reversals" :key="row.id" class="reversal-card">

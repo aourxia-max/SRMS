@@ -291,6 +291,7 @@ describe('ContractVoidExecutorService', () => {
         id: { not: 7 },
         status: { in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'] },
       },
+      orderBy: { id: 'asc' },
       select: { status: true },
     });
     expect(tx.room.update).toHaveBeenCalledWith({

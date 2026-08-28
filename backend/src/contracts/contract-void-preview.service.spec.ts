@@ -314,7 +314,12 @@ describe('ContractVoidPreviewService', () => {
       }),
     );
     expect(db.contract.findMany).toHaveBeenCalledWith({
-      where: { roomId: 3, id: { not: 7 }, status: { not: 'VOIDED' } },
+      where: {
+        roomId: 3,
+        id: { not: 7 },
+        status: { in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'] },
+      },
+      orderBy: { id: 'asc' },
       select: { id: true },
     });
   });

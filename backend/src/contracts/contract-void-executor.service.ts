@@ -18,7 +18,7 @@ import {
   lockContractVoidExclusiveScope,
   lockContractVoidRelatedRows,
 } from './contract-void-locks';
-import { resolveRoomStatusAfterContractVoid } from './contract-room-reconciliation';
+import { EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES, resolveRoomStatusAfterContractVoid } from './contract-room-reconciliation';
 import { ContractVoidPreviewService } from './contract-void-preview.service';
 import {
   ContractVoidReversalWriter,
@@ -216,10 +216,9 @@ export class ContractVoidExecutorService {
             where: {
               roomId: room.id,
               id: { not: request.contractId },
-              status: {
-                in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'],
-              },
+              status: { in: EFFECTIVE_ROOM_OCCUPANCY_CONTRACT_STATUSES },
             },
+            orderBy: { id: 'asc' },
             select: { status: true },
           });
           const roomResolution = resolveRoomStatusAfterContractVoid({

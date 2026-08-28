@@ -384,6 +384,16 @@ describe('合同作废纠错面板', () => {
     expect(others.find('[data-test="cancel-void-request"]').exists()).toBe(false)
   })
 
+  it('超级管理员也不能取消他人提交的待确认申请', async () => {
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([request()])
+    const wrapper = mountPanel('SUPER_ADMIN', null, 1)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cancel-void-request"]').exists()).toBe(false)
+  })
+
   it('首次提交响应超时后立即按 submission key 找回服务端已创建的待确认申请', async () => {
     let submittedKey = ''
     let listCount = 0
@@ -972,6 +982,18 @@ describe('合同作废纠错面板', () => {
     expect(wrapper.find('[data-test="reject-void-request"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="cancel-void-request"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="submit-void-request"]').exists()).toBe(false)
+  })
+
+  it('管理员查看申请详情时不渲染完整冲销明细', async () => {
+    const completed = request('COMPLETED')
+    vi.mocked(contractService.listContractVoidRequests).mockResolvedValue([completed])
+    vi.mocked(contractService.getContractVoidRequest).mockResolvedValue(completed)
+    const wrapper = mountPanel('ADMIN', null, 7)
+    await flushPromises()
+    await wrapper.get('[data-test="void-request-detail-901"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('纠错冲销明细')
   })
 
   it('保存期间禁用相关动作并阻止重复提交，失败后恢复', async () => {
