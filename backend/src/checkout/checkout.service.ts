@@ -327,57 +327,63 @@ export class CheckoutService {
   async initiate(contractId: number, dto: InitiateCheckoutDto, user: AuthUser) {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
-    return this.prisma.db.$transaction(async (tx) => {
-      await lockRoomAndTargetContract(tx, contractId);
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
-      );
-      const contract = await tx.contract.findUniqueOrThrow({
-        where: { id: contractId },
-        include: { room: true },
-      });
-      assertContractNotVoided(contract.status, '发起退租');
-      if (!['PENDING_START', 'ACTIVE'].includes(contract.status))
-        throw new BadRequestException('只有待开始或履行中的合同可以发起退租');
-      const existing = await tx.checkoutSettlement.findFirst({
-        where: { contractId, status: { in: ['DRAFT', 'PENDING', 'APPROVED'] } },
-      });
-      if (existing) throw new ConflictException('该合同已有未完成的退租结算');
-      const settlement = await tx.checkoutSettlement.create({
-        data: {
-          settlementNo: `TZ${Date.now()}${contractId}`,
-          contractId,
-          checkoutType: dto.checkoutType,
-          originContractStatus: contract.status,
-          plannedCheckoutDate: new Date(dto.plannedCheckoutDate),
-          handoverDate: new Date(dto.handoverDate),
-          inspectionAt: new Date(dto.inspectionAt),
-          checkoutReason: dto.checkoutReason,
-          targetRoomStatus: dto.targetRoomStatus,
-          submittedBy: user.id,
-        },
-      });
-      await tx.contract.update({
-        where: { id: contractId },
-        data: { status: 'PENDING_CHECKOUT' },
-      });
-      await tx.room.update({
-        where: { id: contract.roomId },
-        data: { roomStatus: 'PENDING_CHECKOUT', statusChangedAt: new Date() },
-      });
-      await tx.roomStatusHistory.create({
-        data: {
-          roomId: contract.roomId,
-          fromStatus: contract.room.roomStatus,
-          toStatus: 'PENDING_CHECKOUT',
-          changeReason: '发起退租',
-          businessType: 'CHECKOUT',
-          businessId: settlement.id,
-          changedBy: user.id,
-        },
-      });
-      return settlement;
-    });
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        await lockRoomAndTargetContract(tx, contractId);
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
+        );
+        const contract = await tx.contract.findUniqueOrThrow({
+          where: { id: contractId },
+          include: { room: true },
+        });
+        assertContractNotVoided(contract.status, '发起退租');
+        if (!['PENDING_START', 'ACTIVE'].includes(contract.status))
+          throw new BadRequestException('只有待开始或履行中的合同可以发起退租');
+        const existing = await tx.checkoutSettlement.findFirst({
+          where: {
+            contractId,
+            status: { in: ['DRAFT', 'PENDING', 'APPROVED'] },
+          },
+        });
+        if (existing) throw new ConflictException('该合同已有未完成的退租结算');
+        const settlement = await tx.checkoutSettlement.create({
+          data: {
+            settlementNo: `TZ${Date.now()}${contractId}`,
+            contractId,
+            checkoutType: dto.checkoutType,
+            originContractStatus: contract.status,
+            plannedCheckoutDate: new Date(dto.plannedCheckoutDate),
+            handoverDate: new Date(dto.handoverDate),
+            inspectionAt: new Date(dto.inspectionAt),
+            checkoutReason: dto.checkoutReason,
+            targetRoomStatus: dto.targetRoomStatus,
+            submittedBy: user.id,
+          },
+        });
+        await tx.contract.update({
+          where: { id: contractId },
+          data: { status: 'PENDING_CHECKOUT' },
+        });
+        await tx.room.update({
+          where: { id: contract.roomId },
+          data: { roomStatus: 'PENDING_CHECKOUT', statusChangedAt: new Date() },
+        });
+        await tx.roomStatusHistory.create({
+          data: {
+            roomId: contract.roomId,
+            fromStatus: contract.room.roomStatus,
+            toStatus: 'PENDING_CHECKOUT',
+            changeReason: '发起退租',
+            businessType: 'CHECKOUT',
+            businessId: settlement.id,
+            changedBy: user.id,
+          },
+        });
+        return settlement;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
   async submit(id: number, dto: SubmitCheckoutSettlementDto, user: AuthUser) {
     const actual = new Date(dto.actualCheckoutDate);
@@ -677,53 +683,56 @@ export class CheckoutService {
     });
   }
   async completeZeroRefund(id: number, user: AuthUser) {
-    return this.prisma.db.$transaction(async (tx) => {
-      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
-        where: { id },
-        select: { contractId: true },
-      });
-      await lockRoomAndTargetContract(tx, identity.contractId);
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
-      );
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) ORDER BY id FOR UPDATE`,
-      );
-      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
-        where: { id },
-        include: { contract: true },
-      });
-      assertContractNotVoided(settlement.contract.status, '完成退租结算');
-      const supplementalOutstandingAmount = settlement.supplementalRequired
-        ? settlement.supplementalOutstandingAmount
-        : settlement.finalReceivable;
-      const isZero = [
-        settlement.depositRefundableAmount,
-        settlement.prepaymentRefundableAmount,
-        supplementalOutstandingAmount,
-      ].every((amount) => new Prisma.Decimal(amount).isZero());
-      if (
-        settlement.status !== 'APPROVED' ||
-        settlement.contract.status !== 'PENDING_CHECKOUT' ||
-        !isZero
-      )
-        throw new BadRequestException('零额最终确认条件不满足');
-
-      if (settlement.supplementalRequired)
-        await assertNoPendingCheckoutSupplementalReversal(
-          tx,
-          settlement.contractId,
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const identity = await tx.checkoutSettlement.findUniqueOrThrow({
+          where: { id },
+          select: { contractId: true },
+        });
+        await lockRoomAndTargetContract(tx, identity.contractId);
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
         );
-      const claimed = await tx.checkoutSettlement.updateMany({
-        where: { id, status: 'APPROVED' },
-        data: { status: 'COMPLETED' },
-      });
-      if (claimed.count !== 1)
-        throw new ConflictException('结算单已被最终确认，请刷新后重试');
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) ORDER BY id FOR UPDATE`,
+        );
+        const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+          where: { id },
+          include: { contract: true },
+        });
+        assertContractNotVoided(settlement.contract.status, '完成退租结算');
+        const supplementalOutstandingAmount = settlement.supplementalRequired
+          ? settlement.supplementalOutstandingAmount
+          : settlement.finalReceivable;
+        const isZero = [
+          settlement.depositRefundableAmount,
+          settlement.prepaymentRefundableAmount,
+          supplementalOutstandingAmount,
+        ].every((amount) => new Prisma.Decimal(amount).isZero());
+        if (
+          settlement.status !== 'APPROVED' ||
+          settlement.contract.status !== 'PENDING_CHECKOUT' ||
+          !isZero
+        )
+          throw new BadRequestException('零额最终确认条件不满足');
 
-      await this.completeWithoutDepositRefund(tx, settlement, user);
-      return { ...settlement, status: 'COMPLETED' as const };
-    });
+        if (settlement.supplementalRequired)
+          await assertNoPendingCheckoutSupplementalReversal(
+            tx,
+            settlement.contractId,
+          );
+        const claimed = await tx.checkoutSettlement.updateMany({
+          where: { id, status: 'APPROVED' },
+          data: { status: 'COMPLETED' },
+        });
+        if (claimed.count !== 1)
+          throw new ConflictException('结算单已被最终确认，请刷新后重试');
+
+        await this.completeWithoutDepositRefund(tx, settlement, user);
+        return { ...settlement, status: 'COMPLETED' as const };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
   async reject(id: number, reason: string, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
@@ -752,88 +761,93 @@ export class CheckoutService {
     });
   }
   async cancel(id: number, user: AuthUser) {
-    return this.prisma.db.$transaction(async (tx) => {
-      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
-        where: { id },
-        select: { contractId: true },
-      });
-      await lockRoomAndTargetContract(tx, identity.contractId);
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
-      );
-      const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
-        where: { id },
-        include: { contract: { include: { room: true } } },
-      });
-      if (!['DRAFT', 'PENDING', 'REJECTED'].includes(settlement.status))
-        throw new BadRequestException(
-          '只有草稿、待确认或已驳回的退租结算工单可以取消',
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const identity = await tx.checkoutSettlement.findUniqueOrThrow({
+          where: { id },
+          select: { contractId: true },
+        });
+        await lockRoomAndTargetContract(tx, identity.contractId);
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
         );
-      assertContractNotVoided(settlement.contract.status, '取消退租结算');
-      if (
-        settlement.contract.status !== 'PENDING_CHECKOUT' ||
-        settlement.contract.room.roomStatus !== 'PENDING_CHECKOUT'
-      )
-        throw new ConflictException('合同或房源状态已变化，请刷新后重试');
+        const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
+          where: { id },
+          include: { contract: { include: { room: true } } },
+        });
+        if (!['DRAFT', 'PENDING', 'REJECTED'].includes(settlement.status))
+          throw new BadRequestException(
+            '只有草稿、待确认或已驳回的退租结算工单可以取消',
+          );
+        assertContractNotVoided(settlement.contract.status, '取消退租结算');
+        if (
+          settlement.contract.status !== 'PENDING_CHECKOUT' ||
+          settlement.contract.room.roomStatus !== 'PENDING_CHECKOUT'
+        )
+          throw new ConflictException('合同或房源状态已变化，请刷新后重试');
 
-      const initialHistory = await tx.roomStatusHistory.findFirst({
-        where: {
-          businessType: 'CHECKOUT',
-          businessId: id,
-          toStatus: 'PENDING_CHECKOUT',
-        },
-        orderBy: { changedAt: 'asc' },
-      });
-      if (!initialHistory?.fromStatus)
-        throw new ConflictException('缺少发起退租的房态历史，无法安全恢复房态');
-      const restoreStatus = initialHistory.fromStatus;
+        const initialHistory = await tx.roomStatusHistory.findFirst({
+          where: {
+            businessType: 'CHECKOUT',
+            businessId: id,
+            toStatus: 'PENDING_CHECKOUT',
+          },
+          orderBy: { changedAt: 'asc' },
+        });
+        if (!initialHistory?.fromStatus)
+          throw new ConflictException(
+            '缺少发起退租的房态历史，无法安全恢复房态',
+          );
+        const restoreStatus = initialHistory.fromStatus;
 
-      if (settlement.supplementalRequired)
-        await assertNoPendingCheckoutSupplementalReversal(
-          tx,
-          settlement.contractId,
-        );
-      const claimed = await tx.checkoutSettlement.updateMany({
-        where: { id, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
-        data: { status: 'CANCELLED' },
-      });
-      if (claimed.count !== 1)
-        throw new ConflictException('退租结算工单状态已变化，请刷新后重试');
+        if (settlement.supplementalRequired)
+          await assertNoPendingCheckoutSupplementalReversal(
+            tx,
+            settlement.contractId,
+          );
+        const claimed = await tx.checkoutSettlement.updateMany({
+          where: { id, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
+          data: { status: 'CANCELLED' },
+        });
+        if (claimed.count !== 1)
+          throw new ConflictException('退租结算工单状态已变化，请刷新后重试');
 
-      const contractRestored = await tx.contract.updateMany({
-        where: { id: settlement.contractId, status: 'PENDING_CHECKOUT' },
-        data: { status: settlement.originContractStatus },
-      });
-      if (contractRestored.count !== 1)
-        throw new ConflictException('合同状态已变化，请刷新后重试');
+        const contractRestored = await tx.contract.updateMany({
+          where: { id: settlement.contractId, status: 'PENDING_CHECKOUT' },
+          data: { status: settlement.originContractStatus },
+        });
+        if (contractRestored.count !== 1)
+          throw new ConflictException('合同状态已变化，请刷新后重试');
 
-      const roomRestored = await tx.room.updateMany({
-        where: {
-          id: settlement.contract.roomId,
-          roomStatus: 'PENDING_CHECKOUT',
-        },
-        data: {
-          roomStatus: restoreStatus,
-          statusChangedAt: new Date(),
-        },
-      });
-      if (roomRestored.count !== 1)
-        throw new ConflictException('房源状态已变化，请刷新后重试');
+        const roomRestored = await tx.room.updateMany({
+          where: {
+            id: settlement.contract.roomId,
+            roomStatus: 'PENDING_CHECKOUT',
+          },
+          data: {
+            roomStatus: restoreStatus,
+            statusChangedAt: new Date(),
+          },
+        });
+        if (roomRestored.count !== 1)
+          throw new ConflictException('房源状态已变化，请刷新后重试');
 
-      await tx.roomStatusHistory.create({
-        data: {
-          roomId: settlement.contract.roomId,
-          fromStatus: 'PENDING_CHECKOUT',
-          toStatus: restoreStatus,
-          changeReason: '取消退租结算',
-          businessType: 'CHECKOUT',
-          businessId: id,
-          changedBy: user.id,
-        },
-      });
+        await tx.roomStatusHistory.create({
+          data: {
+            roomId: settlement.contract.roomId,
+            fromStatus: 'PENDING_CHECKOUT',
+            toStatus: restoreStatus,
+            changeReason: '取消退租结算',
+            businessType: 'CHECKOUT',
+            businessId: id,
+            changedBy: user.id,
+          },
+        });
 
-      return tx.checkoutSettlement.findUnique({ where: { id } });
-    });
+        return tx.checkoutSettlement.findUnique({ where: { id } });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
   async returnToDraft(id: number, user: AuthUser) {
     void user;

@@ -116,11 +116,12 @@ describe('CheckoutService', () => {
       roomStatusHistory: { create: historyCreate },
     };
     mockRoomContractLocks(tx, 3, 7);
+    const transaction = jest.fn(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     const service = new CheckoutService({
       db: {
-        $transaction: jest.fn(
-          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-        ),
+        $transaction: transaction,
       },
     } as never);
 
@@ -169,6 +170,9 @@ describe('CheckoutService', () => {
       settlementCreate,
     );
     expectRoomBeforeTargetContractLock(tx.$queryRaw);
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   });
 
   it('lists only completed settlements whose contracts are ended', async () => {
@@ -370,11 +374,12 @@ describe('CheckoutService', () => {
       room: { updateMany: roomUpdateMany },
     };
     mockRoomContractLocks(tx, 3, 7);
+    const transaction = jest.fn(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     const service = new CheckoutService({
       db: {
-        $transaction: jest.fn(
-          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-        ),
+        $transaction: transaction,
       },
     } as never);
 
@@ -412,6 +417,9 @@ describe('CheckoutService', () => {
       settlementUpdateMany,
     );
     expectRoomBeforeTargetContractLock(tx.$queryRaw);
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   });
 
   it('rejects cancelling an approved settlement before restoring contract or room', async () => {
@@ -834,11 +842,12 @@ describe('CheckoutService', () => {
       roomStatusHistory: { create: jest.fn() },
     };
     mockRoomContractLocks(tx, 3, 7);
+    const transaction = jest.fn(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     const service = new CheckoutService({
       db: {
-        $transaction: jest.fn(
-          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-        ),
+        $transaction: transaction,
       },
     } as never);
 
@@ -865,6 +874,9 @@ describe('CheckoutService', () => {
       tx.checkoutSettlement.updateMany,
     );
     expectRoomBeforeTargetContractLock(tx.$queryRaw);
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   });
 
   it('allows final confirmation after a required supplemental receivable is fully collected', async () => {

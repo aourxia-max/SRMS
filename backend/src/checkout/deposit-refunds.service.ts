@@ -84,145 +84,154 @@ export class DepositRefundsService {
     });
   }
   async approve(id: number, user: AuthUser) {
-    return this.prisma.db.$transaction(async (tx) => {
-      const identity = await tx.depositRefund.findUniqueOrThrow({
-        where: { id },
-        select: { contractId: true },
-      });
-      await lockRoomAndTargetContract(tx, identity.contractId);
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM checkout_settlements WHERE id = (SELECT checkout_settlement_id FROM deposit_refunds WHERE id = ${id}) FOR UPDATE`,
-      );
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM deposit_refunds WHERE id = ${id} FOR UPDATE`,
-      );
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM deposit_refunds WHERE id = ${id}) ORDER BY id FOR UPDATE`,
-      );
-      const refund = await tx.depositRefund.findUniqueOrThrow({
-        where: { id },
-        include: {
-          files: true,
-          checkoutSettlement: {
-            include: { contract: { include: { room: true } } },
-          },
-        },
-      });
-      const settlement = refund.checkoutSettlement;
-      if (refund.approvalStatus !== 'PENDING')
-        throw new BadRequestException('当前不满足确认押金退款并结束合同的条件');
-      assertContractNotVoided(settlement.contract.status, '确认押金退款');
-      if (
-        settlement.status !== 'APPROVED' ||
-        settlement.contract.status !== 'PENDING_CHECKOUT' ||
-        !settlement.handoverDate ||
-        !this.isSupplementalCleared(settlement) ||
-        !new Prisma.Decimal(refund.refundAmount).equals(
-          new Prisma.Decimal(settlement.depositRefundableAmount).plus(
-            settlement.prepaymentRefundableAmount,
-          ),
-        ) ||
-        !refund.files.length
-      )
-        throw new BadRequestException('当前不满足确认押金退款并结束合同的条件');
-      const depositRefundableAmount = new Prisma.Decimal(
-        settlement.depositRefundableAmount,
-      );
-      const prepaymentRefundableAmount = new Prisma.Decimal(
-        settlement.prepaymentRefundableAmount,
-      );
-      const latestDeposit = await tx.depositTransaction.findFirst({
-        where: { contractId: refund.contractId },
-        orderBy: { id: 'desc' },
-      });
-      const latestPrepayment = await tx.prepaymentTransaction.findFirst({
-        where: { contractId: refund.contractId },
-        orderBy: { id: 'desc' },
-      });
-      if (
-        !new Prisma.Decimal(latestDeposit?.balanceAfter ?? 0).equals(
-          depositRefundableAmount,
-        ) ||
-        !new Prisma.Decimal(latestPrepayment?.balanceAfter ?? 0).equals(
-          prepaymentRefundableAmount,
-        )
-      )
-        throw new BadRequestException('当前资金余额与结算单锁定退款金额不一致');
-      if (settlement.supplementalRequired)
-        await assertNoPendingCheckoutSupplementalReversal(
-          tx,
-          settlement.contractId,
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const identity = await tx.depositRefund.findUniqueOrThrow({
+          where: { id },
+          select: { contractId: true },
+        });
+        await lockRoomAndTargetContract(tx, identity.contractId);
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM checkout_settlements WHERE id = (SELECT checkout_settlement_id FROM deposit_refunds WHERE id = ${id}) FOR UPDATE`,
         );
-      const claimedRefund = await tx.depositRefund.updateMany({
-        where: { id, approvalStatus: 'PENDING' },
-        data: {
-          approvalStatus: 'APPROVED',
-          approvedBy: user.id,
-          approvedAt: new Date(),
-        },
-      });
-      if (claimedRefund.count !== 1)
-        throw new ConflictException('退款申请已被处理，请刷新后重试');
-      const claimedSettlement = await tx.checkoutSettlement.updateMany({
-        where: { id: settlement.id, status: 'APPROVED' },
-        data: { status: 'COMPLETED' },
-      });
-      if (claimedSettlement.count !== 1)
-        throw new ConflictException('结算单已被最终确认，请刷新后重试');
-      if (depositRefundableAmount.gt(0)) {
-        await tx.depositTransaction.create({
-          data: {
-            contractId: refund.contractId,
-            transactionNo: `YJTK${Date.now()}${refund.id}`,
-            transactionType: 'REFUND',
-            amount: depositRefundableAmount,
-            balanceAfter: 0,
-            checkoutSettlementId: settlement.id,
-            depositRefundId: refund.id,
-            reason: '退租结算押金退款',
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM deposit_refunds WHERE id = ${id} FOR UPDATE`,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = (SELECT contract_id FROM deposit_refunds WHERE id = ${id}) ORDER BY id FOR UPDATE`,
+        );
+        const refund = await tx.depositRefund.findUniqueOrThrow({
+          where: { id },
+          include: {
+            files: true,
+            checkoutSettlement: {
+              include: { contract: { include: { room: true } } },
+            },
           },
         });
-      }
-      if (prepaymentRefundableAmount.gt(0)) {
-        await tx.prepaymentTransaction.create({
+        const settlement = refund.checkoutSettlement;
+        if (refund.approvalStatus !== 'PENDING')
+          throw new BadRequestException(
+            '当前不满足确认押金退款并结束合同的条件',
+          );
+        assertContractNotVoided(settlement.contract.status, '确认押金退款');
+        if (
+          settlement.status !== 'APPROVED' ||
+          settlement.contract.status !== 'PENDING_CHECKOUT' ||
+          !settlement.handoverDate ||
+          !this.isSupplementalCleared(settlement) ||
+          !new Prisma.Decimal(refund.refundAmount).equals(
+            new Prisma.Decimal(settlement.depositRefundableAmount).plus(
+              settlement.prepaymentRefundableAmount,
+            ),
+          ) ||
+          !refund.files.length
+        )
+          throw new BadRequestException(
+            '当前不满足确认押金退款并结束合同的条件',
+          );
+        const depositRefundableAmount = new Prisma.Decimal(
+          settlement.depositRefundableAmount,
+        );
+        const prepaymentRefundableAmount = new Prisma.Decimal(
+          settlement.prepaymentRefundableAmount,
+        );
+        const latestDeposit = await tx.depositTransaction.findFirst({
+          where: { contractId: refund.contractId },
+          orderBy: { id: 'desc' },
+        });
+        const latestPrepayment = await tx.prepaymentTransaction.findFirst({
+          where: { contractId: refund.contractId },
+          orderBy: { id: 'desc' },
+        });
+        if (
+          !new Prisma.Decimal(latestDeposit?.balanceAfter ?? 0).equals(
+            depositRefundableAmount,
+          ) ||
+          !new Prisma.Decimal(latestPrepayment?.balanceAfter ?? 0).equals(
+            prepaymentRefundableAmount,
+          )
+        )
+          throw new BadRequestException(
+            '当前资金余额与结算单锁定退款金额不一致',
+          );
+        if (settlement.supplementalRequired)
+          await assertNoPendingCheckoutSupplementalReversal(
+            tx,
+            settlement.contractId,
+          );
+        const claimedRefund = await tx.depositRefund.updateMany({
+          where: { id, approvalStatus: 'PENDING' },
           data: {
-            contractId: refund.contractId,
-            transactionNo: `YSKTH${Date.now()}${refund.id}`,
-            transactionType: 'REFUND',
-            amount: prepaymentRefundableAmount,
-            balanceAfter: 0,
-            reason: '退租结算预收款退款',
+            approvalStatus: 'APPROVED',
+            approvedBy: user.id,
+            approvedAt: new Date(),
           },
         });
-      }
-      await tx.fileAsset.updateMany({
-        where: { id: { in: refund.files.map((file) => file.fileAssetId) } },
-        data: { lockedAt: new Date() },
-      });
-      await tx.contract.update({
-        where: { id: refund.contractId },
-        data: { status: 'ENDED' },
-      });
-      await tx.room.update({
-        where: { id: settlement.contract.roomId },
-        data: {
-          roomStatus: settlement.targetRoomStatus,
-          statusChangedAt: new Date(),
-        },
-      });
-      await tx.roomStatusHistory.create({
-        data: {
-          roomId: settlement.contract.roomId,
-          fromStatus: settlement.contract.room.roomStatus,
-          toStatus: settlement.targetRoomStatus,
-          changeReason: '确认押金退款并结束合同',
-          businessType: 'DEPOSIT_REFUND',
-          businessId: refund.id,
-          changedBy: user.id,
-        },
-      });
-      return refund;
-    });
+        if (claimedRefund.count !== 1)
+          throw new ConflictException('退款申请已被处理，请刷新后重试');
+        const claimedSettlement = await tx.checkoutSettlement.updateMany({
+          where: { id: settlement.id, status: 'APPROVED' },
+          data: { status: 'COMPLETED' },
+        });
+        if (claimedSettlement.count !== 1)
+          throw new ConflictException('结算单已被最终确认，请刷新后重试');
+        if (depositRefundableAmount.gt(0)) {
+          await tx.depositTransaction.create({
+            data: {
+              contractId: refund.contractId,
+              transactionNo: `YJTK${Date.now()}${refund.id}`,
+              transactionType: 'REFUND',
+              amount: depositRefundableAmount,
+              balanceAfter: 0,
+              checkoutSettlementId: settlement.id,
+              depositRefundId: refund.id,
+              reason: '退租结算押金退款',
+            },
+          });
+        }
+        if (prepaymentRefundableAmount.gt(0)) {
+          await tx.prepaymentTransaction.create({
+            data: {
+              contractId: refund.contractId,
+              transactionNo: `YSKTH${Date.now()}${refund.id}`,
+              transactionType: 'REFUND',
+              amount: prepaymentRefundableAmount,
+              balanceAfter: 0,
+              reason: '退租结算预收款退款',
+            },
+          });
+        }
+        await tx.fileAsset.updateMany({
+          where: { id: { in: refund.files.map((file) => file.fileAssetId) } },
+          data: { lockedAt: new Date() },
+        });
+        await tx.contract.update({
+          where: { id: refund.contractId },
+          data: { status: 'ENDED' },
+        });
+        await tx.room.update({
+          where: { id: settlement.contract.roomId },
+          data: {
+            roomStatus: settlement.targetRoomStatus,
+            statusChangedAt: new Date(),
+          },
+        });
+        await tx.roomStatusHistory.create({
+          data: {
+            roomId: settlement.contract.roomId,
+            fromStatus: settlement.contract.room.roomStatus,
+            toStatus: settlement.targetRoomStatus,
+            changeReason: '确认押金退款并结束合同',
+            businessType: 'DEPOSIT_REFUND',
+            businessId: refund.id,
+            changedBy: user.id,
+          },
+        });
+        return refund;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
   private isSupplementalCleared(settlement: {
     finalReceivable: Prisma.Decimal.Value;

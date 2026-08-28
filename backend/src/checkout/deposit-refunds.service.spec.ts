@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { DepositRefundsService } from './deposit-refunds.service';
 
 function transactional<T extends object>(tx: T) {
@@ -250,11 +251,12 @@ describe('DepositRefundsService', () => {
       roomStatusHistory: { create: jest.fn() },
     };
     mockRoomContractLocks(tx, 3, 7);
+    const transaction = jest.fn(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     const service = new DepositRefundsService({
       db: {
-        $transaction: jest.fn(
-          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-        ),
+        $transaction: transaction,
       },
     } as never);
 
@@ -284,6 +286,9 @@ describe('DepositRefundsService', () => {
       tx.depositRefund.updateMany,
     );
     expectRoomBeforeTargetContractLock(tx.$queryRaw);
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   });
 
   it('rejects duplicate refund approval before creating any ledger transaction', async () => {

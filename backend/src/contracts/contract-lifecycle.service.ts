@@ -1,5 +1,6 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CONTRACT_TIME_ZONE,
@@ -44,61 +45,67 @@ export class ContractLifecycleService implements OnApplicationBootstrap {
     contract: { id: number; contractNo: string; roomId: number },
     now: Date,
   ) {
-    return this.prisma.db.$transaction(async (tx) => {
-      const locked = await lockRoomAndTargetContract(tx, contract.id);
-      const changed = await tx.contract.updateMany({
-        where: { id: contract.id, status: 'PENDING_START' },
-        data: { status: 'ACTIVE', activatedAt: now },
-      });
-      if (changed.count !== 1) return false;
-      const roomChanged = await tx.room.updateMany({
-        where: { id: locked.roomId, roomStatus: 'PENDING_MOVE_IN' },
-        data: { roomStatus: 'RENTED', statusChangedAt: now },
-      });
-      if (roomChanged.count === 1) {
-        await tx.roomStatusHistory.create({
-          data: {
-            roomId: locked.roomId,
-            fromStatus: 'PENDING_MOVE_IN',
-            toStatus: 'RENTED',
-            changeReason: `合同自动生效：${contract.contractNo}`,
-            businessType: 'CONTRACT',
-            businessId: contract.id,
-          },
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const locked = await lockRoomAndTargetContract(tx, contract.id);
+        const changed = await tx.contract.updateMany({
+          where: { id: contract.id, status: 'PENDING_START' },
+          data: { status: 'ACTIVE', activatedAt: now },
         });
-      }
-      return true;
-    });
+        if (changed.count !== 1) return false;
+        const roomChanged = await tx.room.updateMany({
+          where: { id: locked.roomId, roomStatus: 'PENDING_MOVE_IN' },
+          data: { roomStatus: 'RENTED', statusChangedAt: now },
+        });
+        if (roomChanged.count === 1) {
+          await tx.roomStatusHistory.create({
+            data: {
+              roomId: locked.roomId,
+              fromStatus: 'PENDING_MOVE_IN',
+              toStatus: 'RENTED',
+              changeReason: `合同自动生效：${contract.contractNo}`,
+              businessType: 'CONTRACT',
+              businessId: contract.id,
+            },
+          });
+        }
+        return true;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
 
   private async beginCheckout(
     contract: { id: number; contractNo: string; roomId: number },
     now: Date,
   ) {
-    return this.prisma.db.$transaction(async (tx) => {
-      const locked = await lockRoomAndTargetContract(tx, contract.id);
-      const changed = await tx.contract.updateMany({
-        where: { id: contract.id, status: 'ACTIVE' },
-        data: { status: 'PENDING_CHECKOUT' },
-      });
-      if (changed.count !== 1) return false;
-      const roomChanged = await tx.room.updateMany({
-        where: { id: locked.roomId, roomStatus: 'RENTED' },
-        data: { roomStatus: 'PENDING_CHECKOUT', statusChangedAt: now },
-      });
-      if (roomChanged.count === 1) {
-        await tx.roomStatusHistory.create({
-          data: {
-            roomId: locked.roomId,
-            fromStatus: 'RENTED',
-            toStatus: 'PENDING_CHECKOUT',
-            changeReason: `合同到期待退房：${contract.contractNo}`,
-            businessType: 'CONTRACT',
-            businessId: contract.id,
-          },
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const locked = await lockRoomAndTargetContract(tx, contract.id);
+        const changed = await tx.contract.updateMany({
+          where: { id: contract.id, status: 'ACTIVE' },
+          data: { status: 'PENDING_CHECKOUT' },
         });
-      }
-      return true;
-    });
+        if (changed.count !== 1) return false;
+        const roomChanged = await tx.room.updateMany({
+          where: { id: locked.roomId, roomStatus: 'RENTED' },
+          data: { roomStatus: 'PENDING_CHECKOUT', statusChangedAt: now },
+        });
+        if (roomChanged.count === 1) {
+          await tx.roomStatusHistory.create({
+            data: {
+              roomId: locked.roomId,
+              fromStatus: 'RENTED',
+              toStatus: 'PENDING_CHECKOUT',
+              changeReason: `合同到期待退房：${contract.contractNo}`,
+              businessType: 'CONTRACT',
+              businessId: contract.id,
+            },
+          });
+        }
+        return true;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
   }
 }

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { ContractLifecycleService } from './contract-lifecycle.service';
 
 function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
@@ -71,16 +72,18 @@ describe('ContractLifecycleService', () => {
       .fn()
       .mockResolvedValueOnce(input.pending ?? [])
       .mockResolvedValueOnce(input.active ?? []);
+    const transaction = jest.fn(
+      (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+    );
     const prisma = {
       db: {
         contract: { findMany },
-        $transaction: jest.fn(
-          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
-        ),
+        $transaction: transaction,
       },
     };
     return {
       service: new ContractLifecycleService(prisma as never),
+      transaction,
       queryRaw: tx.$queryRaw,
       findMany,
       contractUpdateMany,
@@ -123,6 +126,9 @@ describe('ContractLifecycleService', () => {
       }),
     );
     expectRoomBeforeTargetContractLock(test.queryRaw);
+    expect(test.transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   });
 
   it('moves contracts ending today to pending checkout without touching bills', async () => {
@@ -147,6 +153,9 @@ describe('ContractLifecycleService', () => {
       }),
     );
     expectRoomBeforeTargetContractLock(test.queryRaw);
+    expect(test.transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   });
 
   it('does not add history when a concurrent run already changed the contract', async () => {
