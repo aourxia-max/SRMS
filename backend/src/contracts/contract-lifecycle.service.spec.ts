@@ -1,5 +1,23 @@
 import { ContractLifecycleService } from './contract-lifecycle.service';
 
+function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
+  const queries = queryRaw.mock.calls.map(([query], index) => ({
+    statement:
+      (query as { strings?: readonly string[] }).strings?.join('?') ?? '',
+    callOrder: queryRaw.mock.invocationCallOrder[index],
+  }));
+  const roomLock = queries.find(
+    ({ statement }) =>
+      statement.includes('FROM rooms') && statement.includes('FOR UPDATE'),
+  );
+  const contractLock = queries.find(
+    ({ statement }) =>
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+  );
+
+  expect(roomLock?.callOrder).toBeLessThan(contractLock?.callOrder ?? 0);
+}
+
 describe('ContractLifecycleService', () => {
   const now = new Date('2026-07-27T00:05:00.000Z');
 
@@ -22,8 +40,30 @@ describe('ContractLifecycleService', () => {
       .fn()
       .mockResolvedValue({ count: input.roomChanged ?? 0 });
     const roomStatusHistoryCreate = jest.fn().mockResolvedValue({});
+    const contracts = [
+      ...(input.pending ?? []),
+      ...(input.active ?? []),
+    ] as Array<{ id: number; roomId: number }>;
+    const contractFindUnique = jest.fn(({ where }: { where: { id: number } }) =>
+      Promise.resolve(
+        contracts.find((contract) => contract.id === where.id) ?? null,
+      ),
+    );
+    const queryRaw = jest.fn(
+      (query: { strings?: readonly string[]; values?: unknown[] }) => {
+        const statement = query.strings?.join('?') ?? '';
+        const requestedId = Number(query.values?.[0]);
+        if (statement.includes('FROM rooms')) return [{ id: requestedId }];
+        const contract = contracts.find(({ id }) => id === requestedId);
+        return contract ? [{ id: contract.id, roomId: contract.roomId }] : [];
+      },
+    );
     const tx = {
-      contract: { updateMany: contractUpdateMany },
+      $queryRaw: queryRaw,
+      contract: {
+        findUnique: contractFindUnique,
+        updateMany: contractUpdateMany,
+      },
       room: { updateMany: roomUpdateMany },
       roomStatusHistory: { create: roomStatusHistoryCreate },
     };
@@ -41,6 +81,7 @@ describe('ContractLifecycleService', () => {
     };
     return {
       service: new ContractLifecycleService(prisma as never),
+      queryRaw: tx.$queryRaw,
       findMany,
       contractUpdateMany,
       roomUpdateMany,
@@ -81,6 +122,7 @@ describe('ContractLifecycleService', () => {
         }),
       }),
     );
+    expectRoomBeforeTargetContractLock(test.queryRaw);
   });
 
   it('moves contracts ending today to pending checkout without touching bills', async () => {
@@ -104,6 +146,7 @@ describe('ContractLifecycleService', () => {
         data: { roomStatus: 'PENDING_CHECKOUT', statusChangedAt: now },
       }),
     );
+    expectRoomBeforeTargetContractLock(test.queryRaw);
   });
 
   it('does not add history when a concurrent run already changed the contract', async () => {

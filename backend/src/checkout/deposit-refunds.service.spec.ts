@@ -25,10 +25,17 @@ function expectContractMutationOrder(
   firstWrite: jest.Mock,
   reloadCallIndex = -1,
 ) {
-  const sql = contractLock.mock.calls[0]?.[0] as
+  const lockIndex = contractLock.mock.calls.findIndex(([query]) => {
+    const statement =
+      (query as { strings?: readonly string[] }).strings?.join('?') ?? '';
+    return (
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE')
+    );
+  });
+  const sql = contractLock.mock.calls[lockIndex]?.[0] as
     { strings?: readonly string[] } | undefined;
   const statement = sql?.strings?.join('?') ?? '';
-  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const lockOrder = contractLock.mock.invocationCallOrder[lockIndex];
   const reloadOrder =
     reloadCallIndex === -1
       ? reload.mock.invocationCallOrder.at(-1)
@@ -45,6 +52,41 @@ function expectContractMutationOrder(
     locksContractForUpdate: true,
     lockBeforeReload: true,
     reloadBeforeFirstWrite: true,
+  });
+}
+function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
+  const queries = queryRaw.mock.calls.map(([query], index) => ({
+    statement:
+      (query as { strings?: readonly string[] }).strings?.join('?') ?? '',
+    callOrder: queryRaw.mock.invocationCallOrder[index],
+  }));
+  const roomLock = queries.find(
+    ({ statement }) =>
+      statement.includes('FROM rooms') && statement.includes('FOR UPDATE'),
+  );
+  const contractLock = queries.find(
+    ({ statement }) =>
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+  );
+
+  expect(roomLock?.callOrder).toBeLessThan(contractLock?.callOrder ?? 0);
+}
+function mockRoomContractLocks(
+  tx: { $queryRaw: jest.Mock; contract?: Record<string, unknown> },
+  contractId: number,
+  roomId: number,
+) {
+  tx.contract ??= {};
+  tx.contract.findUnique = jest
+    .fn()
+    .mockResolvedValue({ id: contractId, roomId });
+  tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
+    const statement = query.strings?.join('?') ?? '';
+    if (statement.includes('FROM rooms')) return [{ id: roomId }];
+    if (statement.includes('FROM contracts')) {
+      return [{ id: contractId, roomId }];
+    }
+    return [{ id: 1 }];
   });
 }
 
@@ -200,10 +242,14 @@ describe('DepositRefundsService', () => {
         update: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      contract: { update: jest.fn() },
+      contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        update: jest.fn(),
+      },
       room: { update: jest.fn() },
       roomStatusHistory: { create: jest.fn() },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new DepositRefundsService({
       db: {
         $transaction: jest.fn(
@@ -222,7 +268,7 @@ describe('DepositRefundsService', () => {
     expect(
       depositTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('800');
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(5);
     expect(prepaymentTransactionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ transactionType: 'REFUND' }),
@@ -237,6 +283,7 @@ describe('DepositRefundsService', () => {
       tx.depositRefund.findUniqueOrThrow,
       tx.depositRefund.updateMany,
     );
+    expectRoomBeforeTargetContractLock(tx.$queryRaw);
   });
 
   it('rejects duplicate refund approval before creating any ledger transaction', async () => {
@@ -280,6 +327,7 @@ describe('DepositRefundsService', () => {
       room: { update: jest.fn() },
       roomStatusHistory: { create: jest.fn() },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new DepositRefundsService({
       db: {
         $transaction: jest.fn(
@@ -362,6 +410,7 @@ describe('DepositRefundsService', () => {
         updateMany: approveUpdate,
       },
     };
+    mockRoomContractLocks(approveTx, 3, 7);
     const approveService = new DepositRefundsService({
       db: {
         $transaction: jest.fn(
@@ -379,8 +428,6 @@ describe('DepositRefundsService', () => {
       }),
     ).rejects.toThrow('已作废合同不能确认押金退款');
     expect(approveUpdate).not.toHaveBeenCalled();
-    expect(approveTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      approveTx.depositRefund.findUniqueOrThrow.mock.invocationCallOrder[0],
-    );
+    expectRoomBeforeTargetContractLock(approveTx.$queryRaw);
   });
 });

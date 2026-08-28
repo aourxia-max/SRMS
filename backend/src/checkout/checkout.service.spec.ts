@@ -25,10 +25,17 @@ function expectContractMutationOrder(
   reload: jest.Mock,
   firstWrite: jest.Mock,
 ) {
-  const sql = contractLock.mock.calls[0]?.[0] as
+  const lockIndex = contractLock.mock.calls.findIndex(([query]) => {
+    const statement =
+      (query as { strings?: readonly string[] }).strings?.join('?') ?? '';
+    return (
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE')
+    );
+  });
+  const sql = contractLock.mock.calls[lockIndex]?.[0] as
     { strings?: readonly string[] } | undefined;
   const statement = sql?.strings?.join('?') ?? '';
-  const lockOrder = contractLock.mock.invocationCallOrder[0];
+  const lockOrder = contractLock.mock.invocationCallOrder[lockIndex];
   const reloadOrder = reload.mock.invocationCallOrder.at(-1);
   const writeOrder = firstWrite.mock.invocationCallOrder[0];
   expect({
@@ -45,6 +52,42 @@ function expectContractMutationOrder(
   });
 }
 
+function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
+  const queries = queryRaw.mock.calls.map(([query], index) => ({
+    statement:
+      (query as { strings?: readonly string[] }).strings?.join('?') ?? '',
+    callOrder: queryRaw.mock.invocationCallOrder[index],
+  }));
+  const roomLock = queries.find(
+    ({ statement }) =>
+      statement.includes('FROM rooms') && statement.includes('FOR UPDATE'),
+  );
+  const contractLock = queries.find(
+    ({ statement }) =>
+      statement.includes('FROM contracts') && statement.includes('FOR UPDATE'),
+  );
+
+  expect(roomLock?.callOrder).toBeLessThan(contractLock?.callOrder ?? 0);
+}
+function mockRoomContractLocks(
+  tx: { $queryRaw: jest.Mock; contract?: Record<string, unknown> },
+  contractId: number,
+  roomId: number,
+) {
+  tx.contract ??= {};
+  tx.contract.findUnique = jest
+    .fn()
+    .mockResolvedValue({ id: contractId, roomId });
+  tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
+    const statement = query.strings?.join('?') ?? '';
+    if (statement.includes('FROM rooms')) return [{ id: roomId }];
+    if (statement.includes('FROM contracts')) {
+      return [{ id: contractId, roomId }];
+    }
+    return [{ id: 1 }];
+  });
+}
+
 describe('CheckoutService', () => {
   const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
@@ -56,6 +99,7 @@ describe('CheckoutService', () => {
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 3,
           status: 'PENDING_START',
@@ -71,6 +115,7 @@ describe('CheckoutService', () => {
       room: { update: roomUpdate },
       roomStatusHistory: { create: historyCreate },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -123,6 +168,7 @@ describe('CheckoutService', () => {
       tx.contract.findUniqueOrThrow,
       settlementCreate,
     );
+    expectRoomBeforeTargetContractLock(tx.$queryRaw);
   });
 
   it('lists only completed settlements whose contracts are ended', async () => {
@@ -317,9 +363,13 @@ describe('CheckoutService', () => {
         findFirst: jest.fn().mockResolvedValue({ fromStatus: 'RENTED' }),
         create: historyCreate,
       },
-      contract: { updateMany: contractUpdateMany },
+      contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        updateMany: contractUpdateMany,
+      },
       room: { updateMany: roomUpdateMany },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -361,6 +411,7 @@ describe('CheckoutService', () => {
       tx.checkoutSettlement.findUniqueOrThrow,
       settlementUpdateMany,
     );
+    expectRoomBeforeTargetContractLock(tx.$queryRaw);
   });
 
   it('rejects cancelling an approved settlement before restoring contract or room', async () => {
@@ -371,6 +422,7 @@ describe('CheckoutService', () => {
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
+          contractId: 3,
           status: 'APPROVED',
           contract: {
             status: 'PENDING_CHECKOUT',
@@ -381,6 +433,7 @@ describe('CheckoutService', () => {
       contract: { updateMany: contractUpdateMany },
       room: { updateMany: roomUpdateMany },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -773,12 +826,14 @@ describe('CheckoutService', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
         update: contractUpdate,
       },
       room: { update: roomUpdate },
       roomStatusHistory: { create: jest.fn() },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -809,6 +864,7 @@ describe('CheckoutService', () => {
       tx.checkoutSettlement.findUniqueOrThrow,
       tx.checkoutSettlement.updateMany,
     );
+    expectRoomBeforeTargetContractLock(tx.$queryRaw);
   });
 
   it('allows final confirmation after a required supplemental receivable is fully collected', async () => {
@@ -839,6 +895,7 @@ describe('CheckoutService', () => {
       room: { update: jest.fn() },
       roomStatusHistory: { create: jest.fn() },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -850,10 +907,6 @@ describe('CheckoutService', () => {
     await expect(
       service.completeZeroRefund(1, { ...user, role: 'SUPER_ADMIN' }),
     ).resolves.toMatchObject({ status: 'COMPLETED' });
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
-    expect(tx.$queryRaw.mock.invocationCallOrder[2]).toBeLessThan(
-      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
-    );
   });
   it('blocks final confirmation while a supplemental refund or void is pending', async () => {
     const tx = {
@@ -875,6 +928,7 @@ describe('CheckoutService', () => {
       },
       payment: { findFirst: jest.fn().mockResolvedValue({ id: 81 }) },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -895,6 +949,7 @@ describe('CheckoutService', () => {
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 1,
+          contractId: 3,
           status: 'APPROVED',
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '500.00',
@@ -903,6 +958,7 @@ describe('CheckoutService', () => {
         }),
       },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -984,6 +1040,7 @@ describe('CheckoutService', () => {
       room: { update: jest.fn() },
       roomStatusHistory: { create: jest.fn() },
     };
+    mockRoomContractLocks(tx, 3, 7);
     const service = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -1067,6 +1124,7 @@ describe('CheckoutService', () => {
         create: initiateCreate,
       },
     };
+    mockRoomContractLocks(initiateTx, 3, 7);
     const initiateService = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -1187,6 +1245,7 @@ describe('CheckoutService', () => {
         updateMany: completeUpdate,
       },
     };
+    mockRoomContractLocks(completeTx, 3, 7);
     const completeService = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -1199,10 +1258,7 @@ describe('CheckoutService', () => {
       '已作废合同不能完成退租结算',
     );
     expect(completeUpdate).not.toHaveBeenCalled();
-    expect(completeTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      completeTx.checkoutSettlement.findUniqueOrThrow.mock
-        .invocationCallOrder[0],
-    );
+    expectRoomBeforeTargetContractLock(completeTx.$queryRaw);
 
     const rejectUpdate = jest.fn();
     const rejectHarness = transactional({
@@ -1246,6 +1302,7 @@ describe('CheckoutService', () => {
         updateMany: cancelUpdate,
       },
     };
+    mockRoomContractLocks(cancelTx, 3, 7);
     const cancelService = new CheckoutService({
       db: {
         $transaction: jest.fn(
@@ -1258,9 +1315,7 @@ describe('CheckoutService', () => {
       '已作废合同不能取消退租结算',
     );
     expect(cancelUpdate).not.toHaveBeenCalled();
-    expect(cancelTx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      cancelTx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
-    );
+    expectRoomBeforeTargetContractLock(cancelTx.$queryRaw);
 
     const draftUpdate = jest.fn();
     const draftHarness = transactional({

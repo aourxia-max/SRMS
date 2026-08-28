@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { SubmitCheckoutSettlementDto } from './dto/submit-checkout-settlement.dto';
+import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { assertContractNotVoided } from '../contracts/contract-operability';
 
 @Injectable()
@@ -327,12 +328,7 @@ export class CheckoutService {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
     return this.prisma.db.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM contracts WHERE id = ${contractId} FOR UPDATE`,
-      );
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT room_id FROM contracts WHERE id = ${contractId}) FOR UPDATE`,
-      );
+      await lockRoomAndTargetContract(tx, contractId);
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
       );
@@ -682,9 +678,11 @@ export class CheckoutService {
   }
   async completeZeroRefund(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
-      );
+      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        select: { contractId: true },
+      });
+      await lockRoomAndTargetContract(tx, identity.contractId);
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
       );
@@ -755,12 +753,11 @@ export class CheckoutService {
   }
   async cancel(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
-      );
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM rooms WHERE id = (SELECT c.room_id FROM contracts c JOIN checkout_settlements cs ON cs.contract_id = c.id WHERE cs.id = ${id}) FOR UPDATE`,
-      );
+      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
+        where: { id },
+        select: { contractId: true },
+      });
+      await lockRoomAndTargetContract(tx, identity.contractId);
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${id} FOR UPDATE`,
       );

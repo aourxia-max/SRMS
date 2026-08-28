@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { SubmitDepositRefundDto } from './dto/submit-deposit-refund.dto';
 import { assertContractNotVoided } from '../contracts/contract-operability';
+import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 @Injectable()
 export class DepositRefundsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -84,9 +85,11 @@ export class DepositRefundsService {
   }
   async approve(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM deposit_refunds WHERE id = ${id}) FOR UPDATE`,
-      );
+      const identity = await tx.depositRefund.findUniqueOrThrow({
+        where: { id },
+        select: { contractId: true },
+      });
+      await lockRoomAndTargetContract(tx, identity.contractId);
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM checkout_settlements WHERE id = (SELECT checkout_settlement_id FROM deposit_refunds WHERE id = ${id}) FOR UPDATE`,
       );

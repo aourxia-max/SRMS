@@ -5,6 +5,7 @@ import {
   CONTRACT_TIME_ZONE,
   contractBusinessDay,
 } from './contract-business-day';
+import { lockRoomAndTargetContract } from './contract-room-locks';
 
 type LifecycleResult = { activated: number; pendingCheckout: number };
 
@@ -44,19 +45,20 @@ export class ContractLifecycleService implements OnApplicationBootstrap {
     now: Date,
   ) {
     return this.prisma.db.$transaction(async (tx) => {
+      const locked = await lockRoomAndTargetContract(tx, contract.id);
       const changed = await tx.contract.updateMany({
         where: { id: contract.id, status: 'PENDING_START' },
         data: { status: 'ACTIVE', activatedAt: now },
       });
       if (changed.count !== 1) return false;
       const roomChanged = await tx.room.updateMany({
-        where: { id: contract.roomId, roomStatus: 'PENDING_MOVE_IN' },
+        where: { id: locked.roomId, roomStatus: 'PENDING_MOVE_IN' },
         data: { roomStatus: 'RENTED', statusChangedAt: now },
       });
       if (roomChanged.count === 1) {
         await tx.roomStatusHistory.create({
           data: {
-            roomId: contract.roomId,
+            roomId: locked.roomId,
             fromStatus: 'PENDING_MOVE_IN',
             toStatus: 'RENTED',
             changeReason: `合同自动生效：${contract.contractNo}`,
@@ -74,19 +76,20 @@ export class ContractLifecycleService implements OnApplicationBootstrap {
     now: Date,
   ) {
     return this.prisma.db.$transaction(async (tx) => {
+      const locked = await lockRoomAndTargetContract(tx, contract.id);
       const changed = await tx.contract.updateMany({
         where: { id: contract.id, status: 'ACTIVE' },
         data: { status: 'PENDING_CHECKOUT' },
       });
       if (changed.count !== 1) return false;
       const roomChanged = await tx.room.updateMany({
-        where: { id: contract.roomId, roomStatus: 'RENTED' },
+        where: { id: locked.roomId, roomStatus: 'RENTED' },
         data: { roomStatus: 'PENDING_CHECKOUT', statusChangedAt: now },
       });
       if (roomChanged.count === 1) {
         await tx.roomStatusHistory.create({
           data: {
-            roomId: contract.roomId,
+            roomId: locked.roomId,
             fromStatus: 'RENTED',
             toStatus: 'PENDING_CHECKOUT',
             changeReason: `合同到期待退房：${contract.contractNo}`,
