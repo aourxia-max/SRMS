@@ -19,6 +19,7 @@ describe('new contract initial deposit receipt', () => {
       contractNo: 'HT202608230042 | 1栋101 | 张三',
     };
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       room: {
         findFirstOrThrow: jest.fn().mockResolvedValue({
           id: 1,
@@ -83,6 +84,20 @@ describe('new contract initial deposit receipt', () => {
       },
       user,
     );
+
+    const roomLockSql =
+      (
+        tx.$queryRaw.mock.calls[0]?.[0] as
+          { strings?: readonly string[] } | undefined
+      )?.strings?.join('?') ?? '';
+    expect(roomLockSql).toContain('FROM rooms');
+    expect(roomLockSql).toContain('FOR UPDATE');
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.room.findFirstOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(prisma.db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
 
     expect(payments).toEqual([
       expect.objectContaining({

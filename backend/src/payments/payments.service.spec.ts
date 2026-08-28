@@ -653,6 +653,9 @@ describe('PaymentsService payment views', () => {
     const service = new PaymentsService({
       db: {
         payment: { findUnique: jest.fn().mockResolvedValue(payment) },
+        contractVoidReversal: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
         user: {
           findUnique: jest.fn().mockResolvedValue({
             id: 3,
@@ -690,6 +693,9 @@ describe('PaymentsService payment views', () => {
     const service = new PaymentsService({
       db: {
         payment: { findUnique: jest.fn().mockResolvedValue(payment) },
+        contractVoidReversal: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
         user: { findUnique: jest.fn().mockResolvedValue(null) },
         operationLog: { findMany: jest.fn().mockResolvedValue([]) },
       },
@@ -705,6 +711,64 @@ describe('PaymentsService payment views', () => {
       name: '张*',
       phone: '138****8000',
     });
+  });
+
+  it.each(['CONFIRMED', 'FULLY_REFUNDED'])(
+    'marks a contract-corrected %s payment in both detail and receipt projections',
+    async (status) => {
+      const findFirst = jest.fn().mockResolvedValue({ id: 901 });
+      const service = new PaymentsService({
+        db: {
+          payment: {
+            findUnique: jest.fn().mockResolvedValue({ ...payment, status }),
+          },
+          contractVoidReversal: { findFirst },
+          user: { findUnique: jest.fn().mockResolvedValue(null) },
+          operationLog: { findMany: jest.fn().mockResolvedValue([]) },
+        },
+      } as never);
+
+      const result = await service.detail(81, admin);
+      const receipt = await service.receipt(81, admin);
+
+      expect(result.correctionProvenance).toEqual({
+        source: 'CONTRACT_VOID',
+        displayText: '\u56e0\u5408\u540c\u7ea0\u9519\u5df2\u51b2\u9500',
+      });
+      expect(result.receipt.correctionProvenance).toEqual(
+        result.correctionProvenance,
+      );
+      expect(receipt.correctionProvenance).toEqual(result.correctionProvenance);
+      expect(findFirst).toHaveBeenCalledWith({
+        where: {
+          originalEntityType: 'Payment',
+          originalEntityId: 81,
+        },
+        select: { id: true },
+      });
+    },
+  );
+
+  it('does not mark an ordinary fully refunded payment as contract-corrected', async () => {
+    const service = new PaymentsService({
+      db: {
+        payment: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ ...payment, status: 'FULLY_REFUNDED' }),
+        },
+        contractVoidReversal: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        user: { findUnique: jest.fn().mockResolvedValue(null) },
+        operationLog: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const result = await service.detail(81, admin);
+
+    expect(result.correctionProvenance).toBeNull();
+    expect(result.receipt.correctionProvenance).toBeNull();
   });
 
   it('translates list filters to contract, room, tenant, receipt and date conditions', async () => {

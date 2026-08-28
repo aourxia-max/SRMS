@@ -161,4 +161,63 @@ describe('PaymentDetailView pagination', () => {
     expect(wrapper.text()).toContain('系统自动入账')
     expect(wrapper.text()).not.toContain('SYSTEM_AUTO')
   })
+
+  it('keeps the contract-correction marker visible in the on-screen and printable receipt', async () => {
+    const print = vi.fn()
+    Object.defineProperty(window, 'print', { configurable: true, value: print })
+
+    mocks.list.mockReset()
+    mocks.detail.mockReset()
+    mocks.list.mockResolvedValue({
+      items: [{ ...row(81), status: 'FULLY_REFUNDED' }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    })
+    mocks.detail.mockResolvedValue({
+      ...detail,
+      status: 'FULLY_REFUNDED',
+      correctionProvenance: {
+        source: 'CONTRACT_VOID',
+        displayText: '\u56e0\u5408\u540c\u7ea0\u9519\u5df2\u51b2\u9500',
+      },
+    })
+
+    try {
+      const wrapper = await mountView()
+      const marker = wrapper.get('[data-testid="contract-correction-marker"]')
+
+      expect(marker.isVisible()).toBe(true)
+      expect(marker.text()).toBe('\u56e0\u5408\u540c\u7ea0\u9519\u5df2\u51b2\u9500')
+      expect(marker.element.closest('.printable-receipt')).not.toBeNull()
+
+      const printButton = wrapper.findAll('button')
+        .find((button) => button.text() === '\u6253\u5370\u7968\u636e')
+      await printButton!.trigger('click')
+
+      expect(print).toHaveBeenCalledTimes(1)
+    } finally {
+      Reflect.deleteProperty(window, 'print')
+    }
+  })
+
+  it('does not show the contract-correction marker for an ordinary full refund', async () => {
+    mocks.list.mockReset()
+    mocks.detail.mockReset()
+    mocks.list.mockResolvedValue({
+      items: [{ ...row(81), status: 'FULLY_REFUNDED' }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    })
+    mocks.detail.mockResolvedValue({
+      ...detail,
+      status: 'FULLY_REFUNDED',
+      correctionProvenance: null,
+    })
+
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).not.toContain('\u56e0\u5408\u540c\u7ea0\u9519\u5df2\u51b2\u9500')
+  })
 })

@@ -134,7 +134,7 @@ export class PaymentsService {
     });
     if (!payment) throw new NotFoundException('收款记录不存在');
 
-    const [operator, operationLogs] = await Promise.all([
+    const [operator, operationLogs, correctionReversal] = await Promise.all([
       this.prisma.db.user.findUnique({
         where: { id: payment.operatorId },
         select: { id: true, displayName: true },
@@ -143,7 +143,20 @@ export class PaymentsService {
         where: { entityType: 'PAYMENT', entityId: payment.id },
         orderBy: { occurredAt: 'desc' },
       }),
+      this.prisma.db.contractVoidReversal.findFirst({
+        where: {
+          originalEntityType: 'Payment',
+          originalEntityId: payment.id,
+        },
+        select: { id: true },
+      }),
     ]);
+    const correctionProvenance = correctionReversal
+      ? {
+          source: 'CONTRACT_VOID' as const,
+          displayText: '\u56e0\u5408\u540c\u7ea0\u9519\u5df2\u51b2\u9500',
+        }
+      : null;
     const tenant = payment.contract.members[0]?.tenant;
     const receiptType = receiptTypeFor(payment.status, payment.adjustments);
     const confirmedAdjustmentAmount = payment.adjustments
@@ -234,6 +247,7 @@ export class PaymentsService {
       voidedAt: payment.voidedAt,
       editReason: payment.editReason,
       remark: payment.remark,
+      correctionProvenance,
       contract: {
         id: payment.contract.id,
         contractNo: payment.contract.contractNo,
@@ -264,6 +278,7 @@ export class PaymentsService {
       receipt: {
         type: receiptType,
         receiptNo: payment.receiptNo,
+        correctionProvenance,
         originalReceivable: this.money(originalReceivable),
         confirmedAdjustmentAmount: this.money(confirmedAdjustmentAmount),
         actualPaid: this.money(payment.amount),

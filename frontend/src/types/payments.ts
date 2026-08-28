@@ -1,6 +1,11 @@
 export type PaymentMethod = 'WECHAT' | 'ALIPAY' | 'BANK_TRANSFER' | 'CASH' | 'POS' | 'OTHER' | 'SYSTEM_AUTO'
 export type ManualPaymentMethod = Exclude<PaymentMethod, 'SYSTEM_AUTO'>
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
+export interface PaymentCorrectionProvenance {
+  source: 'CONTRACT_VOID'
+  displayText: string
+}
+
 
 export interface RentBill {
   id: number
@@ -49,6 +54,7 @@ export interface PaymentDetail extends PaymentListItem {
   remark?: string | null
   editReason?: string | null
   operator?: { id: number; displayName: string } | null
+  correctionProvenance: PaymentCorrectionProvenance | null
   metrics: { receivedAmount: string; confirmedAdjustmentAmount: string; prepaymentAmount: string; coveredBillCount: number }
   allocations: Array<{ id: number; allocationOrder: number; allocationType: string; allocatedAmount: string; reversedAmount: string; effectiveAmount: string; bill: RentBill }>
   adjustments: Array<Record<string, unknown> & { id: number; adjustmentNo: string; adjustmentType: string; amount: string; approvalStatus: ApprovalStatus; reason?: string }>
@@ -57,7 +63,7 @@ export interface PaymentDetail extends PaymentListItem {
   refunds: Array<Record<string, unknown>>
   voidRequests: Array<Record<string, unknown>>
   operationLogs: Array<Record<string, unknown>>
-  receipt: Record<string, unknown>
+  receipt: Record<string, unknown> & { correctionProvenance: PaymentCorrectionProvenance | null }
 }
 
 export interface ReviewItem {
