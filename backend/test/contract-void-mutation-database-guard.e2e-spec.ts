@@ -27,6 +27,14 @@ describe('contract void mutation database safety', () => {
       ),
     ).not.toThrow();
   });
+  it('允许 127.0.0.1 的小写一次性 mutation 数据库', () => {
+    expect(() =>
+      assertContractVoidMutationDatabaseSafety(
+        'mysql://user:secret@127.0.0.1:13306/srms_contract_void_mutation_round4',
+        true,
+      ),
+    ).not.toThrow();
+  });
 
   it('普通 GREEN E2E 不要求一次性数据库', () => {
     expect(() =>

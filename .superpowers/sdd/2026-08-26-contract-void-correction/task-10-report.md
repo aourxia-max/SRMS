@@ -174,3 +174,16 @@ GREEN：
 - lint、build、`git diff --check`：通过。
 
 本轮只修改 test guard、spec、报告与台账；未修改 production、数据库 schema 或 env 文件，也未启用 mutation proof。普通 target E2E 按既有策略创建完整的 append-only provenance chains。
+
+## Fix round 4：127.0.0.1 正向边界覆盖
+
+独立复审唯一 Minor 是缺少 host = `127.0.0.1` 且严格小写 disposable database 的显式允许用例。新增真实 helper `not.toThrow` 回归：如果以后移除 IPv4 loopback allowlist 或破坏严格小写合法名，该测试会失败。现有实现自然 GREEN，无 helper 或 implementation 改动。
+
+验证：
+
+- focused guard：1 suite / 10 tests。
+- guard + normal target E2E：2 suites / 16 tests。
+- backend full：79 suites / 478 tests。
+- lint、build、`git diff --check`：通过。
+
+round 4 已解决 1 个 Minor，0 open。本轮只增加测试覆盖、报告和台账；无 implementation、production、database schema 或 env-file 变化，mutation proof 未启用。普通 E2E 仍按既有策略创建完整 append-only provenance chains。
