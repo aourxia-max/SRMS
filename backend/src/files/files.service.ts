@@ -7,11 +7,13 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { basename, extname, resolve } from 'path';
 import { AuthUser } from '../auth/auth-user.type';
+import { assertContractNotVoided } from '../contracts/contract-operability';
+import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type UploadedFile = {
@@ -161,7 +163,7 @@ export class FilesService {
     return resolve(process.cwd(), '..', 'uploads', 'contract-files');
   }
 
-  async saveContractFile(file: UploadedFile, user: AuthUser) {
+  private async writeContractFile(file: UploadedFile, user: AuthUser) {
     if (!file || !file.buffer) throw new BadRequestException('请上传合同附件');
     const limit = await this.configLimit();
     if (file.size > limit || file.buffer.length > limit)
@@ -176,13 +178,11 @@ export class FilesService {
 
     const storedName = `${randomUUID()}${extension}`;
     const storageKey = `contract-files/${storedName}`;
+    const path = resolve(this.contractFileFolder(), storedName);
     await mkdir(this.contractFileFolder(), { recursive: true });
-    await writeFile(
-      resolve(this.contractFileFolder(), storedName),
-      file.buffer,
-      { flag: 'wx' },
-    );
-    const asset = await this.prisma.db.fileAsset.create({
+    await writeFile(path, file.buffer, { flag: 'wx' });
+    return {
+      path,
       data: {
         storageKey,
         originalName,
@@ -193,8 +193,17 @@ export class FilesService {
         sha256: createHash('sha256').update(file.buffer).digest('hex'),
         category: 'CONTRACT',
         uploadedBy: user.id,
-      },
-    });
+      } satisfies Prisma.FileAssetUncheckedCreateInput,
+    };
+  }
+
+  private contractFileResult(asset: {
+    id: number;
+    originalName: string;
+    mimeType: string;
+    sizeBytes: bigint;
+    uploadedAt: Date;
+  }) {
     return {
       id: asset.id,
       originalName: asset.originalName,
@@ -204,6 +213,14 @@ export class FilesService {
     };
   }
 
+  async saveContractFile(file: UploadedFile, user: AuthUser) {
+    const pending = await this.writeContractFile(file, user);
+    const asset = await this.prisma.db.fileAsset.create({
+      data: pending.data,
+    });
+    return this.contractFileResult(asset);
+  }
+
   async saveAndLinkContractFile(
     contractId: number,
     file: UploadedFile,
@@ -211,14 +228,35 @@ export class FilesService {
   ) {
     const contract = await this.prisma.db.contract.findUnique({
       where: { id: contractId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!contract) throw new NotFoundException('合同不存在');
-    const asset = await this.saveContractFile(file, user);
-    await this.prisma.db.contractFile.create({
-      data: { contractId, fileAssetId: asset.id },
-    });
-    return asset;
+    assertContractNotVoided(contract.status, '追加附件');
+
+    const pending = await this.writeContractFile(file, user);
+    try {
+      return await this.prisma.db.$transaction(
+        async (tx) => {
+          await lockRoomAndTargetContract(tx, contractId);
+          const lockedContract = await tx.contract.findUnique({
+            where: { id: contractId },
+            select: { id: true, status: true },
+          });
+          if (!lockedContract) throw new NotFoundException('合同不存在');
+          assertContractNotVoided(lockedContract.status, '追加附件');
+
+          const asset = await tx.fileAsset.create({ data: pending.data });
+          await tx.contractFile.create({
+            data: { contractId, fileAssetId: asset.id },
+          });
+          return this.contractFileResult(asset);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+      );
+    } catch (error) {
+      await unlink(pending.path);
+      throw error;
+    }
   }
 
   async listContractFiles(contractId: number) {
