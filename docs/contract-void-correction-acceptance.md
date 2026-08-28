@@ -83,8 +83,11 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 2. 从 2026-08-25 基线整体恢复：41 张表、25 条迁移。
 3. 应用 20260826090000_contract_void_correction。
 4. 迁移后为 45 张表、26 条迁移。
-5. 当时恢复检查点的 Task 10 marker／request／reversal 均为 0。
-6. 后续正常 GREEN E2E 按 append-only 规则保留完整来源链，因此不得把“marker 0”误解为当前持久库必须始终为空。
+5. **T0（重建并迁移完成的即时检查点）**：Task 10 marker／request／reversal 均为 0。
+6. **T1（随后执行正常 GREEN／E2E）**：测试按 append-only 规则保留完整、有效的来源链，因此不得把 T0 的“0”误解为持久测试库必须始终为空。
+7. **T2（Task 11 验收记录的最终只读全库快照）**：32 条纠错申请、127 条冲销明细、32 条 CONTRACT_VOID_COMPLETED 审计事件。四流 marker `合同纠错测试-Task10-mtcgnnsdhthv54` 的 request 25–28 只是这 32 条中的 4 条；四条均完整有效，不是污染数据。
+
+上述数字是有时间点的证据，不是共享测试库的永久计数不变量；后续正常 GREEN E2E 仍可继续追加完整链。
 
 ### Task 11 只读复核
 
@@ -95,6 +98,8 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 - 三张纠错表共有 14 个索引／主键定义；请求号、活动合同键、完成合同键、执行批次、提交幂等键、执行幂等键和冲销幂等键均为 UNIQUE。
 - 附件关系使用复合主键 contract_void_request_id + file_asset_id。
 - 四个外键均为 ON DELETE RESTRICT。
+
+- 本次验收记录的最终只读全库快照为 32 条纠错申请、127 条冲销明细、32 条 CONTRACT_VOID_COMPLETED 审计；其中 request 25–28 是完整有效的四流子集，不是待清理污染。
 
 ## 备份与哈希
 
@@ -112,7 +117,9 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 - D:\Work\iwen-codex\codex-zhufang\srms\deploy\test-data\current-before-rebuild-20260828-094555
 - D:\Work\iwen-codex\codex-zhufang\srms\deploy\test-data\backup-before-clear-20260825-081647
 
-如需回滚，必须再次取得明确授权，先复核 project／container／port／database 四项，再整体恢复目标 srms_docker 和对应 uploads；不得用逐行删除、审计删除或事后补写替代整体恢复。恢复后必须重新运行 migrate status、表／索引／外键核验和两个健康检查。current 备份用于恢复重建前原状；2026-08-25 备份是本次演练使用的干净基线。
+`current-before-rebuild-20260828-094555` 是重建前已知污染状态的精确兜底，包含不完整 mutation 链（marker `合同纠错测试-mtbw7plivhogqc`，request 115／contract 172 缺少 PAYMENT_ALLOCATION -100.00 冲销及对应结果类别）。它只用于取证或在明确要求下恢复重建前原状，**绝不能作为干净验收基线**。
+
+如需恢复，必须再次取得对 project／container／port／database 四项精确测试库范围的明确授权，并在恢复前重新计算 database.sql 与 uploads.tar.gz 的 SHA-256、逐项匹配本节记录；不得用逐行删除、审计删除或事后补写替代整体恢复。干净重建优先使用 `backup-before-clear-20260825-081647` 的数据库与 uploads（两者哈希均须核验），整体恢复后迁移到 HEAD。恢复完成后重新运行 migrate status、表／索引／外键核验和两个健康检查。
 
 ## 自动化验证
 
@@ -132,6 +139,20 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 | http://127.0.0.1:15173/                                    | HTTP 200                              |
 
 全部后端 E2E 均在普通 GREEN 模式运行；CONTRACT_VOID_MUTATION_PROOF 在启动前被显式清空。
+
+## Spec §15（第 176 行）覆盖矩阵
+
+| 验收面                                                                | 自动化／报告证据                                                                                                                                        | 覆盖边界                                                                                         |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 未收、已收、自动押金、预收款及抵扣、已完成退租、同房 ACTIVE successor | Task 10 真实 MySQL 四流 E2E；Task 10／11 报告及下文只读持久化证据                                                                                       | 四流 marker 的 request 25–28 均是完整有效链                                                      |
+| 部分收款、部分／全额退款、已作废收款不重复冲销                        | `contract-void-impact.spec.ts` 的部分收款、实际退款、全额退款与 VOIDED 收款用例；`contract-void-reversal-writer.spec.ts`；Task 2／5 报告                | 同时覆盖来源保留、配对与类别净额                                                                 |
+| 多期账单                                                              | `contract-void-preview.service.spec.ts`、`contract-void-impact.spec.ts`、`contract-void-reversal-writer.spec.ts` 均以单账单 fixture 验证 `bills[]` 管线 | 当前没有专门构造“两期以上账单”的真实 MySQL E2E；因此只认定数组路径覆盖，不虚构独立多期端到端证据 |
+| 待审批流程取消；已批准、已退款、已作废记录保留                        | `contract-void-reversal-writer.spec.ts` 的 pending-only cancellation；Task 5 报告                                                                       | 只取消允许取消的待审批流程                                                                       |
+| 精确中文确认、权限、重复／并发确认                                    | `contract-void-executor.service.spec.ts`；`contract-void-executor.mysql.e2e-spec.ts` 的幂等与并发用例；前端 76 项和后端 44 项聚焦测试                   | visitor／ADMIN／SUPER_ADMIN 与确认短语均有覆盖                                                   |
+| 事务回滚                                                              | executor 单元回滚用例；真实 MySQL E2E 的 reversal insert 后失败全量回滚                                                                                 | 验证失败不留下部分业务／审计链                                                                   |
+| 报表、中文展示、真实 Prisma relation filters                          | `contract-void-correction.e2e-spec.ts` 的真实 relation-filter sentinel、中文现金流／XLSX；Task 7／10 报告                                               | 财务报表按保留来源与冲销结果查询                                                                 |
+| 各财务类别／总额净影响 0、房态后继不变                                | impact 的不平衡拒绝单测；Task 10 四流聚合与 successor 房态证据                                                                                          | 非空 balanceAfter 全为 0.00；后继合同／房态不被历史纠错覆盖                                      |
+| 封账期间                                                              | 冻结 ruling：当前 SRMS 没有财务期间／封账模型；“open period”取执行时间，`originalOccurredAt` 保留历史日期，禁止虚构新模块                               | 已覆盖执行时间与原发生时间语义；不存在可声称已测的封账实体或封账状态流                           |
 
 ## 四个验收流
 
@@ -182,6 +203,7 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 
 验收时对所有普通 Task 10 保留链做只读聚合：
 
+- 本次 Task 11 记录的最终全库快照为 32 条纠错申请、127 条冲销明细、32 条 CONTRACT_VOID_COMPLETED 审计；request 25–28 仅是其中 4 条完整有效链，不是污染。
 - 全部为 COMPLETED。
 - nonzero_post_reversal = 0。
 - 存在原 payment allocation 的请求中，缺少对应 PAYMENT_ALLOCATION 冲销来源的请求数为 0。

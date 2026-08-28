@@ -27,7 +27,12 @@ Task 10 fix round 2 remains the actual rehearsal:
 - The 2026-08-25 baseline restored to 41 tables and 25 migrations.
 - 20260826090000_contract_void_correction applied successfully.
 - The migrated database had 45 tables and 26 migrations.
-- The immediate post-restore Task 10 marker count was 0.
+- T0, immediately after rebuild and migration: Task 10 marker／request／reversal counts were all 0.
+- T1, subsequent normal GREEN／E2E runs: complete append-only source chains were intentionally retained.
+- T2, the final read-only full-database snapshot recorded by Task 11: 32 correction requests, 127 reversals and 32 CONTRACT_VOID_COMPLETED audits.
+- Marker `合同纠错测试-Task10-mtcgnnsdhthv54` requests 25–28 are four complete, valid chains within those 32 requests, not pollution.
+
+These are timestamped evidence points rather than permanent shared-test-database count invariants; later normal GREEN E2E may append further complete chains.
 
 Task 11 added read-only confirmation:
 
@@ -36,6 +41,12 @@ Task 11 added read-only confirmation:
 - All four new tables exist.
 - The three correction tables expose 14 index／primary-key definitions and four RESTRICT foreign keys.
 - Current and baseline database／uploads hashes matched the recorded values.
+
+Rollback classification:
+
+- `current-before-rebuild-20260828-094555` exactly captures the known polluted pre-rebuild state, including the incomplete mutation chain for marker `合同纠错测试-mtbw7plivhogqc` (request 115／contract 172, missing the PAYMENT_ALLOCATION -100.00 reversal and result category). It is forensic／original-state recovery material only, never a clean acceptance baseline.
+- Any restore requires fresh, exact authorization for project／container／port／database and re-hashing both database.sql and uploads.tar.gz against the documented SHA-256 values before restoration.
+- The preferred clean rebuild is `backup-before-clear-20260825-081647` database plus its hash-matched uploads, followed by migrations to HEAD.
 
 ## Automated verification
 
@@ -58,12 +69,14 @@ Task 11 added read-only confirmation:
 
 Used the normal real-API E2E marker 合同纠错测试-Task10-mtcgnnsdhthv54 and then queried the persisted rows read-only.
 
+Requests 25–28 are the four-flow subset of Task 11's recorded 32-request／127-reversal／32-completion-audit full-database snapshot. Every one is complete and valid; none is pollution.
+
 1. Simple unpaid: COMPLETED, contract VOIDED, original bill retained, post-reversal net 0.00, one audit.
 2. Paid + auto deposit + prepayment: COMPLETED, original bill／three payments／allocation retained, deposit and prepayment latest balances 0.00, eight reversal rows, one audit.
 3. Completed checkout: COMPLETED, original bill／payment／allocation／COMPLETED checkout retained, post-reversal net 0.00, one audit.
 4. Active successor: historical contract VOIDED, successor remains ACTIVE, room remains RENTED before／after, post-reversal net 0.00, one audit.
 
-Every persisted reversal with a non-null balanceAfter had balanceAfter 0.00. The retained normal Task 10 aggregate had no nonzero post-reversal result, no missing allocation reversal provenance and exactly one completion audit per request.
+Every persisted reversal with a non-null balanceAfter had balanceAfter 0.00. In the recorded 32／127／32 snapshot, the retained normal chains had no nonzero post-reversal result, no missing allocation reversal provenance and exactly one completion audit per request.
 
 ## Investigation note
 
