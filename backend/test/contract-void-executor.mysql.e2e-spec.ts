@@ -634,6 +634,12 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
 
   it('does not let checkout initiation overwrite a concurrently committed VOIDED status', async () => {
     const fixture = await createFixture('checkout-race');
+    await expect(
+      prisma.db.room.findUniqueOrThrow({
+        where: { id: fixture.roomId },
+        select: { roomStatus: true },
+      }),
+    ).resolves.toEqual({ roomStatus: RoomStatus.RENTED });
     const gated = startGatedExecution(
       fixture,
       `execute-checkout-race-${marker}`,
@@ -661,12 +667,23 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
       contractStatus: 'VOIDED',
     });
     await expect(checkoutAttempt).rejects.toThrow('已作废合同不能发起退租');
+    const checkoutError = await checkoutAttempt.catch(
+      (error: unknown) => error,
+    );
+    expect(checkoutError).toBeInstanceOf(Error);
+    expect((checkoutError as Error).message).not.toMatch(/1213|P2034/);
     await expect(
       prisma.db.contract.findUniqueOrThrow({
         where: { id: fixture.contractId },
         select: { status: true },
       }),
     ).resolves.toEqual({ status: 'VOIDED' });
+    await expect(
+      prisma.db.room.findUniqueOrThrow({
+        where: { id: fixture.roomId },
+        select: { roomStatus: true },
+      }),
+    ).resolves.toEqual({ roomStatus: RoomStatus.EMPTY });
     await expect(
       prisma.db.checkoutSettlement.count({
         where: { contractId: fixture.contractId },
