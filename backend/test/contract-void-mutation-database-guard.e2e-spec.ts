@@ -36,4 +36,26 @@ describe('contract void mutation database safety', () => {
       ),
     ).not.toThrow();
   });
+  it.each([
+    'mysql://user:secret@127.0.0.1:13306/%E0%A4%A',
+    'mysql://user:secret@127.0.0.1:13306/',
+    'mysql://user:secret@127.0.0.1:13306/SRMS_contract_void_mutation_round3',
+    'mysql://user:secret@127.0.0.1:13306/srms_contract_void_mutation_ROUND3',
+  ])(
+    '非法或非小写 mutation 数据库名固定返回中文安全错误：%s',
+    (databaseUrl) => {
+      expect(() =>
+        assertContractVoidMutationDatabaseSafety(databaseUrl, true),
+      ).toThrow('合同纠错 mutation 只能运行在本机一次性数据库');
+    },
+  );
+
+  it('允许 IPv6 loopback 的小写一次性 mutation 数据库', () => {
+    expect(() =>
+      assertContractVoidMutationDatabaseSafety(
+        'mysql://user:secret@[::1]:13306/srms_contract_void_mutation_round3',
+        true,
+      ),
+    ).not.toThrow();
+  });
 });

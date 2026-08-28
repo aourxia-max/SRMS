@@ -157,3 +157,20 @@ TDD 证据：护栏先因 module 缺失 RED；实现后 helper 4/4 GREEN。共�
 - Docker `up -d --build api web`：通过，MySQL container ID 未改变，API/Web 重建后健康。
 - `http://127.0.0.1:13000/api/health` 返回 200；`http://127.0.0.1:15173/` 返回 200。
 - 构建仅有既存前端 chunk 大于 500 kB、npm audit/deprecation 警告，无合同纠错失败。
+
+## Fix round 3：mutation guard 边界收口
+
+独立复审唯一 Minor：malformed percent pathname 会泄漏原生 URIError，且 disposable database regex 的 `/i` 会误允许大写 prefix/identifier。
+
+TDD RED：focused guard 共 9 个测试，3 failed / 6 passed；分别为 `%E0%A4%A` 收到 `URI malformed`、大写 prefix 未抛错、大写 identifier 未抛错。空数据库名拒绝及 `[::1]` + 小写数据库名当时已经通过。
+
+最小实现：将 `decodeURIComponent` 纳入 `new URL` 的同一 `try/catch`，并移除 database-name regex 的 `/i`。所有非法 URL、host 或 database name 均固定抛出“合同纠错 mutation 只能运行在本机一次性数据库”。
+
+GREEN：
+
+- focused guard：9/9。
+- guard + normal target E2E：2 suites / 15 tests。
+- backend full：79 suites / 478 tests。
+- lint、build、`git diff --check`：通过。
+
+本轮只修改 test guard、spec、报告与台账；未修改 production、数据库 schema 或 env 文件，也未启用 mutation proof。普通 target E2E 按既有策略创建完整的 append-only provenance chains。
