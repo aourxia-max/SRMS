@@ -117,7 +117,7 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 - D:\Work\iwen-codex\codex-zhufang\srms\deploy\test-data\current-before-rebuild-20260828-094555
 - D:\Work\iwen-codex\codex-zhufang\srms\deploy\test-data\backup-before-clear-20260825-081647
 
-`current-before-rebuild-20260828-094555` 是重建前已知污染状态的精确兜底，包含不完整 mutation 链（marker `合同纠错测试-mtbw7plivhogqc`，request 115／contract 172 缺少 PAYMENT_ALLOCATION -100.00 冲销及对应结果类别）。它只用于取证或在明确要求下恢复重建前原状，**绝不能作为干净验收基线**。
+`current-before-rebuild-20260828-094555` 是重建前已知污染状态的精确兜底，包含不完整 mutation 链（marker `合同纠错测试-Task10-mtbw7plivhogqc`，request 115／contract 172 缺少 PAYMENT_ALLOCATION -100.00 冲销及对应结果类别）。它只用于取证或在明确要求下恢复重建前原状，**绝不能作为干净验收基线**。
 
 如需恢复，必须再次取得对 project／container／port／database 四项精确测试库范围的明确授权，并在恢复前重新计算 database.sql 与 uploads.tar.gz 的 SHA-256、逐项匹配本节记录；不得用逐行删除、审计删除或事后补写替代整体恢复。干净重建优先使用 `backup-before-clear-20260825-081647` 的数据库与 uploads（两者哈希均须核验），整体恢复后迁移到 HEAD。恢复完成后重新运行 migrate status、表／索引／外键核验和两个健康检查。
 
@@ -128,11 +128,14 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 | npm run db:validate                                        | 通过；Prisma schema valid             |
 | npm run db:generate                                        | 通过；Prisma Client 7.8.0             |
 | npm run lint                                               | 通过；0 个错误                        |
-| npm test -- --runInBand                                    | 79/79 suites、478/478 tests           |
+| npm test -- --runInBand                                    | 79/79 suites、480/480 tests           |
 | npm --prefix backend run build                             | 通过                                  |
 | npm --prefix frontend run test:unit -- --testTimeout=15000 | 39/39 files、221/221 tests            |
 | npm --prefix frontend run build                            | 通过；vue-tsc 和 Vite 均 exit 0       |
 | npm --prefix backend run test:e2e -- --runInBand           | 7/7 suites、37/37 tests               |
+| Round 2 related contract-void unit suites                  | 3/3 suites、25/25 tests               |
+| Round 2 new real MySQL／HTTP cases                         | 2/2 tests                             |
+| Round 2 full target E2E file                               | 1/1 suite、8/8 tests                  |
 | 前端作废 UI／权限／附件客户端聚焦                          | 4/4 files、76/76 tests                |
 | 后端纠错控制器／文件聚焦                                   | 2/2 suites、44/44 tests               |
 | http://127.0.0.1:13000/api/health                          | HTTP 200；service=srms-api，status=ok |
@@ -142,17 +145,40 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 
 ## Spec §15（第 176 行）覆盖矩阵
 
-| 验收面                                                                | 自动化／报告证据                                                                                                                                        | 覆盖边界                                                                                         |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 未收、已收、自动押金、预收款及抵扣、已完成退租、同房 ACTIVE successor | Task 10 真实 MySQL 四流 E2E；Task 10／11 报告及下文只读持久化证据                                                                                       | 四流 marker 的 request 25–28 均是完整有效链                                                      |
-| 部分收款、部分／全额退款、已作废收款不重复冲销                        | `contract-void-impact.spec.ts` 的部分收款、实际退款、全额退款与 VOIDED 收款用例；`contract-void-reversal-writer.spec.ts`；Task 2／5 报告                | 同时覆盖来源保留、配对与类别净额                                                                 |
-| 多期账单                                                              | `contract-void-preview.service.spec.ts`、`contract-void-impact.spec.ts`、`contract-void-reversal-writer.spec.ts` 均以单账单 fixture 验证 `bills[]` 管线 | 当前没有专门构造“两期以上账单”的真实 MySQL E2E；因此只认定数组路径覆盖，不虚构独立多期端到端证据 |
-| 待审批流程取消；已批准、已退款、已作废记录保留                        | `contract-void-reversal-writer.spec.ts` 的 pending-only cancellation；Task 5 报告                                                                       | 只取消允许取消的待审批流程                                                                       |
-| 精确中文确认、权限、重复／并发确认                                    | `contract-void-executor.service.spec.ts`；`contract-void-executor.mysql.e2e-spec.ts` 的幂等与并发用例；前端 76 项和后端 44 项聚焦测试                   | visitor／ADMIN／SUPER_ADMIN 与确认短语均有覆盖                                                   |
-| 事务回滚                                                              | executor 单元回滚用例；真实 MySQL E2E 的 reversal insert 后失败全量回滚                                                                                 | 验证失败不留下部分业务／审计链                                                                   |
-| 报表、中文展示、真实 Prisma relation filters                          | `contract-void-correction.e2e-spec.ts` 的真实 relation-filter sentinel、中文现金流／XLSX；Task 7／10 报告                                               | 财务报表按保留来源与冲销结果查询                                                                 |
-| 各财务类别／总额净影响 0、房态后继不变                                | impact 的不平衡拒绝单测；Task 10 四流聚合与 successor 房态证据                                                                                          | 非空 balanceAfter 全为 0.00；后继合同／房态不被历史纠错覆盖                                      |
-| 封账期间                                                              | 冻结 ruling：当前 SRMS 没有财务期间／封账模型；“open period”取执行时间，`originalOccurredAt` 保留历史日期，禁止虚构新模块                               | 已覆盖执行时间与原发生时间语义；不存在可声称已测的封账实体或封账状态流                           |
+| 验收面                                                              | 自动化／报告证据                                                                                                                         | 覆盖边界                                                                                                                      |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 未收、已收、自动押金、预收款余额、已完成退租、同房 ACTIVE successor | Task 10 真实 MySQL 四流 E2E；Task 10／11 报告及下文只读持久化证据                                                                        | 四流 marker 的 request 25–28 均是完整有效链                                                                                   |
+| 部分收款、部分／全额退款、已作废收款不重复冲销                      | `contract-void-impact.spec.ts` 的部分收款、实际退款、全额退款与 VOIDED 收款用例；`contract-void-reversal-writer.spec.ts`；Task 2／5 报告 | 同时覆盖来源保留、配对与类别净额                                                                                              |
+| 多期账单                                                            | `contract-void-correction.e2e-spec.ts` 通过真实 API 创建两期账单并只向首期收款 50.00；impact unit 另以手写两期 expected table 覆盖       | 两期来源、冲销 source id／金额、首期部分收款和次期未收均独立断言                                                              |
+| 预收款 DEBIT_TO_BILL 抵扣                                           | 同一 E2E 由真实收款 API 生成 CREDIT_RECEIPT 60.00，仅用 Prisma fixture 按既有 enum／FK 装配 DEBIT_TO_BILL 40.00 与 PREPAYMENT_AUTO 分配  | 仓库没有 DEBIT_TO_BILL 创建 API／service；本轮只证明这一种抵扣账本链和剩余余额 20.00 的纠错，不声称覆盖 transfer／refund 全类 |
+| 待审批流程取消；已批准、已退款、已作废记录保留                      | `contract-void-reversal-writer.spec.ts` 的 pending-only cancellation；Task 5 报告                                                        | 只取消允许取消的待审批流程                                                                                                    |
+| 精确中文确认、权限、重复／并发确认                                  | `contract-void-executor.service.spec.ts`；`contract-void-executor.mysql.e2e-spec.ts` 的幂等与并发用例；前端 76 项和后端 44 项聚焦测试    | visitor／ADMIN／SUPER_ADMIN 与确认短语均有覆盖                                                                                |
+| 事务回滚                                                            | executor 单元回滚用例；真实 MySQL E2E 的 reversal insert 后失败全量回滚                                                                  | 验证失败不留下部分业务／审计链                                                                                                |
+| 报表、中文展示、真实 Prisma relation filters                        | `contract-void-correction.e2e-spec.ts` 的真实 relation-filter sentinel、中文现金流／XLSX；Task 7／10 报告                                | 财务报表按保留来源与冲销结果查询                                                                                              |
+| 各财务类别／总额净影响 0、房态后继不变                              | impact 的不平衡拒绝单测；Task 10 四流聚合与 successor 房态证据                                                                           | 非空 balanceAfter 全为 0.00；后继合同／房态不被历史纠错覆盖                                                                   |
+| 封账期间                                                            | 冻结 ruling：当前 SRMS 没有财务期间／封账模型；“open period”取执行时间，`originalOccurredAt` 保留历史日期，禁止虚构新模块                | 已覆盖执行时间与原发生时间语义；不存在可声称已测的封账实体或封账状态流                                                        |
+
+## Round 2 多期账单与预收款抵扣证据
+
+本轮 production 未修改，所有共享 `srms_docker` E2E 均显式 unset `CONTRACT_VOID_MUTATION_PROOF` 并通过真实 AppModule／HTTP 执行。新增场景完成后保留 append-only 来源、冲销和审计链。
+
+### 多期账单
+
+- API 创建 2026-08-01 至 2026-09-30 的两期合同，再通过收款 API 只向首期分配 50.00；纠错前首期为 PARTIAL（实收／未收 50.00／50.00），次期为 PENDING（0.00／100.00）。
+- 最新完整运行 marker `合同纠错测试-Task10-mtcjzzi6wt39oz` 的 request 55／contract 111 为 COMPLETED；两张账单来源 id 350／351 均保留并转为 VOIDED。
+- 持久化冲销严格为两条 RENT_BILL -100.00、PAYMENT source 123 -50.00、PAYMENT_ALLOCATION source 146 -50.00 和 ROOM_STATUS 0.00；所有金额行 balanceAfter=0.00，postReversalNetImpact=0.00，完成审计 1 条。
+
+### DEBIT_TO_BILL 后的剩余预收款
+
+- 收款 API 以 160.00 收清首期 100.00，并由现有 PaymentsService 生成 CREDIT_RECEIPT 60.00。仓库没有 DEBIT_TO_BILL 创建 API／service，因此测试装配仅按现有 Prisma enum、payment／bill FK 创建 DEBIT_TO_BILL 40.00（balanceAfter 20.00）和 PREPAYMENT_AUTO 分配；这不是新增业务入口。
+- 同一 marker 的 request 56／contract 112 为 COMPLETED。原 CREDIT_RECEIPT／DEBIT_TO_BILL、payment source 124 和两条 allocation source 147／148 全部 append-only 保留。
+- PREPAYMENT 只冲销当前剩余 20.00；40.00 历史抵扣不重复冲销。冲销 metadata 指向最新 DEBIT_TO_BILL 源，生成 PREPAYMENT REVERSAL 20.00、balanceAfter=0.00；另有 PAYMENT -160.00、两条 RENT_BILL -100.00 及 PAYMENT_ALLOCATION -100.00／-40.00。postReversalNetImpact=0.00，完成审计 1 条。
+
+### RED／GREEN 与边界
+
+- 新 unit 在未改 production 时自然 GREEN；临时纯 unit mutation 将账单数组截为一期并将预收款余额清零，同一 focused suite 按预期 3 failed／10 passed，随后反向恢复成功、production 文件哈希与 HEAD 一致，恢复后 13/13。
+- 新真实 E2E 定向 2/2、完整目标文件 8/8；相关 unit 25/25。共享测试库从未运行 production mutation。
+- backend full 首次运行暴露 FilesService TTL 测试的 1 ms 错向时间断言（8 次 focused 复现中 1 次失败）；改为验证服务取时落在调用开始／结束窗口后，FilesService 35/35、backend full 480/480、lint／build 通过。只改测试，不改业务逻辑。
 
 ## 四个验收流
 
@@ -204,6 +230,7 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 验收时对所有普通 Task 10 保留链做只读聚合：
 
 - 本次 Task 11 记录的最终全库快照为 32 条纠错申请、127 条冲销明细、32 条 CONTRACT_VOID_COMPLETED 审计；request 25–28 仅是其中 4 条完整有效链，不是污染。
+- Round 2 的定向 2/2 与完整目标文件 8/8 共追加 8 条完整纠错链；随后只读全库快照为 48 条纠错申请、193 条冲销明细、48 条 CONTRACT_VOID_COMPLETED 审计，48 条申请均 COMPLETED，nonzero_post_reversal=0，审计基数异常=0。该 48／193／48 是晚于 Task 11 原始 32／127／32 的新时间点，不覆盖或混淆历史证据。
 - 全部为 COMPLETED。
 - nonzero_post_reversal = 0。
 - 存在原 payment allocation 的请求中，缺少对应 PAYMENT_ALLOCATION 冲销来源的请求数为 0。
@@ -227,6 +254,7 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 - mutation sensitivity proof 只能在 localhost／127.0.0.1／IPv6 loopback 且数据库名严格匹配 srms_contract_void_mutation_<unique> 的一次性数据库运行。
 - CONTRACT_VOID_MUTATION_PROOF=1 对共享持久 srms_docker 会在 App 初始化和 fixture 写入前拒绝。
 - Task 11 未启用 mutation proof，也未创建一次性 mutation 数据库。
+- Round 2 的 mutation sensitivity 仅临时修改纯 impact 函数并只运行不加载 AppModule／不连接数据库的 unit suite；补丁在同一命令中反向恢复，production diff 和哈希随后核验为 HEAD 原值。
 - 普通 E2E 使用未修改 production 代码，完成链保留合同、财务来源、冲销明细和安全审计。
 - 只有未完成且没有 append-only audit 的局部测试 fixture 可按精确 ID 清理；COMPLETED 来源链不得物理删除。
 

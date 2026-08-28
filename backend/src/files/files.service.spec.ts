@@ -930,7 +930,7 @@ describe('FilesService contract void proofs', () => {
         ),
       } as never,
     );
-    const before = Date.now() - CONTRACT_VOID_PROOF_STAGED_TTL_MS;
+    const before = Date.now();
     const content = Buffer.from('%PDF-1.7');
 
     await service.saveContractVoidProof(
@@ -942,9 +942,13 @@ describe('FilesService contract void proofs', () => {
       },
       admin,
     );
+    const after = Date.now();
 
     const cutoff = findMany.mock.calls[0][0].where.uploadedAt.lt as Date;
-    expect(cutoff.getTime()).toBeLessThanOrEqual(before);
+    const cleanupStartedAt =
+      cutoff.getTime() + CONTRACT_VOID_PROOF_STAGED_TTL_MS;
+    expect(cleanupStartedAt).toBeGreaterThanOrEqual(before);
+    expect(cleanupStartedAt).toBeLessThanOrEqual(after);
     expect(findMany).toHaveBeenCalledWith({
       where: {
         category: 'CONTRACT_VOID_PROOF',

@@ -425,6 +425,119 @@ describe('contract void impact', () => {
       hashContractVoidImpact(without),
     );
   });
+
+  it('creates one hand-derived reversal row for every rent period', () => {
+    const impact = computeContractVoidImpact(
+      inputFixture({
+        bills: [
+          {
+            id: 11,
+            status: 'PARTIAL',
+            payableAmount: '100.00',
+            receivedAmount: '50.00',
+            outstandingAmount: '50.00',
+          },
+          {
+            id: 12,
+            status: 'PENDING',
+            payableAmount: '100.00',
+            receivedAmount: '0.00',
+            outstandingAmount: '100.00',
+          },
+        ],
+        payments: [],
+        depositBalance: '0.00',
+        prepaymentBalance: '0.00',
+      }),
+    );
+
+    expect(impact.summary).toEqual({
+      rentBillPayable: '200.00',
+      effectivePayment: '0.00',
+      depositBalance: '0.00',
+      prepaymentBalance: '0.00',
+      refundNet: '0.00',
+      currentNetImpact: '0.00',
+      plannedReversal: '0.00',
+      postReversalNetImpact: '0.00',
+    });
+    expect(
+      impact.rows
+        .filter((row) => row.category === 'RENT_BILL')
+        .map((row) => ({
+          sourceId: row.originalEntityId,
+          amount: row.amount,
+          balanceBefore: row.balanceBefore,
+          balanceAfter: row.balanceAfter,
+        })),
+    ).toEqual([
+      {
+        sourceId: 11,
+        amount: '-100.00',
+        balanceBefore: '100.00',
+        balanceAfter: '0.00',
+      },
+      {
+        sourceId: 12,
+        amount: '-100.00',
+        balanceBefore: '100.00',
+        balanceAfter: '0.00',
+      },
+    ]);
+  });
+
+  it('reverses only the remaining prepayment balance after an earlier bill debit', () => {
+    const impact = computeContractVoidImpact(
+      inputFixture({
+        payments: [
+          {
+            id: 21,
+            status: 'CONFIRMED',
+            amount: '160.00',
+            allocatedAmount: '140.00',
+            refundedAmount: '0.00',
+            prepaymentNet: '60.00',
+          },
+        ],
+        depositBalance: '0.00',
+        prepaymentBalance: '20.00',
+      }),
+    );
+
+    expect(impact.summary).toMatchObject({
+      effectivePayment: '160.00',
+      prepaymentBalance: '20.00',
+      currentNetImpact: '180.00',
+      plannedReversal: '-180.00',
+      postReversalNetImpact: '0.00',
+    });
+    expect(
+      impact.rows
+        .filter((row) => ['PAYMENT', 'PREPAYMENT'].includes(row.category))
+        .map((row) => ({
+          category: row.category,
+          sourceId: row.originalEntityId,
+          amount: row.amount,
+          balanceBefore: row.balanceBefore,
+          balanceAfter: row.balanceAfter,
+        })),
+    ).toEqual([
+      {
+        category: 'PAYMENT',
+        sourceId: 21,
+        amount: '-160.00',
+        balanceBefore: '160.00',
+        balanceAfter: '0.00',
+      },
+      {
+        category: 'PREPAYMENT',
+        sourceId: 7,
+        amount: '-20.00',
+        balanceBefore: '20.00',
+        balanceAfter: '0.00',
+      },
+    ]);
+  });
   it('hashes equal when nested metadata relation arrays are reordered', () => {
     const impact = computeContractVoidImpact(
       inputFixture({ laterContractIds: [101, 102] }),

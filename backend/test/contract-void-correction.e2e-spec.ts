@@ -780,6 +780,444 @@ describe('contract void correction API and financial invariants (e2e)', () => {
     return fixture;
   }
 
+  async function createTwoPeriodApiContract(label: string) {
+    const location = await createLocation(label, 'EMPTY');
+    currentUser = superAdmin;
+    const response = await request(app.getHttpServer())
+      .post('/api/contracts/fixed')
+      .send({
+        externalContractNo: `CV10-2P-${location.code}`,
+        roomId: location.room.id,
+        startDate: '2026-08-01',
+        endDate: '2026-09-30',
+        monthlyRent: '100.00',
+        paymentCycleMonths: 1,
+        depositRequired: '0.00',
+        primaryTenantId: location.tenant.id,
+        remark: `${prefix}-${label}`,
+      })
+      .expect(201);
+    const contractId = response.body.data.id as number;
+    location.cleanup.contractIds.push(contractId);
+    const [contract, bills] = await Promise.all([
+      prisma.db.contract.findUniqueOrThrow({
+        where: { id: contractId },
+        select: { contractNo: true },
+      }),
+      prisma.db.rentBill.findMany({
+        where: { contractId },
+        select: {
+          id: true,
+          periodSeq: true,
+          payableAmount: true,
+          receivedAmount: true,
+          outstandingAmount: true,
+          status: true,
+        },
+        orderBy: { periodSeq: 'asc' },
+      }),
+    ]);
+    expect(
+      bills.map((bill) => ({
+        periodSeq: bill.periodSeq,
+        payableAmount: bill.payableAmount.toFixed(2),
+        receivedAmount: bill.receivedAmount.toFixed(2),
+        outstandingAmount: bill.outstandingAmount.toFixed(2),
+        status: bill.status,
+      })),
+    ).toEqual([
+      {
+        periodSeq: 1,
+        payableAmount: '100.00',
+        receivedAmount: '0.00',
+        outstandingAmount: '100.00',
+        status: 'PENDING',
+      },
+      {
+        periodSeq: 2,
+        payableAmount: '100.00',
+        receivedAmount: '0.00',
+        outstandingAmount: '100.00',
+        status: 'PENDING',
+      },
+    ]);
+    return { location, contractId, contractNo: contract.contractNo, bills };
+  }
+
+  async function createMultiPeriodApiFixture() {
+    const label = '多期账单';
+    const base = await createTwoPeriodApiContract(label);
+    currentUser = superAdmin;
+    const paymentResponse = await request(app.getHttpServer())
+      .post('/api/payments')
+      .send({
+        contractId: base.contractId,
+        paymentDate: '2026-08-02',
+        amount: '50.00',
+        method: 'CASH',
+        selectedBillIds: [base.bills[0].id],
+        remark: `${prefix}-多期首期部分收款`,
+      })
+      .expect(201);
+    const paymentId = paymentResponse.body.data.id as number;
+    const [payment, allocation, billsBefore] = await Promise.all([
+      prisma.db.payment.findUniqueOrThrow({
+        where: { id: paymentId },
+        select: {
+          id: true,
+          receiptNo: true,
+          paymentCategory: true,
+          amount: true,
+          status: true,
+        },
+      }),
+      prisma.db.paymentAllocation.findFirstOrThrow({
+        where: { paymentId },
+        select: {
+          id: true,
+          paymentId: true,
+          rentBillId: true,
+          allocatedAmount: true,
+          reversedAmount: true,
+          allocationType: true,
+        },
+      }),
+      prisma.db.rentBill.findMany({
+        where: { contractId: base.contractId },
+        select: {
+          id: true,
+          periodSeq: true,
+          payableAmount: true,
+          receivedAmount: true,
+          outstandingAmount: true,
+          status: true,
+        },
+        orderBy: { periodSeq: 'asc' },
+      }),
+    ]);
+    expect({
+      paymentCategory: payment.paymentCategory,
+      amount: payment.amount.toFixed(2),
+      status: payment.status,
+    }).toEqual({
+      paymentCategory: 'RENT',
+      amount: '50.00',
+      status: 'CONFIRMED',
+    });
+    expect({
+      paymentId: allocation.paymentId,
+      rentBillId: allocation.rentBillId,
+      allocatedAmount: allocation.allocatedAmount.toFixed(2),
+      reversedAmount: allocation.reversedAmount.toFixed(2),
+      allocationType: allocation.allocationType,
+    }).toEqual({
+      paymentId,
+      rentBillId: base.bills[0].id,
+      allocatedAmount: '50.00',
+      reversedAmount: '0.00',
+      allocationType: 'AUTO_OLDEST_FIRST',
+    });
+    expect(
+      billsBefore.map((bill) => ({
+        id: bill.id,
+        periodSeq: bill.periodSeq,
+        payableAmount: bill.payableAmount.toFixed(2),
+        receivedAmount: bill.receivedAmount.toFixed(2),
+        outstandingAmount: bill.outstandingAmount.toFixed(2),
+        status: bill.status,
+      })),
+    ).toEqual([
+      {
+        id: base.bills[0].id,
+        periodSeq: 1,
+        payableAmount: '100.00',
+        receivedAmount: '50.00',
+        outstandingAmount: '50.00',
+        status: 'PARTIAL',
+      },
+      {
+        id: base.bills[1].id,
+        periodSeq: 2,
+        payableAmount: '100.00',
+        receivedAmount: '0.00',
+        outstandingAmount: '100.00',
+        status: 'PENDING',
+      },
+    ]);
+    const sources = await sourceIds(base.contractId);
+    expect(sources.bills).toEqual([base.bills[0].id, base.bills[1].id]);
+    expect(sources.payments).toEqual([paymentId]);
+    expect(sources.allocations).toEqual([allocation.id]);
+    const fixture: ScenarioFixture = {
+      sequence,
+      label,
+      buildingId: base.location.building.id,
+      roomId: base.location.room.id,
+      tenantIds: [...base.location.cleanup.tenantIds],
+      contractIds: [...base.location.cleanup.contractIds],
+      contractId: base.contractId,
+      contractNo: base.contractNo,
+      tenantName: base.location.tenantName,
+      roomKeyword: base.location.roomKeyword,
+      roomStatusBefore: 'RENTED',
+      sources,
+      allocationSources: await loadAllocationSources(sources.allocations),
+      expectedReversals: [
+        {
+          category: 'RENT_BILL',
+          originalEntityType: 'RentBill',
+          originalEntityId: base.bills[0].id,
+          amount: '-100.00',
+          balanceBefore: '100.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'RENT_BILL',
+          originalEntityType: 'RentBill',
+          originalEntityId: base.bills[1].id,
+          amount: '-100.00',
+          balanceBefore: '100.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'PAYMENT',
+          originalEntityType: 'Payment',
+          originalEntityId: paymentId,
+          amount: '-50.00',
+          balanceBefore: '50.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'PAYMENT_ALLOCATION',
+          originalEntityType: 'PaymentAllocation',
+          originalEntityId: allocation.id,
+          amount: '-50.00',
+          balanceBefore: '50.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'ROOM_STATUS',
+          originalEntityType: 'Room',
+          originalEntityId: base.location.room.id,
+          amount: '0.00',
+          balanceBefore: null,
+          balanceAfter: null,
+          generatedEntityType: null,
+        },
+      ],
+      expectedCurrentNetImpact: '50.00',
+      cleanup: base.location.cleanup,
+    };
+    return {
+      fixture,
+      billIds: [base.bills[0].id, base.bills[1].id] as const,
+      paymentId,
+      receiptNo: payment.receiptNo,
+      allocationId: allocation.id,
+    };
+  }
+
+  async function createPrepaymentDebitApiFixture() {
+    const label = '预收款抵扣';
+    const base = await createTwoPeriodApiContract(label);
+    currentUser = superAdmin;
+    const paymentResponse = await request(app.getHttpServer())
+      .post('/api/payments')
+      .send({
+        contractId: base.contractId,
+        paymentDate: '2026-08-02',
+        amount: '160.00',
+        method: 'CASH',
+        selectedBillIds: [base.bills[0].id],
+        remark: `${prefix}-真实收款生成预收款`,
+      })
+      .expect(201);
+    const paymentId = paymentResponse.body.data.id as number;
+    const [payment, initialAllocation, credit] = await Promise.all([
+      prisma.db.payment.findUniqueOrThrow({
+        where: { id: paymentId },
+        select: {
+          id: true,
+          receiptNo: true,
+          paymentCategory: true,
+          amount: true,
+          status: true,
+        },
+      }),
+      prisma.db.paymentAllocation.findFirstOrThrow({
+        where: { paymentId },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.db.prepaymentTransaction.findFirstOrThrow({
+        where: {
+          contractId: base.contractId,
+          paymentId,
+          transactionType: 'CREDIT_RECEIPT',
+        },
+      }),
+    ]);
+    expect({
+      paymentCategory: payment.paymentCategory,
+      amount: payment.amount.toFixed(2),
+      status: payment.status,
+      allocatedAmount: initialAllocation.allocatedAmount.toFixed(2),
+      allocatedBillId: initialAllocation.rentBillId,
+      allocationType: initialAllocation.allocationType,
+      creditAmount: credit.amount.toFixed(2),
+      creditBalanceAfter: credit.balanceAfter.toFixed(2),
+    }).toEqual({
+      paymentCategory: 'RENT',
+      amount: '160.00',
+      status: 'CONFIRMED',
+      allocatedAmount: '100.00',
+      allocatedBillId: base.bills[0].id,
+      allocationType: 'AUTO_OLDEST_FIRST',
+      creditAmount: '60.00',
+      creditBalanceAfter: '60.00',
+    });
+    const debitOccurredAt = new Date(credit.occurredAt.getTime() + 1);
+    const { debit, debitAllocation } = await prisma.db.$transaction(
+      async (tx) => {
+        const debit = await tx.prepaymentTransaction.create({
+          data: {
+            contractId: base.contractId,
+            transactionNo: `CV10-YSD-${base.location.code}`.slice(0, 40),
+            transactionType: 'DEBIT_TO_BILL',
+            amount: new Prisma.Decimal('40.00'),
+            balanceAfter: new Prisma.Decimal('20.00'),
+            paymentId,
+            rentBillId: base.bills[1].id,
+            reason: `${prefix}-fixture按现有enum/FK装配预收款抵扣`,
+            occurredAt: debitOccurredAt,
+          },
+        });
+        const debitAllocation = await tx.paymentAllocation.create({
+          data: {
+            paymentId,
+            rentBillId: base.bills[1].id,
+            allocatedAmount: new Prisma.Decimal('40.00'),
+            allocationOrder: 2,
+            allocationType: 'PREPAYMENT_AUTO',
+            allocatedAt: debitOccurredAt,
+          },
+        });
+        await tx.rentBill.update({
+          where: { id: base.bills[1].id },
+          data: {
+            receivedAmount: new Prisma.Decimal('40.00'),
+            outstandingAmount: new Prisma.Decimal('60.00'),
+            status: 'PARTIAL',
+          },
+        });
+        return { debit, debitAllocation };
+      },
+    );
+    const sources = await sourceIds(base.contractId);
+    expect(sources.bills).toEqual([base.bills[0].id, base.bills[1].id]);
+    expect(sources.payments).toEqual([paymentId]);
+    expect(sources.allocations).toEqual([
+      initialAllocation.id,
+      debitAllocation.id,
+    ]);
+    expect(sources.prepayments).toEqual([credit.id, debit.id]);
+    const fixture: ScenarioFixture = {
+      sequence,
+      label,
+      buildingId: base.location.building.id,
+      roomId: base.location.room.id,
+      tenantIds: [...base.location.cleanup.tenantIds],
+      contractIds: [...base.location.cleanup.contractIds],
+      contractId: base.contractId,
+      contractNo: base.contractNo,
+      tenantName: base.location.tenantName,
+      roomKeyword: base.location.roomKeyword,
+      roomStatusBefore: 'RENTED',
+      sources,
+      allocationSources: await loadAllocationSources(sources.allocations),
+      expectedReversals: [
+        {
+          category: 'RENT_BILL',
+          originalEntityType: 'RentBill',
+          originalEntityId: base.bills[0].id,
+          amount: '-100.00',
+          balanceBefore: '100.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'RENT_BILL',
+          originalEntityType: 'RentBill',
+          originalEntityId: base.bills[1].id,
+          amount: '-100.00',
+          balanceBefore: '100.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'PAYMENT',
+          originalEntityType: 'Payment',
+          originalEntityId: paymentId,
+          amount: '-160.00',
+          balanceBefore: '160.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'PAYMENT_ALLOCATION',
+          originalEntityType: 'PaymentAllocation',
+          originalEntityId: initialAllocation.id,
+          amount: '-100.00',
+          balanceBefore: '100.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'PAYMENT_ALLOCATION',
+          originalEntityType: 'PaymentAllocation',
+          originalEntityId: debitAllocation.id,
+          amount: '-40.00',
+          balanceBefore: '40.00',
+          balanceAfter: '0.00',
+          generatedEntityType: null,
+        },
+        {
+          category: 'PREPAYMENT',
+          originalEntityType: 'ContractPrepaymentBalance',
+          originalEntityId: base.contractId,
+          amount: '-20.00',
+          balanceBefore: '20.00',
+          balanceAfter: '0.00',
+          generatedEntityType: 'PrepaymentTransaction',
+        },
+        {
+          category: 'ROOM_STATUS',
+          originalEntityType: 'Room',
+          originalEntityId: base.location.room.id,
+          amount: '0.00',
+          balanceBefore: null,
+          balanceAfter: null,
+          generatedEntityType: null,
+        },
+      ],
+      expectedCurrentNetImpact: '180.00',
+      cleanup: base.location.cleanup,
+    };
+    return {
+      fixture,
+      billIds: [base.bills[0].id, base.bills[1].id] as const,
+      paymentId,
+      receiptNo: payment.receiptNo,
+      initialAllocationId: initialAllocation.id,
+      debitAllocationId: debitAllocation.id,
+      creditTransactionId: credit.id,
+      debitTransactionId: debit.id,
+    };
+  }
+
   function mergeIds(target: number[], discovered: Array<{ id: number }>) {
     const ids = new Set(target);
     for (const { id } of discovered) ids.add(id);
@@ -1323,6 +1761,348 @@ describe('contract void correction API and financial invariants (e2e)', () => {
     await executeScenario(fixture);
   });
 
+  it('通过真实 API 冲销两期账单并保留部分收款来源链', async () => {
+    const evidence = await createMultiPeriodApiFixture();
+    await executeScenario(evidence.fixture);
+
+    const [bills, payment, allocation] = await Promise.all([
+      prisma.db.rentBill.findMany({
+        where: { id: { in: [...evidence.billIds] } },
+        select: {
+          id: true,
+          periodSeq: true,
+          payableAmount: true,
+          receivedAmount: true,
+          outstandingAmount: true,
+          status: true,
+        },
+        orderBy: { periodSeq: 'asc' },
+      }),
+      prisma.db.payment.findUniqueOrThrow({
+        where: { id: evidence.paymentId },
+        select: {
+          id: true,
+          receiptNo: true,
+          contractId: true,
+          paymentCategory: true,
+          amount: true,
+          status: true,
+        },
+      }),
+      prisma.db.paymentAllocation.findUniqueOrThrow({
+        where: { id: evidence.allocationId },
+        select: {
+          id: true,
+          paymentId: true,
+          rentBillId: true,
+          allocatedAmount: true,
+          reversedAmount: true,
+          allocationType: true,
+        },
+      }),
+    ]);
+    expect(
+      bills.map((bill) => ({
+        id: bill.id,
+        periodSeq: bill.periodSeq,
+        payableAmount: bill.payableAmount.toFixed(2),
+        receivedAmount: bill.receivedAmount.toFixed(2),
+        outstandingAmount: bill.outstandingAmount.toFixed(2),
+        status: bill.status,
+      })),
+    ).toEqual([
+      {
+        id: evidence.billIds[0],
+        periodSeq: 1,
+        payableAmount: '100.00',
+        receivedAmount: '50.00',
+        outstandingAmount: '50.00',
+        status: 'VOIDED',
+      },
+      {
+        id: evidence.billIds[1],
+        periodSeq: 2,
+        payableAmount: '100.00',
+        receivedAmount: '0.00',
+        outstandingAmount: '100.00',
+        status: 'VOIDED',
+      },
+    ]);
+    expect({
+      id: payment.id,
+      receiptNo: payment.receiptNo,
+      contractId: payment.contractId,
+      paymentCategory: payment.paymentCategory,
+      amount: payment.amount.toFixed(2),
+      status: payment.status,
+    }).toEqual({
+      id: evidence.paymentId,
+      receiptNo: evidence.receiptNo,
+      contractId: evidence.fixture.contractId,
+      paymentCategory: 'RENT',
+      amount: '50.00',
+      status: 'VOIDED',
+    });
+    expect({
+      id: allocation.id,
+      paymentId: allocation.paymentId,
+      rentBillId: allocation.rentBillId,
+      allocatedAmount: allocation.allocatedAmount.toFixed(2),
+      reversedAmount: allocation.reversedAmount.toFixed(2),
+      allocationType: allocation.allocationType,
+    }).toEqual({
+      id: evidence.allocationId,
+      paymentId: evidence.paymentId,
+      rentBillId: evidence.billIds[0],
+      allocatedAmount: '50.00',
+      reversedAmount: '0.00',
+      allocationType: 'AUTO_OLDEST_FIRST',
+    });
+  });
+
+  it('只冲销 DEBIT_TO_BILL 后剩余预收款并保留完整抵扣来源链', async () => {
+    const evidence = await createPrepaymentDebitApiFixture();
+    const expectedSourceChain = [
+      {
+        id: evidence.creditTransactionId,
+        transactionType: 'CREDIT_RECEIPT',
+        amount: '60.00',
+        balanceAfter: '60.00',
+        paymentId: evidence.paymentId,
+        rentBillId: null,
+      },
+      {
+        id: evidence.debitTransactionId,
+        transactionType: 'DEBIT_TO_BILL',
+        amount: '40.00',
+        balanceAfter: '20.00',
+        paymentId: evidence.paymentId,
+        rentBillId: evidence.billIds[1],
+      },
+    ];
+    const sourceBefore = await prisma.db.prepaymentTransaction.findMany({
+      where: {
+        id: {
+          in: [evidence.creditTransactionId, evidence.debitTransactionId],
+        },
+      },
+      select: {
+        id: true,
+        transactionType: true,
+        amount: true,
+        balanceAfter: true,
+        paymentId: true,
+        rentBillId: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+    expect(
+      sourceBefore.map((item) => ({
+        ...item,
+        amount: item.amount.toFixed(2),
+        balanceAfter: item.balanceAfter.toFixed(2),
+      })),
+    ).toEqual(expectedSourceChain);
+
+    const completedScenario = await executeScenario(evidence.fixture);
+    const [bills, payment, allocations, sourceAfter, prepaymentReversals] =
+      await Promise.all([
+        prisma.db.rentBill.findMany({
+          where: { id: { in: [...evidence.billIds] } },
+          select: {
+            id: true,
+            periodSeq: true,
+            payableAmount: true,
+            receivedAmount: true,
+            outstandingAmount: true,
+            status: true,
+          },
+          orderBy: { periodSeq: 'asc' },
+        }),
+        prisma.db.payment.findUniqueOrThrow({
+          where: { id: evidence.paymentId },
+          select: {
+            id: true,
+            receiptNo: true,
+            contractId: true,
+            paymentCategory: true,
+            amount: true,
+            status: true,
+          },
+        }),
+        prisma.db.paymentAllocation.findMany({
+          where: {
+            id: {
+              in: [evidence.initialAllocationId, evidence.debitAllocationId],
+            },
+          },
+          select: {
+            id: true,
+            paymentId: true,
+            rentBillId: true,
+            allocatedAmount: true,
+            reversedAmount: true,
+            allocationType: true,
+          },
+          orderBy: { id: 'asc' },
+        }),
+        prisma.db.prepaymentTransaction.findMany({
+          where: {
+            id: {
+              in: [evidence.creditTransactionId, evidence.debitTransactionId],
+            },
+          },
+          select: {
+            id: true,
+            transactionType: true,
+            amount: true,
+            balanceAfter: true,
+            paymentId: true,
+            rentBillId: true,
+          },
+          orderBy: { id: 'asc' },
+        }),
+        prisma.db.contractVoidReversal.findMany({
+          where: {
+            contractVoidRequestId: completedScenario.requestId,
+            category: 'PREPAYMENT',
+          },
+          select: {
+            originalEntityType: true,
+            originalEntityId: true,
+            amount: true,
+            balanceBefore: true,
+            balanceAfter: true,
+            generatedEntityType: true,
+            generatedEntityId: true,
+            metadata: true,
+          },
+        }),
+      ]);
+    expect(
+      bills.map((bill) => ({
+        id: bill.id,
+        periodSeq: bill.periodSeq,
+        payableAmount: bill.payableAmount.toFixed(2),
+        receivedAmount: bill.receivedAmount.toFixed(2),
+        outstandingAmount: bill.outstandingAmount.toFixed(2),
+        status: bill.status,
+      })),
+    ).toEqual([
+      {
+        id: evidence.billIds[0],
+        periodSeq: 1,
+        payableAmount: '100.00',
+        receivedAmount: '100.00',
+        outstandingAmount: '0.00',
+        status: 'VOIDED',
+      },
+      {
+        id: evidence.billIds[1],
+        periodSeq: 2,
+        payableAmount: '100.00',
+        receivedAmount: '40.00',
+        outstandingAmount: '60.00',
+        status: 'VOIDED',
+      },
+    ]);
+    expect({
+      id: payment.id,
+      receiptNo: payment.receiptNo,
+      contractId: payment.contractId,
+      paymentCategory: payment.paymentCategory,
+      amount: payment.amount.toFixed(2),
+      status: payment.status,
+    }).toEqual({
+      id: evidence.paymentId,
+      receiptNo: evidence.receiptNo,
+      contractId: evidence.fixture.contractId,
+      paymentCategory: 'RENT',
+      amount: '160.00',
+      status: 'VOIDED',
+    });
+    expect(
+      allocations.map((allocation) => ({
+        id: allocation.id,
+        paymentId: allocation.paymentId,
+        rentBillId: allocation.rentBillId,
+        allocatedAmount: allocation.allocatedAmount.toFixed(2),
+        reversedAmount: allocation.reversedAmount.toFixed(2),
+        allocationType: allocation.allocationType,
+      })),
+    ).toEqual([
+      {
+        id: evidence.initialAllocationId,
+        paymentId: evidence.paymentId,
+        rentBillId: evidence.billIds[0],
+        allocatedAmount: '100.00',
+        reversedAmount: '0.00',
+        allocationType: 'AUTO_OLDEST_FIRST',
+      },
+      {
+        id: evidence.debitAllocationId,
+        paymentId: evidence.paymentId,
+        rentBillId: evidence.billIds[1],
+        allocatedAmount: '40.00',
+        reversedAmount: '0.00',
+        allocationType: 'PREPAYMENT_AUTO',
+      },
+    ]);
+    expect(
+      sourceAfter.map((item) => ({
+        ...item,
+        amount: item.amount.toFixed(2),
+        balanceAfter: item.balanceAfter.toFixed(2),
+      })),
+    ).toEqual(expectedSourceChain);
+    expect(prepaymentReversals).toHaveLength(1);
+    const prepaymentReversal = prepaymentReversals[0];
+    expect({
+      originalEntityType: prepaymentReversal.originalEntityType,
+      originalEntityId: prepaymentReversal.originalEntityId,
+      amount: prepaymentReversal.amount.toFixed(2),
+      balanceBefore: prepaymentReversal.balanceBefore?.toFixed(2),
+      balanceAfter: prepaymentReversal.balanceAfter?.toFixed(2),
+      generatedEntityType: prepaymentReversal.generatedEntityType,
+      sourceTransactionId: (
+        prepaymentReversal.metadata as { sourceTransactionId?: number }
+      ).sourceTransactionId,
+    }).toEqual({
+      originalEntityType: 'ContractPrepaymentBalance',
+      originalEntityId: evidence.fixture.contractId,
+      amount: '-20.00',
+      balanceBefore: '20.00',
+      balanceAfter: '0.00',
+      generatedEntityType: 'PrepaymentTransaction',
+      sourceTransactionId: evidence.debitTransactionId,
+    });
+    const generated = await prisma.db.prepaymentTransaction.findUniqueOrThrow({
+      where: { id: prepaymentReversal.generatedEntityId! },
+      select: {
+        contractId: true,
+        transactionType: true,
+        amount: true,
+        balanceAfter: true,
+        paymentId: true,
+        rentBillId: true,
+      },
+    });
+    expect({
+      contractId: generated.contractId,
+      transactionType: generated.transactionType,
+      amount: generated.amount.toFixed(2),
+      balanceAfter: generated.balanceAfter.toFixed(2),
+      paymentId: generated.paymentId,
+      rentBillId: generated.rentBillId,
+    }).toEqual({
+      contractId: evidence.fixture.contractId,
+      transactionType: 'REVERSAL',
+      amount: '20.00',
+      balanceAfter: '0.00',
+      paymentId: null,
+      rentBillId: null,
+    });
+  });
   it('在真实 MySQL 中排除 VOIDED 关系来源的经营余额、租金、退租和提成', async () => {
     currentUser = superAdmin;
     const [overviewBefore, rentBefore, dashboardBefore, commissionsBefore] =
