@@ -22,3 +22,4 @@ backend/node_modules/
 backend/dist/
 backend/generated/
 deploy/test-data/
+deploy/manual-backups/

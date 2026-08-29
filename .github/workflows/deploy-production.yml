@@ -73,6 +73,25 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: 拉取已验证版本
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 制作精确版本部署包
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_path="$RUNNER_TEMP/srms-${GITHUB_SHA}.bundle"
+          remote_bundle="/tmp/srms-${GITHUB_SHA}.bundle"
+          git update-ref refs/heads/deploy-bundle "$GITHUB_SHA"
+          trap 'git update-ref -d refs/heads/deploy-bundle' EXIT
+          git bundle create "$bundle_path" refs/heads/deploy-bundle
+          test -s "$bundle_path"
+          git bundle verify "$bundle_path"
+          printf 'DEPLOY_BUNDLE=%s\n' "$bundle_path" >> "$GITHUB_ENV"
+          printf 'REMOTE_BUNDLE=%s\n' "$remote_bundle" >> "$GITHUB_ENV"
+
       - name: 配置 SSH
         shell: bash
         env:
@@ -90,7 +109,18 @@ jobs:
           chmod 600 "$HOME/.ssh/srms_deploy"
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts"
 
-      - name: 更新并重启 Docker 服务
+      - name: 上传部署包
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.SRMS_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.SRMS_DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.SRMS_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          scp -i "$HOME/.ssh/srms_deploy" -P "$DEPLOY_PORT" \
+            "$DEPLOY_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_BUNDLE"
+
+      - name: 备份数据库并更新 Docker 服务
         shell: bash
         env:
           DEPLOY_HOST: ${{ secrets.SRMS_DEPLOY_HOST }}
@@ -99,23 +129,106 @@ jobs:
           DEPLOY_DIR: ${{ secrets.SRMS_DEPLOY_DIR || '/opt/srms' }}
         run: |
           set -euo pipefail
+          printf -v remote_args '%q ' "$DEPLOY_DIR" "$GITHUB_SHA" "$REMOTE_BUNDLE"
           ssh -i "$HOME/.ssh/srms_deploy" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "DEPLOY_DIR='$DEPLOY_DIR' bash -s" <<'REMOTE'
+            "bash -s -- $remote_args" <<'REMOTE'
           set -euo pipefail
+          DEPLOY_DIR="$1"
+          EXPECTED_SHA="$2"
+          REMOTE_BUNDLE="$3"
+          cleanup() {
+            rm -f -- "$REMOTE_BUNDLE"
+          }
+          trap cleanup EXIT
+
           cd "$DEPLOY_DIR"
-          unsafe_changes="$(git status --porcelain | grep -v '^?? deploy/manual-backups/$' || true)"
+          unsafe_changes="$(git status --porcelain --untracked-files=all | grep -v '^?? deploy/manual-backups/' || true)"
           if [ -n "$unsafe_changes" ]; then
             echo '服务器工作区存在未提交修改，停止自动部署以保护现有内容。'
             printf '%s\n' "$unsafe_changes"
             exit 1
           fi
-          git fetch --prune origin main
-          git merge --ff-only origin/main
-          docker compose -p srms_prod --env-file deploy/.env \
+
+          test -s "$REMOTE_BUNDLE"
+          git bundle verify "$REMOTE_BUNDLE"
+          git fetch "$REMOTE_BUNDLE" refs/heads/deploy-bundle
+          fetched_sha="$(git rev-parse FETCH_HEAD)"
+          if [ "$fetched_sha" != "$EXPECTED_SHA" ]; then
+            echo '部署包版本与本次已验证版本不一致，停止部署。'
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD "$fetched_sha"; then
+            echo '服务器版本无法安全快进到本次部署版本，停止部署。'
+            exit 1
+          fi
+
+          compose=(docker compose -p srms_prod --env-file deploy/.env \
             -f deploy/docker-compose.yml \
-            -f deploy/docker-compose.production.yml \
-            up -d --build api web caddy
-          docker compose -p srms_prod --env-file deploy/.env \
-            -f deploy/docker-compose.yml \
-            -f deploy/docker-compose.production.yml ps
+            -f deploy/docker-compose.production.yml)
+          backup_dir="$DEPLOY_DIR/deploy/manual-backups"
+          backup_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          backup_file="$backup_dir/pre-deploy-${backup_stamp}-${EXPECTED_SHA:0:12}.sql"
+          mkdir -p "$backup_dir"
+          "${compose[@]}" exec -T mysql sh -lc \
+            'exec mysqldump --single-transaction --quick --routines --triggers --no-tablespaces -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+            > "$backup_file"
+          test -s "$backup_file"
+          grep -q '^-- MySQL dump' "$backup_file"
+          grep -q '^-- Dump completed on' "$backup_file"
+          backup_sha="$(sha256sum "$backup_file" | awk '{print $1}')"
+          printf '生产数据库备份完成：%s\n' "$(basename "$backup_file")"
+          printf '生产数据库备份 SHA-256：%s\n' "$backup_sha"
+
+          git merge --ff-only "$fetched_sha"
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then
+            echo '服务器代码版本校验失败，停止部署。'
+            exit 1
+          fi
+
+          "${compose[@]}" up -d --build api web caddy
+          for attempt in $(seq 1 30); do
+            mysql_id="$("${compose[@]}" ps -q mysql)"
+            api_id="$("${compose[@]}" ps -q api)"
+            web_id="$("${compose[@]}" ps -q web)"
+            caddy_id="$("${compose[@]}" ps -q caddy)"
+            mysql_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$mysql_id" 2>/dev/null || true)"
+            api_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$api_id" 2>/dev/null || true)"
+            web_status="$(docker inspect -f '{{.State.Status}}' "$web_id" 2>/dev/null || true)"
+            caddy_status="$(docker inspect -f '{{.State.Status}}' "$caddy_id" 2>/dev/null || true)"
+            if [ "$mysql_health" = 'healthy' ] && [ "$api_health" = 'healthy' ] \
+              && [ "$web_status" = 'running' ] && [ "$caddy_status" = 'running' ]; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo '容器未在规定时间内全部进入可用状态。'
+              "${compose[@]}" ps
+              exit 1
+            fi
+            sleep 5
+          done
+          "${compose[@]}" ps
           REMOTE
+
+      - name: 验证正式网站
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors \
+            https://www.hetfw.cn/ >/dev/null
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors \
+            https://www.hetfw.cn/api/health >/dev/null
+
+      - name: 清理服务器临时部署包
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.SRMS_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.SRMS_DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.SRMS_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          test -f "$HOME/.ssh/srms_deploy"
+          printf -v remote_bundle_q '%q' "$REMOTE_BUNDLE"
+          ssh -i "$HOME/.ssh/srms_deploy" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "rm -f -- $remote_bundle_q"
