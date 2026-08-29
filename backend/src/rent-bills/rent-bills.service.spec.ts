@@ -32,6 +32,44 @@ function bill(overrides: Record<string, unknown> = {}) {
 }
 
 describe('RentBillsService', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('marks past-due outstanding bills overdue before listing without marking bills due today', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-29T04:00:00.000Z'));
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const rows = [
+      bill({ status: 'OVERDUE', dueDate: new Date('2026-08-01') }),
+      bill({ id: 2, dueDate: new Date('2026-08-29') }),
+    ];
+    const prisma = {
+      db: {
+        rentBill: {
+          updateMany,
+          findMany: jest.fn().mockResolvedValue(rows),
+          count: jest.fn().mockResolvedValue(2),
+        },
+      },
+    } as any;
+
+    const result = await new RentBillsService(prisma).list({
+      month: '2026-08',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        dueDate: { lt: new Date('2026-08-29T00:00:00.000Z') },
+        outstandingAmount: { gt: 0 },
+        status: { in: ['PENDING', 'PARTIAL'] },
+      },
+      data: { status: 'OVERDUE' },
+    });
+    expect(result.summary.overdueCount).toBe(1);
+  });
+
   it('filters by month, status, building and keyword and returns paged summaries', async () => {
     const rows = [
       bill(),
@@ -46,6 +84,7 @@ describe('RentBillsService', () => {
     const prisma = {
       db: {
         rentBill: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
           findMany: jest.fn().mockResolvedValue(rows),
           count: jest.fn().mockResolvedValue(2),
         },
@@ -105,6 +144,7 @@ describe('RentBillsService', () => {
     const prisma = {
       db: {
         rentBill: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
           findMany: jest.fn().mockResolvedValue(rows),
           count: jest.fn().mockResolvedValue(2),
         },
@@ -143,6 +183,7 @@ describe('RentBillsService', () => {
     const prisma = {
       db: {
         rentBill: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
           findMany: jest.fn().mockResolvedValue(rows),
           count: jest.fn().mockResolvedValue(2),
         },

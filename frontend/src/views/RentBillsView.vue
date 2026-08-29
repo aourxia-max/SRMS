@@ -16,6 +16,7 @@ const detail = ref<RentBillDetail | null>(null)
 const drawer = ref(false)
 const total = ref(0)
 const summary = ref({ payable: '0.00', received: '0.00', outstanding: '0.00', count: 0, overdueCount: 0 })
+const monthlyMovement = ref({ monthlyMoveInCount: 0, monthlyCheckoutCount: 0 })
 const filters = reactive<RentBillQuery>({ keyword: '', buildingId: undefined, status: undefined, month: currentRentBillMonth(), page: 1, pageSize: 20 })
 
 const monthLabel = computed(() => filters.month ? `${filters.month.slice(0, 4)}年${Number(filters.month.slice(5, 7))}月` : '全部月份')
@@ -28,6 +29,18 @@ const period = (row: RentBillListItem) => `${date(row.periodStart)} 至 ${date(r
 async function loadBuildings() {
   buildings.value = (await http.get('/properties/buildings')).data.data
 }
+async function loadMonthlyMovement() {
+  try {
+    const params = filters.buildingId ? { buildingId: filters.buildingId } : {}
+    const data = (await http.get('/dashboard', { params })).data.data
+    monthlyMovement.value = {
+      monthlyMoveInCount: Number(data.monthlyMoveInCount || 0),
+      monthlyCheckoutCount: Number(data.monthlyCheckoutCount || 0),
+    }
+  } catch {
+    ElMessage.error('本月新增与退租统计加载失败，请稍后重试')
+  }
+}
 async function loadBills() {
   loading.value = true
   try {
@@ -37,7 +50,7 @@ async function loadBills() {
     ElMessage.error('租金账单加载失败，请稍后重试')
   } finally { loading.value = false }
 }
-async function search() { filters.page = 1; await loadBills() }
+async function search() { filters.page = 1; await Promise.all([loadBills(), loadMonthlyMovement()]) }
 async function openDetail(row: { id: number }) {
   drawer.value = true; detailLoading.value = true; detail.value = null
   try { detail.value = await fetchRentBill(row.id) } catch { ElMessage.error('账单详情加载失败') } finally { detailLoading.value = false }
@@ -52,7 +65,7 @@ function goContract() { if (detail.value) router.push(`/contracts?contractId=${d
 function resetFilters() { filters.keyword = ''; filters.buildingId = undefined; filters.status = undefined; filters.month = currentRentBillMonth(); search() }
 
 onMounted(async () => {
-  await Promise.all([loadBuildings(), loadBills()])
+  await Promise.all([loadBuildings(), loadBills(), loadMonthlyMovement()])
   const rentBillId = positiveQueryId(route.query.rentBillId)
   if (rentBillId) await openDetail({ id: rentBillId })
 })
@@ -66,7 +79,7 @@ onMounted(async () => {
       <el-card shadow="never"><span>本月应收</span><strong>{{ money(summary.payable) }}</strong><small>{{ monthLabel }}</small></el-card>
       <el-card shadow="never"><span>本月已收</span><strong>{{ money(summary.received) }}</strong><small>收缴率 {{ summary.payable === '0.00' ? '0.0' : (Number(summary.received) / Number(summary.payable) * 100).toFixed(1) }}%</small></el-card>
       <el-card shadow="never"><span>待收账单</span><strong>{{ summary.count }} <em>笔</em></strong><small class="danger-text">含逾期 {{ summary.overdueCount }} 笔</small></el-card>
-      <el-card shadow="never"><span>本月新增 / 退租</span><strong>— <em>/ —</em></strong><small>以驾驶舱实际操作统计</small></el-card>
+      <el-card shadow="never"><span>本月新增 / 退租</span><strong>{{ monthlyMovement.monthlyMoveInCount }} <em>/ {{ monthlyMovement.monthlyCheckoutCount }}</em></strong><small>新增合同 / 实际退租</small></el-card>
     </section>
 
     <el-card class="filter-card" shadow="never"><el-form :inline="true" @submit.prevent="search"><el-form-item><el-input v-model="filters.keyword" clearable placeholder="搜索房号、合同编号、承租人" @keyup.enter="search" /></el-form-item><el-form-item><el-select v-model="filters.buildingId" clearable placeholder="全部楼栋"><el-option v-for="building in buildings" :key="building.id" :label="building.buildingNo" :value="building.id" /></el-select></el-form-item><el-form-item><el-select v-model="filters.status" clearable placeholder="全部账单状态"><el-option v-for="(value, key) in statusMap" :key="key" :label="value.label" :value="key" /></el-select></el-form-item><el-form-item><el-date-picker v-model="filters.month" type="month" value-format="YYYY-MM" placeholder="选择账期月份" /></el-form-item><el-form-item><el-button type="primary" :loading="loading" @click="search">查询</el-button></el-form-item></el-form></el-card>

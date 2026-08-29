@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, RentBillStatus } from '@prisma/client';
+import { contractBusinessDay } from '../contracts/contract-business-day';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListRentBillsDto } from './dto/list-rent-bills.dto';
 
@@ -63,6 +64,17 @@ const money = (value: Prisma.Decimal | string | number) =>
 @Injectable()
 export class RentBillsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async reconcileOverdueBills(now = new Date()) {
+    await this.prisma.db.rentBill.updateMany({
+      where: {
+        dueDate: { lt: contractBusinessDay(now) },
+        outstandingAmount: { gt: 0 },
+        status: { in: ['PENDING', 'PARTIAL'] },
+      },
+      data: { status: 'OVERDUE' },
+    });
+  }
 
   private where(dto: ListRentBillsDto): Prisma.RentBillWhereInput {
     const keyword = dto.keyword?.trim();
@@ -131,6 +143,7 @@ export class RentBillsService {
 
   async list(dto: ListRentBillsDto) {
     const where = this.where(dto);
+    await this.reconcileOverdueBills();
     const [all, total] = await Promise.all([
       this.prisma.db.rentBill.findMany({
         where,

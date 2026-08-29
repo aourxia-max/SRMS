@@ -42,13 +42,12 @@ const cashSummary = computed(() => [
   { label: '净资金流', value: cash.value.netCashFlow, tone: 'blue' },
 ])
 const kpis = computed(() => [
+  { label: '有效实收', value: collection.value.total?.validReceived, hint: '已分配租金', tone: 'green' },
   { label: '押金余额总额', value: overview.value.depositBalanceTotal, hint: '当前实际保管押金', tone: 'green' },
   { label: '原应收', value: collection.value.total?.originalReceivable, hint: '账期口径', tone: 'blue' },
-  { label: '优惠减免', value: collection.value.total?.concessionAmount, hint: '免租和折扣', tone: 'orange' },
   { label: '净应收', value: collection.value.total?.netReceivable, hint: '优惠后应收', tone: 'blue' },
-  { label: '有效实收', value: collection.value.total?.validReceived, hint: '已分配租金', tone: 'green' },
+  { label: '优惠减免', value: collection.value.total?.concessionAmount, hint: '免租和折扣', tone: 'orange' },
   { label: '未收', value: collection.value.total?.outstanding, hint: '仍需跟进', tone: 'red' },
-  { label: '收租率', value: `${collection.value.collectionRate === null ? 0 : Number(collection.value.collectionRate || 0).toFixed(2)}%`, hint: '实收 / 净应收', tone: 'blue', percent: true },
 ])
 
 function formatMoney(value: unknown) {
@@ -159,7 +158,7 @@ onBeforeUnmount(() => {
     <section class="metrics">
       <article v-for="item in kpis" :key="item.label" class="metric" :class="item.tone">
         <span>{{ item.label }}</span>
-        <b>{{ item.percent ? item.value : formatMoney(item.value) }}</b>
+        <b>{{ formatMoney(item.value) }}</b>
         <small>{{ item.hint }}</small>
       </article>
     </section>

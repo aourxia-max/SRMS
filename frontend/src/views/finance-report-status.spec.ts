@@ -90,4 +90,26 @@ describe('财务报表账单状态中文显示', () => {
     expect(wrapper.text()).toContain('当前实际保管押金')
     wrapper.unmount()
   })
+
+  it('displays the finance overview cards in the approved order without collection rate', async () => {
+    const wrapper = mount(FinanceView, {
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    const labels = wrapper
+      .findAll('.metrics .metric')
+      .map((card) => card.find('span').text())
+
+    expect(labels).toEqual([
+      '有效实收',
+      '押金余额总额',
+      '原应收',
+      '净应收',
+      '优惠减免',
+      '未收',
+    ])
+    expect(wrapper.find('.metrics').text()).not.toContain('收租率')
+    wrapper.unmount()
+  })
 })

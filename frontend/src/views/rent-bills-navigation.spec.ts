@@ -138,4 +138,30 @@ describe('租金账单关联收款', () => {
     expect(fetchRentBill).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  it('显示驾驶舱统计的本月新增租房和实际退租数量', async () => {
+    vi.mocked(http.get).mockImplementation(async (url) => {
+      if (url === '/dashboard') {
+        return {
+          data: {
+            data: { monthlyMoveInCount: 1, monthlyCheckoutCount: 0 },
+          },
+        }
+      }
+      return { data: { data: [] } }
+    })
+    vi.mocked(fetchRentBills).mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+      summary: { payable: '0.00', received: '0.00', outstanding: '0.00', count: 0, overdueCount: 0 },
+    })
+
+    const wrapper = mount(RentBillsView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 / 0')
+    wrapper.unmount()
+  })
 })
