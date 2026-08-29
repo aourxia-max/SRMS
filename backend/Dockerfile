@@ -8,9 +8,9 @@ RUN npm run prisma:generate && npm run build
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PDF_FONT_PATH=/usr/share/fonts/noto/NotoSansCJK-Regular.ttc
+ENV PDF_FONT_PATH=/usr/share/fonts/droid-nonlatin/DroidSansFallbackFull.ttf
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tencent.com/g' /etc/apk/repositories \
-  && apk add --no-cache mariadb-client font-noto-cjk
+  && apk add --no-cache mariadb-client font-droid-nonlatin
 COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
