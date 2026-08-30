@@ -1,6 +1,7 @@
 import {
   BillAdjustmentType,
   CheckoutRentRefundAllocationStatus,
+  CheckoutSettlementItemType,
   PaymentAllocationType,
   PaymentMethod,
   Prisma,
@@ -50,7 +51,6 @@ describe('payment workflow Prisma model', () => {
       'AUTO_OLDEST_FIRST',
       'MANUAL_SUPER_ADMIN',
       'PREPAYMENT_AUTO',
-      'RENT_REFUND',
     ]);
     expect(Object.values(RefundAdjustmentDecision)).toEqual([
       'REVERSE',
@@ -74,7 +74,8 @@ describe('payment workflow Prisma model', () => {
   });
 
   it('exposes the checkout rent-refund reservation contract', () => {
-    expect(Object.values(PaymentAllocationType)).toContain('RENT_REFUND');
+    expect(Object.values(PaymentAllocationType)).not.toContain('RENT_REFUND');
+    expect(Object.values(CheckoutSettlementItemType)).toContain('RENT_REFUND');
     expect(Object.values(BillAdjustmentType)).toContain('CHECKOUT_RENT_REFUND');
     expect(Object.values(CheckoutRentRefundAllocationStatus)).toEqual([
       'RESERVED',
@@ -162,27 +163,82 @@ describe('payment workflow Prisma model', () => {
     });
   });
   it('aborts before backfill when a historic refund total disagrees with its settlement snapshot', () => {
-    const migration = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260830090000_checkout_rent_refund/migration.sql'), 'utf8');
-    const statements = migration.split(';').map((item) => item.trim().replace(/\s+/g, ' '));
-    const guardInserts = statements.filter((item) => item.startsWith('INSERT INTO') && item.includes('checkout_rent_refund_backfill_guard'));
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        'prisma/migrations/20260830090000_checkout_rent_refund/migration.sql',
+      ),
+      'utf8',
+    );
+    const statements = migration
+      .split(';')
+      .map((item) => item.trim().replace(/\s+/g, ' '));
+    const guardInserts = statements.filter(
+      (item) =>
+        item.startsWith('INSERT INTO') &&
+        item.includes('checkout_rent_refund_backfill_guard'),
+    );
     expect(guardInserts).toHaveLength(2);
-    expect(guardInserts[1]).toMatch(/refund_amount.*deposit_refundable_amount.*prepayment_refundable_amount/);
+    expect(guardInserts[1]).toMatch(
+      /refund_amount.*deposit_refundable_amount.*prepayment_refundable_amount/,
+    );
   });
   it('exposes complete allocation field semantics through Prisma metadata', () => {
     const allocation = model('CheckoutRentRefundAllocation');
-    const fields = new Map(allocation?.fields.map((field) => [field.name, field]));
-    expect(fields.get('reservedAmount')).toMatchObject({ kind: 'scalar', type: 'Decimal' });
-    expect(fields.get('status')).toMatchObject({ kind: 'enum', type: 'CheckoutRentRefundAllocationStatus' });
+    const fields = new Map(
+      allocation?.fields.map((field) => [field.name, field]),
+    );
+    expect(fields.get('reservedAmount')).toMatchObject({
+      kind: 'scalar',
+      type: 'Decimal',
+    });
+    expect(fields.get('status')).toMatchObject({
+      kind: 'enum',
+      type: 'CheckoutRentRefundAllocationStatus',
+    });
     expect(fields.get('reservedAt')).toMatchObject({ type: 'DateTime' });
     expect(fields.get('releasedAt')).toMatchObject({ type: 'DateTime' });
     expect(fields.get('appliedAt')).toMatchObject({ type: 'DateTime' });
-    expect(allocation?.fields.filter((field) => field.kind === 'object').map((field) => field.type)).toEqual(expect.arrayContaining(['CheckoutSettlementItem', 'PaymentAllocation', 'Payment', 'RentBill', 'DepositRefund']));
-    const sql = execFileSync(process.execPath, [resolve(process.cwd(), 'node_modules/prisma/build/index.js'), 'migrate', 'diff', '--from-empty', '--to-schema', 'prisma/schema.prisma', '--script'], { cwd: process.cwd(), encoding: 'utf8' });
-    expect(sql).toMatch(/checkout_rent_refund_allocations[\s\S]*reserved_amount.*DECIMAL\(14, 2\).*NOT NULL[\s\S]*status.*DEFAULT 'RESERVED'/);
+    expect(
+      allocation?.fields
+        .filter((field) => field.kind === 'object')
+        .map((field) => field.type),
+    ).toEqual(
+      expect.arrayContaining([
+        'CheckoutSettlementItem',
+        'PaymentAllocation',
+        'Payment',
+        'RentBill',
+        'DepositRefund',
+      ]),
+    );
+    const sql = execFileSync(
+      process.execPath,
+      [
+        resolve(process.cwd(), 'node_modules/prisma/build/index.js'),
+        'migrate',
+        'diff',
+        '--from-empty',
+        '--to-schema',
+        'prisma/schema.prisma',
+        '--script',
+      ],
+      { cwd: process.cwd(), encoding: 'utf8' },
+    );
+    expect(sql).toMatch(
+      /CREATE TABLE `checkout_settlement_items`[\s\S]*`item_type` ENUM\([^)]*'RENT_REFUND'[^)]*\) NOT NULL/,
+    );
+    expect(sql).toMatch(
+      /checkout_rent_refund_allocations[\s\S]*reserved_amount.*DECIMAL\(14, 2\).*NOT NULL[\s\S]*status.*DEFAULT 'RESERVED'/,
+    );
     expect(sql).toMatch(/`reserved_at`\s+DATETIME\(3\)\s+NOT NULL/);
     expect(sql).toMatch(/`released_at`\s+DATETIME\(3\)\s+NULL,/);
     expect(sql).toMatch(/`applied_at`\s+DATETIME\(3\)\s+NULL,/);
-    expect(sql).toMatch(/idx_checkout_rent_refund_item_status[\s\S]*idx_checkout_rent_refund_allocation_status[\s\S]*idx_checkout_rent_refund_refund/);
-    expect(sql).toMatch(/fk_checkout_rent_refund_item[\s\S]*fk_checkout_rent_refund_allocation[\s\S]*fk_checkout_rent_refund_payment[\s\S]*fk_checkout_rent_refund_bill[\s\S]*fk_checkout_rent_refund_refund/);
+    expect(sql).toMatch(
+      /idx_checkout_rent_refund_item_status[\s\S]*idx_checkout_rent_refund_allocation_status[\s\S]*idx_checkout_rent_refund_refund/,
+    );
+    expect(sql).toMatch(
+      /fk_checkout_rent_refund_item[\s\S]*fk_checkout_rent_refund_allocation[\s\S]*fk_checkout_rent_refund_payment[\s\S]*fk_checkout_rent_refund_bill[\s\S]*fk_checkout_rent_refund_refund/,
+    );
   });
 });

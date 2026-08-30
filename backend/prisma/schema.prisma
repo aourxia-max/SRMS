@@ -202,7 +202,6 @@ enum PaymentAllocationType {
   AUTO_OLDEST_FIRST
   MANUAL_SUPER_ADMIN
   PREPAYMENT_AUTO
-  RENT_REFUND
 }
 
 enum RefundAdjustmentDecision {
@@ -273,6 +272,7 @@ enum CheckoutSettlementItemType {
   REPAIR
   CLEANING
   OTHER
+  RENT_REFUND
 }
 
 enum CheckoutRentRefundAllocationStatus {

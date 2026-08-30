@@ -36,6 +36,9 @@ describe('CheckoutService.preview', () => {
       prepaymentTransaction: {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
       },
+      paymentAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
     const service = new CheckoutService({ db } as never);
 
@@ -59,7 +62,10 @@ describe('CheckoutService.preview', () => {
       otherDeductionAmount: '2000.00',
       depositRefundableAmount: '6400.00',
       prepaymentRefundableAmount: '500.00',
+      rentRefundableAmount: '0.00',
       totalRefundAmount: '6900.00',
+      maxRentRefundAmount: '0.00',
+      rentRefundAllocations: [],
       supplementalArrearsAmount: '0.00',
       supplementalInspectionAmount: '0.00',
       finalReceivable: '0.00',

@@ -5,6 +5,7 @@ type CheckoutAmountsInput = {
   prepaymentBalance: Prisma.Decimal.Value;
   rentOutstanding: Prisma.Decimal.Value;
   otherCharges: Prisma.Decimal.Value;
+  rentRefundAmount?: Prisma.Decimal.Value;
 };
 
 const amount = (value: Prisma.Decimal.Value) =>
@@ -16,6 +17,7 @@ export function calculateCheckoutAmounts(input: CheckoutAmountsInput) {
   const prepayment = amount(input.prepaymentBalance);
   const arrears = amount(input.rentOutstanding);
   const charges = amount(input.otherCharges);
+  const rentRefund = amount(input.rentRefundAmount ?? 0);
   const depositOffset = Prisma.Decimal.min(deposit, arrears);
   const afterArrears = deposit.minus(depositOffset);
   const otherDeduction = Prisma.Decimal.min(afterArrears, charges);
@@ -35,7 +37,10 @@ export function calculateCheckoutAmounts(input: CheckoutAmountsInput) {
     otherDeductionAmount: money(otherDeduction),
     depositRefundableAmount: money(depositRefundable),
     prepaymentRefundableAmount: money(prepayment),
-    totalRefundAmount: money(depositRefundable.plus(prepayment)),
+    rentRefundableAmount: money(rentRefund),
+    totalRefundAmount: money(
+      depositRefundable.plus(prepayment).plus(rentRefund),
+    ),
     supplementalArrearsAmount: money(supplementalArrears),
     supplementalInspectionAmount: money(supplementalInspection),
     finalReceivable: money(finalReceivable),

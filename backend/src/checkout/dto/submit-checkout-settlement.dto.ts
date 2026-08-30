@@ -1,5 +1,5 @@
 import { CheckoutSettlementItemType, RoomStatus } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -10,16 +10,24 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
 
 export class CheckoutSettlementItemDto {
   @IsEnum(CheckoutSettlementItemType) itemType!: CheckoutSettlementItemType;
-  @IsNumberString() amount!: string;
+  @IsNumberString()
+  @Matches(/^(?=.*[1-9])\d+(?:\.\d+)?$/)
+  amount!: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) rentBillId?: number;
   @IsOptional() @IsString() @Length(1, 100) inspectionRecordRef?: string;
-  @IsString() @Length(1, 500) description!: string;
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @Length(1, 500)
+  description!: string;
   @IsOptional() @IsBoolean() evidenceRequired = false;
   @IsOptional() @IsBoolean() confirmedByTenant = false;
 }

@@ -6,11 +6,11 @@ INNER JOIN `checkout_settlements` AS cs ON cs.`id` = dr.`checkout_settlement_id`
 WHERE dr.`refund_amount` <> cs.`deposit_refundable_amount` + cs.`prepayment_refundable_amount`
 LIMIT 1;
 DROP TEMPORARY TABLE `checkout_rent_refund_backfill_guard`;
-ALTER TABLE `payment_allocations`
-  MODIFY COLUMN `allocation_type` ENUM('AUTO_OLDEST_FIRST', 'MANUAL_SUPER_ADMIN', 'PREPAYMENT_AUTO', 'RENT_REFUND') NOT NULL DEFAULT 'AUTO_OLDEST_FIRST';
-
 ALTER TABLE `bill_adjustments`
   MODIFY COLUMN `adjustment_type` ENUM('DISCOUNT', 'WAIVER', 'INCREASE', 'CORRECTION', 'CHECKOUT_RENT_REFUND') NOT NULL;
+
+ALTER TABLE `checkout_settlement_items`
+  MODIFY COLUMN `item_type` ENUM('RENT_ARREARS', 'DAMAGE', 'REPAIR', 'CLEANING', 'OTHER', 'RENT_REFUND') NOT NULL;
 
 ALTER TABLE `checkout_settlements`
   ADD COLUMN `rent_refundable_amount` DECIMAL(14,2) NOT NULL DEFAULT 0 AFTER `prepayment_refundable_amount`;

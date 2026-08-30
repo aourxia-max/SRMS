@@ -1354,4 +1354,354 @@ describe('CheckoutService', () => {
         .invocationCallOrder[0],
     );
   });
+
+  it('submits one rent-refund item without a bill or inspection reference', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 1, status: 'PENDING' });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+        update,
+      },
+      checkoutSettlementItem: { deleteMany: jest.fn() },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        1,
+        {
+          actualCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          targetRoomStatus: 'EMPTY',
+          items: [
+            {
+              itemType: 'RENT_REFUND',
+              amount: '100.00',
+              description: '提前退房退还未履行租金',
+            },
+          ],
+        } as never,
+        user,
+      ),
+    ).resolves.toEqual({ id: 1, status: 'PENDING' });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          items: {
+            create: [
+              expect.objectContaining({
+                itemType: 'RENT_REFUND',
+                amount: expect.any(Prisma.Decimal),
+              }),
+            ],
+          },
+        }),
+      }),
+    );
+  });
+
+  it('rejects duplicate rent-refund items before writing a submitted settlement', async () => {
+    const deleteMany = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+        update: jest.fn(),
+      },
+      checkoutSettlementItem: { deleteMany },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        1,
+        {
+          actualCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          targetRoomStatus: 'EMPTY',
+          items: [
+            {
+              itemType: 'RENT_REFUND',
+              amount: '100.00',
+              description: '第一项',
+            },
+            {
+              itemType: 'RENT_REFUND',
+              amount: '50.00',
+              description: '第二项',
+            },
+          ],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('同一退租结算只能添加一项退还租金');
+    expect(deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('previews rent refund allocations from the unoccupied balance without writing', async () => {
+    const checkoutRentRefundCreate = jest.fn();
+    const paymentAllocationUpdate = jest.fn();
+    const db = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 8,
+          contractId: 3,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '100.00' }),
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '50.00' }),
+      },
+      paymentAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 101,
+            paymentId: 11,
+            rentBillId: 21,
+            allocatedAmount: new Prisma.Decimal('1000.00'),
+            reversedAmount: new Prisma.Decimal('100.00'),
+            payment: { paymentDate: new Date('2026-08-05') },
+            rentBill: {
+              periodStart: new Date('2026-08-01'),
+              periodEnd: new Date('2026-08-31'),
+            },
+            refundAllocations: [
+              { reversedAmount: new Prisma.Decimal('200.00') },
+            ],
+            checkoutRentRefundAllocations: [
+              { reservedAmount: new Prisma.Decimal('300.00') },
+            ],
+          },
+          {
+            id: 102,
+            paymentId: 12,
+            rentBillId: 22,
+            allocatedAmount: new Prisma.Decimal('500.00'),
+            reversedAmount: new Prisma.Decimal('50.00'),
+            payment: { paymentDate: new Date('2026-08-06') },
+            rentBill: {
+              periodStart: new Date('2026-09-01'),
+              periodEnd: new Date('2026-09-30'),
+            },
+            refundAllocations: [
+              { reversedAmount: new Prisma.Decimal('25.00') },
+            ],
+            checkoutRentRefundAllocations: [
+              { reservedAmount: new Prisma.Decimal('75.00') },
+            ],
+          },
+        ]),
+        update: paymentAllocationUpdate,
+      },
+      checkoutRentRefundAllocation: { create: checkoutRentRefundCreate },
+    };
+    const service = new CheckoutService({ db } as never);
+
+    await expect(
+      service.preview(8, {
+        actualCheckoutDate: '2026-08-15',
+        handoverDate: '2026-08-15',
+        inspectionAt: '2026-08-15T09:00:00.000Z',
+        targetRoomStatus: 'EMPTY',
+        items: [
+          {
+            itemType: 'RENT_REFUND',
+            amount: '600.00',
+            description: '提前退房退还未履行租金',
+          },
+        ],
+      } as never),
+    ).resolves.toMatchObject({
+      depositRefundableAmount: '100.00',
+      prepaymentRefundableAmount: '50.00',
+      rentRefundableAmount: '600.00',
+      maxRentRefundAmount: '750.00',
+      totalRefundAmount: '750.00',
+      rentRefundAllocations: [
+        {
+          paymentAllocationId: 102,
+          paymentId: 12,
+          rentBillId: 22,
+          amount: '350.00',
+        },
+        {
+          paymentAllocationId: 101,
+          paymentId: 11,
+          rentBillId: 21,
+          amount: '250.00',
+        },
+      ],
+    });
+    expect(db.paymentAllocation.findMany).toHaveBeenCalledWith({
+      where: {
+        payment: {
+          contractId: 3,
+          paymentCategory: 'RENT',
+          status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] },
+        },
+        rentBill: { billCategory: 'RENT' },
+      },
+      select: {
+        id: true,
+        paymentId: true,
+        rentBillId: true,
+        allocatedAmount: true,
+        reversedAmount: true,
+        payment: { select: { paymentDate: true } },
+        rentBill: { select: { periodStart: true, periodEnd: true } },
+        refundAllocations: {
+          where: { paymentRefund: { approvalStatus: 'PENDING' } },
+          select: { reversedAmount: true },
+        },
+        checkoutRentRefundAllocations: {
+          where: { status: 'RESERVED' },
+          select: { reservedAmount: true },
+        },
+      },
+    });
+    expect(checkoutRentRefundCreate).not.toHaveBeenCalled();
+    expect(paymentAllocationUpdate).not.toHaveBeenCalled();
+  });
+
+  it('translates a nonzero rent-refund excess to the specified Chinese error', async () => {
+    const db = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 8,
+          contractId: 3,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+      },
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 101,
+            paymentId: 11,
+            rentBillId: 21,
+            allocatedAmount: new Prisma.Decimal('100.00'),
+            reversedAmount: new Prisma.Decimal('0.00'),
+            payment: { paymentDate: new Date('2026-08-05') },
+            rentBill: {
+              periodStart: new Date('2026-08-01'),
+              periodEnd: new Date('2026-08-31'),
+            },
+            refundAllocations: [],
+            checkoutRentRefundAllocations: [],
+          },
+        ]),
+      },
+    };
+    const service = new CheckoutService({ db } as never);
+
+    await expect(
+      service.preview(8, {
+        actualCheckoutDate: '2026-08-15',
+        handoverDate: '2026-08-15',
+        inspectionAt: '2026-08-15T09:00:00.000Z',
+        targetRoomStatus: 'EMPTY',
+        items: [
+          {
+            itemType: 'RENT_REFUND',
+            amount: '100.01',
+            description: '提前退房退还未履行租金',
+          },
+        ],
+      } as never),
+    ).rejects.toThrow('退还租金不能超过当前可回冲金额 ¥100.00。');
+  });
+
+  it('translates an unavailable rent refund preview to the specified Chinese error', async () => {
+    const db = {
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 8,
+          contractId: 3,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+      },
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new CheckoutService({ db } as never);
+
+    await expect(
+      service.preview(8, {
+        actualCheckoutDate: '2026-08-15',
+        handoverDate: '2026-08-15',
+        inspectionAt: '2026-08-15T09:00:00.000Z',
+        targetRoomStatus: 'EMPTY',
+        items: [
+          {
+            itemType: 'RENT_REFUND',
+            amount: '0.01',
+            description: '提前退房退还未履行租金',
+          },
+        ],
+      } as never),
+    ).rejects.toThrow('当前合同没有可回冲的已缴租金。');
+  });
 });

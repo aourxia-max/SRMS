@@ -14,6 +14,7 @@ describe('calculateCheckoutAmounts', () => {
       otherDeductionAmount: '8400.00',
       depositRefundableAmount: '0.00',
       prepaymentRefundableAmount: '1200.00',
+      rentRefundableAmount: '0.00',
       totalRefundAmount: '1200.00',
       supplementalArrearsAmount: '0.00',
       supplementalInspectionAmount: '600.00',
@@ -34,6 +35,23 @@ describe('calculateCheckoutAmounts', () => {
       prepaymentRefundableAmount: '500.00',
       totalRefundAmount: '7500.00',
       finalReceivable: '0.00',
+    });
+  });
+
+  it('adds rent refunds to the refund total without offsetting arrears or inspection charges', () => {
+    expect(
+      calculateCheckoutAmounts({
+        depositBalance: '10000.00',
+        prepaymentBalance: '1000.00',
+        rentOutstanding: '0.00',
+        otherCharges: '500.00',
+        rentRefundAmount: '2000.00',
+      }),
+    ).toMatchObject({
+      depositRefundableAmount: '9500.00',
+      prepaymentRefundableAmount: '1000.00',
+      rentRefundableAmount: '2000.00',
+      totalRefundAmount: '12500.00',
     });
   });
 });
