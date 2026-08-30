@@ -147,6 +147,7 @@ async function loadCompletedContracts(
 }
 async function openCompletedDetail(settlementId: number) {
   closeRefundProofPreview();
+  completedDetail.value = undefined;
   const requestVersion = ++completedDetailRequestVersion;
   actionError.value = "";
   try {
@@ -199,10 +200,31 @@ function refundProofFilename(disposition: unknown, fileId: number) {
   }
   return "退款凭证-" + fileId;
 }
-async function downloadRefundProof(refundId: number, fileId: number) {
+function isCompletedDetailContextCurrent(
+  settlementId?: number,
+  requestVersion?: number,
+) {
+  return (
+    settlementId === undefined ||
+    (completedDetail.value?.id === settlementId &&
+      completedDetailRequestVersion === requestVersion)
+  );
+}
+async function downloadRefundProof(
+  refundId: number,
+  fileId: number,
+  completedSettlementId?: number,
+) {
+  const contextVersion = completedSettlementId
+    ? completedDetailRequestVersion
+    : undefined;
+  if (!isCompletedDetailContextCurrent(completedSettlementId, contextVersion))
+    return;
   actionError.value = "";
   try {
     const response = await checkoutApi.downloadRefundProof(refundId, fileId);
+    if (!isCompletedDetailContextCurrent(completedSettlementId, contextVersion))
+      return;
     const url = URL.createObjectURL(response.data);
     try {
       const link = document.createElement("a");
@@ -216,7 +238,8 @@ async function downloadRefundProof(refundId: number, fileId: number) {
       URL.revokeObjectURL(url);
     }
   } catch (error) {
-    actionError.value = message(error, "退款凭证下载失败，请稍后重试");
+    if (isCompletedDetailContextCurrent(completedSettlementId, contextVersion))
+      actionError.value = message(error, "退款凭证下载失败，请稍后重试");
   }
 }
 function closeRefundProofPreview() {
@@ -226,7 +249,32 @@ function closeRefundProofPreview() {
   }
   refundProofPreview.value = undefined;
 }
-async function previewRefundProof(refundId: number, fileId: number) {
+function previewCompletedRefundProof(
+  settlementId: number | undefined,
+  refundId: number,
+  fileId: number,
+) {
+  if (!settlementId) return;
+  return previewRefundProof(refundId, fileId, settlementId);
+}
+function downloadCompletedRefundProof(
+  settlementId: number | undefined,
+  refundId: number,
+  fileId: number,
+) {
+  if (!settlementId) return;
+  return downloadRefundProof(refundId, fileId, settlementId);
+}
+async function previewRefundProof(
+  refundId: number,
+  fileId: number,
+  completedSettlementId?: number,
+) {
+  const contextVersion = completedSettlementId
+    ? completedDetailRequestVersion
+    : undefined;
+  if (!isCompletedDetailContextCurrent(completedSettlementId, contextVersion))
+    return;
   actionError.value = "";
   closeRefundProofPreview();
   const requestVersion = refundProofPreviewVersion;
@@ -236,12 +284,18 @@ async function previewRefundProof(refundId: number, fileId: number) {
       response.headers["content-type"] || response.data.type || "",
     ).toLowerCase();
     if (!mimeType.startsWith("image/") && mimeType !== "application/pdf") {
-      if (requestVersion === refundProofPreviewVersion)
+      if (
+        requestVersion === refundProofPreviewVersion &&
+        isCompletedDetailContextCurrent(completedSettlementId, contextVersion)
+      )
         actionError.value = "该凭证格式暂不支持在线预览，请下载后查看";
       return;
     }
     const url = URL.createObjectURL(response.data);
-    if (requestVersion !== refundProofPreviewVersion) {
+    if (
+      requestVersion !== refundProofPreviewVersion ||
+      !isCompletedDetailContextCurrent(completedSettlementId, contextVersion)
+    ) {
       URL.revokeObjectURL(url);
       return;
     }
@@ -254,7 +308,10 @@ async function previewRefundProof(refundId: number, fileId: number) {
       ),
     };
   } catch (error) {
-    if (requestVersion === refundProofPreviewVersion)
+    if (
+      requestVersion === refundProofPreviewVersion &&
+      isCompletedDetailContextCurrent(completedSettlementId, contextVersion)
+    )
       actionError.value = message(error, "退款凭证预览失败，请稍后重试");
   }
 }
@@ -563,7 +620,7 @@ onMounted(initialize);
                   "
                   type="button"
                   class="checkout-workspace__proof-download"
-                  @click="previewRefundProof(refund.id, file.fileAssetId)"
+                  @click="previewCompletedRefundProof(completedDetail?.id, refund.id, file.fileAssetId)"
                 >
                   在线预览
                 </button>
@@ -576,7 +633,7 @@ onMounted(initialize);
                   "
                   type="button"
                   class="checkout-workspace__proof-download"
-                  @click="downloadRefundProof(refund.id, file.fileAssetId)"
+                  @click="downloadCompletedRefundProof(completedDetail?.id, refund.id, file.fileAssetId)"
                 >
                   下载凭证：{{ file.originalName || "退款凭证-" + file.fileAssetId }}（凭证编号：{{ file.fileAssetId }}）
                 </button>

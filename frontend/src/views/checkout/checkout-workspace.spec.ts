@@ -1725,6 +1725,85 @@ describe("CheckoutTopNav", () => {
 });
 
 describe("Task8 completed detail requests", () => {
+  it("clears A detail and rejects its stale proof action while B detail is pending", async () => {
+    const api = checkoutApi as unknown as {
+      detail: ReturnType<typeof vi.fn>;
+      downloadRefundProof: ReturnType<typeof vi.fn>;
+    };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+
+    let resolveB!: (value: Record<string, unknown>) => void;
+    api.detail.mockReset();
+    api.detail
+      .mockResolvedValueOnce({
+        id: 17,
+        settlementNo: "TZ-DETAIL-A",
+        status: "COMPLETED",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        totalRefundAmount: "0.00",
+        finalReceivable: "0.00",
+        depositRefunds: [
+          {
+            id: 6,
+            approvalStatus: "APPROVED",
+            refundAmount: "100.00",
+            files: [{ fileAssetId: 77, originalName: "A-凭证.png" }],
+          },
+        ],
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveB = resolve;
+          }),
+      );
+    api.downloadRefundProof.mockResolvedValue({
+      data: new Blob(["proof"], { type: "image/png" }),
+      headers: { "content-type": "image/png" },
+    });
+    const completed = wrapper.findComponent(CompletedCheckoutContractsPanel);
+
+    completed.vm.$emit("select", 17);
+    await flushPromises();
+    const staleProofButton = wrapper.get('[data-test="refund-proof-preview-6-77"]');
+    expect(wrapper.text()).toContain("TZ-DETAIL-A");
+
+    completed.vm.$emit("select", 18);
+    await flushPromises();
+
+    expect(wrapper.find(".checkout-workspace__readonly-detail").exists()).toBe(false);
+    expect(wrapper.find('[data-test="refund-proof-preview-6-77"]').exists()).toBe(false);
+    api.downloadRefundProof.mockClear();
+    await staleProofButton.trigger("click");
+    await flushPromises();
+    expect(api.downloadRefundProof).not.toHaveBeenCalled();
+
+    resolveB({
+      id: 18,
+      settlementNo: "TZ-DETAIL-B",
+      status: "COMPLETED",
+      contractId: 1,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "0.00",
+      finalReceivable: "0.00",
+      depositRefunds: [],
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("TZ-DETAIL-B");
+    expect(wrapper.text()).not.toContain("TZ-DETAIL-A");
+  });
+
   it("revokes a late proof response when a completed-detail selection replaces its context", async () => {
     const api = checkoutApi as unknown as {
       detail: ReturnType<typeof vi.fn>;
