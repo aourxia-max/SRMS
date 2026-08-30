@@ -15,6 +15,7 @@ import {
   reopenCheckoutSupplementalBalance,
 } from './checkout-supplemental-balance';
 import { assertContractNotVoided } from '../contracts/contract-operability';
+import { assertNoCheckoutRentRefundReservation } from '../checkout/checkout-rent-refund-reservations';
 
 @Injectable()
 export class RefundsService {
@@ -69,6 +70,7 @@ export class RefundsService {
         throw new BadRequestException('该收款当前不能退款');
       await assertPaymentReversalRequestAllowed(tx, payment);
       assertContractNotVoided(payment.contract.status, '发起退款');
+      await assertNoCheckoutRentRefundReservation(tx, payment.id);
       const original = new Map(
         payment.allocations.map((item) => [item.id, item]),
       );

@@ -191,6 +191,9 @@ describe('VoidRequestsService adjustment reversal', () => {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
       payment: { findUniqueOrThrow: reload },
       paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       paymentVoidRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: firstWrite,
@@ -307,6 +310,51 @@ describe('VoidRequestsService adjustment reversal', () => {
         },
       ),
     ).rejects.toThrow('该收款已用于退租补收锁定的欠租，不能修改、退款或作废');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects submitting a void request when the payment has an active checkout rent refund reservation', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'RENT',
+          autoSourceKey: null,
+          status: 'CONFIRMED',
+          contract: { status: 'ACTIVE' },
+        }),
+      },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue({ id: 501 }),
+      },
+      paymentVoidRequest: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create,
+      },
+    };
+    const service = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        { paymentId: 81, reason: '重复作废' },
+        {
+          id: 1,
+          username: 'admin',
+          displayName: '超级管理员',
+          role: UserRole.SUPER_ADMIN,
+        },
+      ),
+    ).rejects.toThrow('相关租金已被退租退款流程占用，不能重复退款或作废。');
     expect(create).not.toHaveBeenCalled();
   });
 

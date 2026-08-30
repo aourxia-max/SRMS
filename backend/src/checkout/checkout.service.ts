@@ -7,10 +7,11 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { calculateCheckoutAmounts } from './checkout-calculation';
 import {
-  allocateCheckoutRentRefund,
-  CheckoutRentRefundExceedsAvailableError,
-  type RentRefundCandidate,
-} from './checkout-rent-refund-allocation';
+  assertCheckoutRentRefundReservationMatches,
+  planCheckoutRentRefund,
+  releaseCheckoutRentRefund,
+  reserveCheckoutRentRefund,
+} from './checkout-rent-refund-reservations';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
@@ -21,9 +22,6 @@ import {
 } from './dto/submit-checkout-settlement.dto';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { assertContractNotVoided } from '../contracts/contract-operability';
-type RentRefundPreviewCandidate = RentRefundCandidate & {
-  billNo: string;
-};
 
 @Injectable()
 export class CheckoutService {
@@ -251,6 +249,7 @@ export class CheckoutService {
       prepaymentRefundableAmount: this.money(
         settlement.prepaymentRefundableAmount,
       ),
+      rentRefundableAmount: this.money(settlement.rentRefundableAmount),
       finalReceivable: this.money(settlement.finalReceivable),
       supplementalRequired: settlement.supplementalRequired,
       supplementalArrearsAmount: this.money(
@@ -339,7 +338,7 @@ export class CheckoutService {
         (item) => !['RENT_ARREARS', 'RENT_REFUND'].includes(item.itemType),
       )
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
-    const [deposit, prepayment, candidates] = await Promise.all([
+    const [deposit, prepayment, rentRefundPlan] = await Promise.all([
       this.prisma.db.depositTransaction.findFirst({
         where: { contractId: settlement.contractId },
         orderBy: { id: 'desc' },
@@ -348,25 +347,14 @@ export class CheckoutService {
         where: { contractId: settlement.contractId },
         orderBy: { id: 'desc' },
       }),
-      this.loadRentRefundCandidates(settlement.contractId, settlement.id),
-    ]);
-    let plan: ReturnType<typeof allocateCheckoutRentRefund>;
-    try {
-      plan = allocateCheckoutRentRefund({
+      planCheckoutRentRefund(this.prisma.db, {
+        contractId: settlement.contractId,
+        currentSettlementId: settlement.id,
         actualCheckoutDate: actual,
         requestedAmount: rentRefundItem?.amount ?? 0,
-        candidates,
-      });
-    } catch (error) {
-      if (error instanceof CheckoutRentRefundExceedsAvailableError) {
-        if (error.maxRefundableAmount === '0.00')
-          throw new BadRequestException('当前合同没有可回冲的已缴租金。');
-        throw new BadRequestException(
-          `退还租金不能超过当前可回冲金额 ¥${error.maxRefundableAmount}。`,
-        );
-      }
-      throw error;
-    }
+      }),
+    ]);
+    const { plan, candidates } = rentRefundPlan;
     const amounts = calculateCheckoutAmounts({
       depositBalance: deposit?.balanceAfter ?? 0,
       prepaymentBalance: prepayment?.balanceAfter ?? 0,
@@ -465,7 +453,7 @@ export class CheckoutService {
       );
       const settlement = await tx.checkoutSettlement.findUniqueOrThrow({
         where: { id },
-        include: { contract: { include: { bills: true } } },
+        include: { contract: { include: { bills: true } }, items: true },
       });
       if (settlement.status !== 'DRAFT')
         throw new BadRequestException('只有草稿结算单可以提交');
@@ -516,10 +504,48 @@ export class CheckoutService {
             '维修、损坏、清洁及其他扣款必须关联验收记录',
           );
       }
+      const rentRefundItem = dto.items.find(
+        (item) => item.itemType === 'RENT_REFUND',
+      );
+      const existingRentRefundItem = settlement.items.find(
+        (item) => item.itemType === 'RENT_REFUND',
+      );
       await tx.checkoutSettlementItem.deleteMany({
-        where: { checkoutSettlementId: id },
+        where: {
+          checkoutSettlementId: id,
+          ...(existingRentRefundItem
+            ? { itemType: { not: 'RENT_REFUND' as const } }
+            : {}),
+        },
       });
-      return tx.checkoutSettlement.update({
+      if (existingRentRefundItem) {
+        await tx.checkoutSettlementItem.update({
+          where: { id: existingRentRefundItem.id },
+          data: rentRefundItem
+            ? {
+                amount: new Prisma.Decimal(rentRefundItem.amount),
+                rentBillId: null,
+                inspectionRecordRef: null,
+                description: rentRefundItem.description,
+                evidenceRequired: rentRefundItem.evidenceRequired ?? false,
+                confirmedByTenant: rentRefundItem.confirmedByTenant ?? false,
+                sortOrder: dto.items.indexOf(rentRefundItem),
+              }
+            : {
+                amount: new Prisma.Decimal(0),
+                rentBillId: null,
+                inspectionRecordRef: null,
+                description: '当前提交未申请退还租金',
+                evidenceRequired: false,
+                confirmedByTenant: false,
+                sortOrder: dto.items.length,
+              },
+        });
+      }
+      const itemsToCreate = existingRentRefundItem
+        ? dto.items.filter((item) => item.itemType !== 'RENT_REFUND')
+        : dto.items;
+      const updated = await tx.checkoutSettlement.update({
         where: { id },
         data: {
           actualCheckoutDate: actual,
@@ -527,19 +553,37 @@ export class CheckoutService {
           inspectionAt: new Date(dto.inspectionAt),
           targetRoomStatus: dto.targetRoomStatus,
           remark: dto.remark,
+          rentRefundableAmount: new Prisma.Decimal(rentRefundItem?.amount ?? 0),
           status: 'PENDING',
           submittedBy: user.id,
           submittedAt: new Date(),
           items: {
-            create: dto.items.map((item, index) => ({
+            create: itemsToCreate.map((item) => ({
               ...item,
               amount: new Prisma.Decimal(item.amount),
-              sortOrder: index,
+              sortOrder: dto.items.indexOf(item),
             })),
           },
         },
         include: { items: true },
       });
+      if (rentRefundItem) {
+        const reservationItem =
+          existingRentRefundItem ??
+          updated.items.find((item) => item.itemType === 'RENT_REFUND');
+        if (!reservationItem)
+          throw new ConflictException('退还租金结算项目创建失败，请刷新后重试');
+        await reserveCheckoutRentRefund(tx, {
+          settlementId: id,
+          settlementItemId: reservationItem.id,
+          contractId: settlement.contractId,
+          actualCheckoutDate: actual,
+          requestedAmount: rentRefundItem.amount,
+        });
+      } else {
+        await releaseCheckoutRentRefund(tx, id, '重新提交未申请退还租金');
+      }
+      return updated;
     });
   }
   async approve(id: number, user: AuthUser) {
@@ -577,6 +621,14 @@ export class CheckoutService {
       assertContractNotVoided(settlement.contract.status, '确认退租结算');
       if (!settlement.actualCheckoutDate)
         throw new BadRequestException('结算单缺少实际退房日期');
+      const lockedRentRefundAmount = new Prisma.Decimal(
+        settlement.rentRefundableAmount ?? 0,
+      ).toDecimalPlaces(2);
+      await assertCheckoutRentRefundReservationMatches(
+        tx,
+        id,
+        lockedRentRefundAmount,
+      );
       const eligibleBills = settlement.contract.bills.filter(
         (bill) =>
           bill.periodStart <= settlement.actualCheckoutDate! &&
@@ -598,7 +650,9 @@ export class CheckoutService {
           '欠租结算项目合计必须等于实际退房日前有效账单的未收金额',
         );
       const otherCharges = settlement.items
-        .filter((item) => item.itemType !== 'RENT_ARREARS')
+        .filter(
+          (item) => !['RENT_ARREARS', 'RENT_REFUND'].includes(item.itemType),
+        )
         .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
       const latest = await tx.depositTransaction.findFirst({
         where: { contractId: settlement.contractId },
@@ -614,6 +668,7 @@ export class CheckoutService {
         prepaymentBalance: prepayment?.balanceAfter ?? 0,
         rentOutstanding: outstanding,
         otherCharges,
+        rentRefundAmount: lockedRentRefundAmount,
       });
       const initialDepositBalance = depositBalance;
       let depositOffsetAmount = new Prisma.Decimal(0);
@@ -745,6 +800,9 @@ export class CheckoutService {
           prepaymentRefundableAmount: new Prisma.Decimal(
             calculatedAmounts.prepaymentRefundableAmount,
           ),
+          rentRefundableAmount: new Prisma.Decimal(
+            calculatedAmounts.rentRefundableAmount,
+          ),
           finalReceivable,
           supplementalRequired: supplementalOutstandingAmount.gt(0),
           supplementalArrearsAmount,
@@ -785,6 +843,7 @@ export class CheckoutService {
         const isZero = [
           settlement.depositRefundableAmount,
           settlement.prepaymentRefundableAmount,
+          settlement.rentRefundableAmount ?? 0,
           supplementalOutstandingAmount,
         ].every((amount) => new Prisma.Decimal(amount).isZero());
         if (
@@ -827,6 +886,7 @@ export class CheckoutService {
       if (settlement.status !== 'PENDING')
         throw new BadRequestException('只有待确认结算单可以驳回');
       assertContractNotVoided(settlement.contract.status, '驳回退租结算');
+      await releaseCheckoutRentRefund(tx, id, '驳回退租结算');
       return tx.checkoutSettlement.update({
         where: { id },
         data: {
@@ -883,6 +943,7 @@ export class CheckoutService {
             tx,
             settlement.contractId,
           );
+        await releaseCheckoutRentRefund(tx, id, '取消退租结算');
         const claimed = await tx.checkoutSettlement.updateMany({
           where: { id, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
           data: { status: 'CANCELLED' },
@@ -943,77 +1004,11 @@ export class CheckoutService {
       if (settlement.status !== 'REJECTED')
         throw new BadRequestException('只有已驳回结算单可以退回草稿');
       assertContractNotVoided(settlement.contract.status, '退回退租结算草稿');
+      await releaseCheckoutRentRefund(tx, id, '退回退租结算草稿');
       return tx.checkoutSettlement.update({
         where: { id },
         data: { status: 'DRAFT' },
       });
-    });
-  }
-  private async loadRentRefundCandidates(
-    contractId: number,
-    currentSettlementId: number,
-  ): Promise<RentRefundPreviewCandidate[]> {
-    const allocations = await this.prisma.db.paymentAllocation.findMany({
-      where: {
-        payment: {
-          contractId,
-          paymentCategory: 'RENT',
-          status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] },
-        },
-        rentBill: { billCategory: 'RENT' },
-      },
-      select: {
-        id: true,
-        paymentId: true,
-        rentBillId: true,
-        allocatedAmount: true,
-        reversedAmount: true,
-        payment: { select: { paymentDate: true } },
-        rentBill: {
-          select: { billNo: true, periodStart: true, periodEnd: true },
-        },
-        refundAllocations: {
-          where: { paymentRefund: { approvalStatus: 'PENDING' } },
-          select: { reversedAmount: true },
-        },
-        checkoutRentRefundAllocations: {
-          where: { status: 'RESERVED' },
-          select: {
-            reservedAmount: true,
-            item: { select: { checkoutSettlementId: true } },
-          },
-        },
-      },
-    });
-    return allocations.map((allocation) => {
-      const pendingRefundAmount = allocation.refundAllocations.reduce(
-        (sum, item) => sum.plus(item.reversedAmount),
-        new Prisma.Decimal(0),
-      );
-      const reservedRentRefundAmount =
-        allocation.checkoutRentRefundAllocations.reduce(
-          (sum, item) =>
-            item.item.checkoutSettlementId === currentSettlementId
-              ? sum
-              : sum.plus(item.reservedAmount),
-          new Prisma.Decimal(0),
-        );
-      return {
-        paymentAllocationId: allocation.id,
-        paymentId: allocation.paymentId,
-        rentBillId: allocation.rentBillId,
-        periodStart: allocation.rentBill.periodStart,
-        periodEnd: allocation.rentBill.periodEnd,
-        paymentDate: allocation.payment.paymentDate,
-        billNo: allocation.rentBill.billNo,
-        availableAmount: Prisma.Decimal.max(
-          new Prisma.Decimal(0),
-          new Prisma.Decimal(allocation.allocatedAmount)
-            .minus(allocation.reversedAmount)
-            .minus(pendingRefundAmount)
-            .minus(reservedRentRefundAmount),
-        ).toDecimalPlaces(2),
-      };
     });
   }
   private money(value: Prisma.Decimal | string | number) {

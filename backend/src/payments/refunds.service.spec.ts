@@ -207,6 +207,9 @@ describe('RefundsService adjustment decisions', () => {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
       payment: { findUniqueOrThrow: reload },
       paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       paymentRefund: { create: firstWrite },
     };
     const service = new RefundsService({
@@ -384,6 +387,59 @@ describe('RefundsService adjustment decisions', () => {
         user,
       ),
     ).rejects.toThrow('该收款已用于退租补收锁定的欠租，不能修改、退款或作废');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects submitting a refund when the payment has an active checkout rent refund reservation', async () => {
+    const create = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 81,
+          contractId: 7,
+          paymentCategory: 'RENT',
+          autoSourceKey: null,
+          status: 'CONFIRMED',
+          contract: { status: 'ACTIVE' },
+          allocations: [
+            {
+              id: 101,
+              paymentId: 81,
+              rentBillId: 11,
+              allocatedAmount: new Prisma.Decimal('100.00'),
+              reversedAmount: new Prisma.Decimal('0.00'),
+            },
+          ],
+        }),
+      },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue({ id: 501 }),
+      },
+      paymentRefund: { create },
+    };
+    const service = new RefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          paymentId: 81,
+          refundAmount: '100.00',
+          refundDate: '2026-08-22',
+          refundMethod: 'BANK_TRANSFER',
+          reason: '重复退款',
+          allocations: [{ paymentAllocationId: 101, amount: '100.00' }],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('相关租金已被退租退款流程占用，不能重复退款或作废。');
     expect(create).not.toHaveBeenCalled();
   });
 

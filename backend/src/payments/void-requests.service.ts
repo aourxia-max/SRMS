@@ -15,6 +15,7 @@ import {
   reopenCheckoutSupplementalBalance,
 } from './checkout-supplemental-balance';
 import { assertContractNotVoided } from '../contracts/contract-operability';
+import { assertNoCheckoutRentRefundReservation } from '../checkout/checkout-rent-refund-reservations';
 
 @Injectable()
 export class VoidRequestsService {
@@ -43,6 +44,7 @@ export class VoidRequestsService {
         throw new BadRequestException('只有未退款的已确认收款可以申请作废');
       await assertPaymentReversalRequestAllowed(tx, payment);
       assertContractNotVoided(payment.contract.status, '发起收款作废');
+      await assertNoCheckoutRentRefundReservation(tx, payment.id);
       const pending = await tx.paymentVoidRequest.findFirst({
         where: { paymentId: dto.paymentId, approvalStatus: 'PENDING' },
       });
