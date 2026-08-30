@@ -13,6 +13,7 @@ import type {
   CheckoutSettlement,
   CheckoutTab,
   CheckoutSettlementPreview,
+  CheckoutSettlementPayload,
   CompletedCheckoutContractsResult,
 } from "./checkout-types";
 
@@ -238,7 +239,7 @@ async function initiate(contractId: number, payload: Record<string, string>) {
     actionError.value = message(error, "发起退租失败，请稍后重试");
   }
 }
-async function submitSettlement(id: number, payload: Record<string, unknown>) {
+async function submitSettlement(id: number, payload: CheckoutSettlementPayload) {
   actionError.value = "";
   try {
     await checkoutApi.submit(id, payload);
@@ -247,7 +248,7 @@ async function submitSettlement(id: number, payload: Record<string, unknown>) {
     actionError.value = message(error, "提交结算失败，请检查填写内容后重试");
   }
 }
-async function previewSettlement(id: number, payload: Record<string, unknown>) {
+async function previewSettlement(id: number, payload: CheckoutSettlementPayload) {
   previewLoading.value = true;
   actionError.value = "";
   try {

@@ -13,13 +13,38 @@ export type CheckoutContract = {
 
 export type CheckoutSettlementItem = {
   id?: number;
-  itemType: "RENT_ARREARS" | "REPAIR" | "DAMAGE" | "CLEANING" | "OTHER";
+  itemType:
+    | "RENT_ARREARS"
+    | "RENT_REFUND"
+    | "REPAIR"
+    | "DAMAGE"
+    | "CLEANING"
+    | "OTHER";
   amount: string;
   rentBillId?: number;
   inspectionRecordRef?: string;
   description: string;
   evidenceRequired?: boolean;
   confirmedByTenant?: boolean;
+};
+
+export type CheckoutSettlementItemPayload =
+  | {
+      itemType: "RENT_REFUND";
+      amount: string;
+      description: string;
+    }
+  | (Omit<CheckoutSettlementItem, "id"> & {
+      itemType: Exclude<CheckoutSettlementItem["itemType"], "RENT_REFUND">;
+    });
+
+export type CheckoutSettlementPayload = {
+  actualCheckoutDate: string;
+  handoverDate: string;
+  inspectionAt: string;
+  targetRoomStatus: string;
+  remark?: string;
+  items: CheckoutSettlementItemPayload[];
 };
 
 export type DepositRefund = {
@@ -47,6 +72,7 @@ export type CheckoutSettlement = {
   rejectedReason?: string;
   depositRefundableAmount: string;
   prepaymentRefundableAmount: string;
+  rentRefundableAmount?: string;
   finalReceivable: string;
   supplementalRequired?: boolean;
   supplementalArrearsAmount?: string;
@@ -59,11 +85,22 @@ export type CheckoutSettlement = {
   depositRefunds?: DepositRefund[];
 };
 
+export type CheckoutRentRefundAllocationPreview = {
+  paymentAllocationId: number;
+  paymentId: number;
+  rentBillId: number;
+  billNo: string;
+  amount: string;
+};
+
 export type CheckoutSettlementPreview = {
   depositRefundableAmount: string;
   prepaymentRefundableAmount: string;
+  rentRefundableAmount: string;
+  maxRentRefundAmount: string;
   totalRefundAmount: string;
   finalReceivable: string;
+  rentRefundAllocations: CheckoutRentRefundAllocationPreview[];
 };
 export type CompletedCheckoutContract = {
   settlementId: number;

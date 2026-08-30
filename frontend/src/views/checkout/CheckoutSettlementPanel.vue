@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type {
   CheckoutSettlement,
   CheckoutSettlementPreview,
   CheckoutSettlementItem,
+  CheckoutSettlementPayload,
 } from "./checkout-types";
 
 const props = defineProps<{
@@ -14,10 +15,10 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   approve: [id: number];
-  submit: [id: number, payload: Record<string, unknown>];
+  submit: [id: number, payload: CheckoutSettlementPayload];
   returnToDraft: [id: number];
   cancel: [id: number];
-  preview: [id: number, payload: Record<string, unknown>];
+  preview: [id: number, payload: CheckoutSettlementPayload];
 }>();
 
 const selectedId = ref<number | null>(null);
@@ -68,21 +69,42 @@ function addItem(type: CheckoutSettlementItem["itemType"] = "REPAIR") {
     confirmedByTenant: false,
   });
 }
+async function addRentRefund() {
+  const existing = items.value.find((item) => item.itemType === "RENT_REFUND");
+  if (!existing) {
+    items.value.push({
+      itemType: "RENT_REFUND",
+      amount: "",
+      description: "",
+    });
+  }
+  await nextTick();
+  document
+    .querySelector<HTMLInputElement>('[data-test="rent-refund-amount"]')
+    ?.focus();
+}
+
 function removeItem(index: number) {
   items.value.splice(index, 1);
 }
-function payload() {
+function payload(): CheckoutSettlementPayload {
   const { remark, ...requiredFields } = form;
   return {
     ...requiredFields,
     ...(remark.trim() ? { remark: remark.trim() } : {}),
-    items: items.value.map((item) => ({
-      ...item,
-      amount: Number(item.amount).toFixed(2),
-      rentBillId: item.rentBillId ? Number(item.rentBillId) : undefined,
-      inspectionRecordRef: item.inspectionRecordRef?.trim() || undefined,
-      description: item.description.trim(),
-    })),
+    items: items.value.map((item) => {
+      const amount = Number(item.amount).toFixed(2);
+      const description = item.description.trim();
+      if (item.itemType === "RENT_REFUND")
+        return { itemType: item.itemType, amount, description };
+      return {
+        ...item,
+        amount,
+        rentBillId: item.rentBillId ? Number(item.rentBillId) : undefined,
+        inspectionRecordRef: item.inspectionRecordRef?.trim() || undefined,
+        description,
+      };
+    }),
   };
 }
 function previewReady() {
@@ -91,13 +113,15 @@ function previewReady() {
       form.actualCheckoutDate &&
       form.handoverDate &&
       form.inspectionAt &&
-      items.value.every(
-        (item) =>
+      items.value.every((item) =>
+        Boolean(
           Number(item.amount) > 0 &&
-          item.description.trim() &&
-          (item.itemType === "RENT_ARREARS"
-            ? item.rentBillId
-            : item.inspectionRecordRef?.trim()),
+            item.description.trim() &&
+            (item.itemType === "RENT_REFUND" ||
+              (item.itemType === "RENT_ARREARS"
+                ? item.rentBillId
+                : item.inspectionRecordRef?.trim())),
+        ),
       ),
   );
 }
@@ -128,8 +152,19 @@ function submit() {
       errors.value.push(`请填写第 ${index + 1} 项结算说明`);
     if (item.itemType === "RENT_ARREARS" && !item.rentBillId)
       errors.value.push(`请选择第 ${index + 1} 项关联的欠租账单`);
-    if (item.itemType !== "RENT_ARREARS" && !item.inspectionRecordRef?.trim())
+    if (
+      !["RENT_ARREARS", "RENT_REFUND"].includes(item.itemType) &&
+      !item.inspectionRecordRef?.trim()
+    )
       errors.value.push(`请填写第 ${index + 1} 项验房记录编号`);
+    if (
+      item.itemType === "RENT_REFUND" &&
+      props.preview?.maxRentRefundAmount !== undefined &&
+      Number(item.amount) > Number(props.preview.maxRentRefundAmount)
+    )
+      errors.value.push(
+        `退还租金不能超过当前可回冲金额 ${formatMoney(props.preview.maxRentRefundAmount)}。`,
+      );
   });
   if (errors.value.length) return;
   emit("submit", selected.value.id, payload());
@@ -153,6 +188,7 @@ function formatMoney(value: string) {
 const summaryCards = computed(() => [
   { label: "应退押金", value: props.preview?.depositRefundableAmount },
   { label: "应退预收款", value: props.preview?.prepaymentRefundableAmount },
+  { label: "应退租金", value: props.preview?.rentRefundableAmount },
   { label: "合计应退", value: props.preview?.totalRefundAmount },
   { label: "待补收金额", value: props.preview?.finalReceivable },
 ]);
@@ -265,54 +301,107 @@ function cancelSelected() {
               >
                 添加验房扣款
               </button>
+              <button
+                type="button"
+                class="secondary-button"
+                data-test="add-rent-refund"
+                @click="addRentRefund"
+              >
+                添加退还租金
+              </button>
             </div>
           </div>
           <div v-if="!items.length" class="settlement-panel__empty-items">
-            暂无结算项目，请按实际情况添加欠租或验房扣款。
+            暂无结算项目，请按实际情况添加欠租、验房扣款或退还租金。
           </div>
           <div
             v-for="(item, index) in items"
             :key="index"
             class="settlement-item"
+            :data-test="item.itemType === 'RENT_REFUND' ? 'rent-refund-item' : undefined"
           >
-            <select v-model="item.itemType">
-              <option value="RENT_ARREARS">欠租</option>
-              <option value="REPAIR">维修</option>
-              <option value="DAMAGE">损坏</option>
-              <option value="CLEANING">清洁</option>
-              <option value="OTHER">其他</option>
-            </select>
-            <input
-              v-model="item.amount"
-              inputmode="decimal"
-              placeholder="金额"
-            />
-            <input
-              v-if="item.itemType === 'RENT_ARREARS'"
-              v-model.number="item.rentBillId"
-              inputmode="numeric"
-              placeholder="关联账单 ID"
-            />
-            <input
-              v-else
-              v-model="item.inspectionRecordRef"
-              placeholder="验房记录编号"
-              maxlength="100"
-            />
-            <input
-              v-model="item.description"
-              class="settlement-item__description"
-              placeholder="结算说明"
-              maxlength="500"
-            />
-            <button
-              type="button"
-              class="danger-button"
-              @click="removeItem(index)"
-            >
-              删除
-            </button>
+            <template v-if="item.itemType === 'RENT_REFUND'">
+              <span class="settlement-item__type">退还租金</span>
+              <input
+                v-model="item.amount"
+                data-test="rent-refund-amount"
+                inputmode="decimal"
+                placeholder="退还金额"
+              />
+              <input
+                v-model="item.description"
+                data-test="rent-refund-description"
+                class="settlement-item__description"
+                placeholder="退还说明"
+                maxlength="500"
+              />
+              <button
+                type="button"
+                class="danger-button"
+                @click="removeItem(index)"
+              >
+                删除
+              </button>
+            </template>
+            <template v-else>
+              <select v-model="item.itemType">
+                <option value="RENT_ARREARS">欠租</option>
+                <option value="REPAIR">维修</option>
+                <option value="DAMAGE">损坏</option>
+                <option value="CLEANING">清洁</option>
+                <option value="OTHER">其他</option>
+              </select>
+              <input
+                v-model="item.amount"
+                inputmode="decimal"
+                placeholder="金额"
+              />
+              <input
+                v-if="item.itemType === 'RENT_ARREARS'"
+                v-model.number="item.rentBillId"
+                inputmode="numeric"
+                placeholder="关联账单 ID"
+              />
+              <input
+                v-else
+                v-model="item.inspectionRecordRef"
+                placeholder="验房记录编号"
+                maxlength="100"
+              />
+              <input
+                v-model="item.description"
+                class="settlement-item__description"
+                placeholder="结算说明"
+                maxlength="500"
+              />
+              <button
+                type="button"
+                class="danger-button"
+                @click="removeItem(index)"
+              >
+                删除
+              </button>
+            </template>
           </div>
+          <section
+            v-if="items.some((item) => item.itemType === 'RENT_REFUND')"
+            class="settlement-panel__rent-refund-preview"
+          >
+            <p v-if="preview?.maxRentRefundAmount !== undefined">
+              当前最多可退租金
+              <strong>{{ formatMoney(preview.maxRentRefundAmount) }}</strong>
+            </p>
+            <p v-else>正在根据后端账务计算可退租金…</p>
+            <template v-if="preview?.rentRefundAllocations?.length">
+              <h4>系统自动回冲预览</h4>
+              <p
+                v-for="allocation in preview.rentRefundAllocations"
+                :key="allocation.paymentAllocationId"
+              >
+                {{ allocation.billNo }}：{{ formatMoney(allocation.amount) }}
+              </p>
+            </template>
+          </section>
           <div class="settlement-panel__actions">
             <button
               type="button"
@@ -445,7 +534,7 @@ function cancelSelected() {
 }
 .settlement-panel__summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin-top: 18px;
 }
@@ -527,6 +616,23 @@ function cancelSelected() {
   border-radius: 8px;
   color: #66758b;
   background: #f7f9fc;
+}
+.settlement-panel__rent-refund-preview {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid #cfe0ff;
+  border-radius: 8px;
+  color: #31537e;
+  background: #f3f7ff;
+}
+.settlement-panel__rent-refund-preview p,
+.settlement-panel__rent-refund-preview h4 {
+  margin: 4px 0;
+}
+.settlement-panel__rent-refund-preview h4 {
+  margin-top: 10px;
+  color: #1d5ccf;
+  font-size: 14px;
 }
 .settlement-item {
   display: grid;
