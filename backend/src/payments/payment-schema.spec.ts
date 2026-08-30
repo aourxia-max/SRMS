@@ -114,6 +114,35 @@ describe('payment workflow Prisma model', () => {
     );
   });
 
+  it('links each checkout rent-refund adjustment to its settlement item', () => {
+    const adjustmentFields = new Map(
+      model('BillAdjustment')?.fields.map((field) => [field.name, field]),
+    );
+    expect(adjustmentFields.get('checkoutSettlementItemId')).toMatchObject({
+      kind: 'scalar',
+      type: 'Int',
+      dbName: 'checkout_settlement_item_id',
+    });
+    expect(adjustmentFields.get('checkoutSettlementItem')).toMatchObject({
+      kind: 'object',
+      type: 'CheckoutSettlementItem',
+    });
+
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        'prisma/migrations/20260830090000_checkout_rent_refund/migration.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toMatch(
+      /ALTER TABLE `bill_adjustments`[\s\S]*ADD COLUMN `checkout_settlement_item_id` INT UNSIGNED NULL/,
+    );
+    expect(migration).toMatch(
+      /CONSTRAINT `fk_bill_adjustment_checkout_item` FOREIGN KEY \(`checkout_settlement_item_id`\) REFERENCES `checkout_settlement_items` \(`id`\)/,
+    );
+  });
+
   it('keeps a lossless historic refund split in the generated schema contract', () => {
     expect(
       model('CheckoutSettlement')?.fields.map((field) => field.name),

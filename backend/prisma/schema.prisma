@@ -938,6 +938,7 @@ model BillAdjustment {
   reason                  String                            @db.VarChar(500)
   sourcePaymentId         Int?                              @map("source_payment_id") @db.UnsignedInt
   contractChangeId        Int?                              @map("contract_change_id") @db.UnsignedInt
+  checkoutSettlementItemId Int?                             @map("checkout_settlement_item_id") @db.UnsignedInt
   approvalStatus          ApprovalStatus                    @default(PENDING) @map("approval_status")
   submittedBy             Int                               @map("submitted_by") @db.UnsignedInt
   submittedAt             DateTime                          @default(now()) @map("submitted_at") @db.DateTime(3)
@@ -947,11 +948,13 @@ model BillAdjustment {
   reversedByAdjustmentId  Int?                              @map("reversed_by_adjustment_id") @db.UnsignedInt
   rentBill                RentBill                          @relation(fields: [rentBillId], references: [id], onDelete: Restrict)
   sourcePayment           Payment?                          @relation(fields: [sourcePaymentId], references: [id], onDelete: Restrict)
+  checkoutSettlementItem  CheckoutSettlementItem?           @relation(map: "fk_bill_adjustment_checkout_item", fields: [checkoutSettlementItemId], references: [id], onDelete: Restrict)
   refundDecisions         PaymentRefundAdjustmentDecision[] @relation("RefundDecisionOriginalAdjustment")
   refundReversalDecisions PaymentRefundAdjustmentDecision[] @relation("RefundDecisionReversalAdjustment")
 
   @@index([rentBillId, approvalStatus])
   @@index([adjustmentNo])
+  @@index([checkoutSettlementItemId], map: "idx_bill_adjustment_checkout_item")
   @@map("bill_adjustments")
 }
 
@@ -1194,6 +1197,7 @@ model CheckoutSettlementItem {
   rentBill             RentBill?                    @relation(fields: [rentBillId], references: [id], onDelete: Restrict)
   files                        CheckoutSettlementItemFile[]
   checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
+  billAdjustments              BillAdjustment[]
 
   @@index([checkoutSettlementId, sortOrder])
   @@map("checkout_settlement_items")

@@ -7,7 +7,10 @@ WHERE dr.`refund_amount` <> cs.`deposit_refundable_amount` + cs.`prepayment_refu
 LIMIT 1;
 DROP TEMPORARY TABLE `checkout_rent_refund_backfill_guard`;
 ALTER TABLE `bill_adjustments`
-  MODIFY COLUMN `adjustment_type` ENUM('DISCOUNT', 'WAIVER', 'INCREASE', 'CORRECTION', 'CHECKOUT_RENT_REFUND') NOT NULL;
+  MODIFY COLUMN `adjustment_type` ENUM('DISCOUNT', 'WAIVER', 'INCREASE', 'CORRECTION', 'CHECKOUT_RENT_REFUND') NOT NULL,
+  ADD COLUMN `checkout_settlement_item_id` INT UNSIGNED NULL AFTER `contract_change_id`,
+  ADD KEY `idx_bill_adjustment_checkout_item` (`checkout_settlement_item_id`),
+  ADD CONSTRAINT `fk_bill_adjustment_checkout_item` FOREIGN KEY (`checkout_settlement_item_id`) REFERENCES `checkout_settlement_items` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 ALTER TABLE `checkout_settlement_items`
   MODIFY COLUMN `item_type` ENUM('RENT_ARREARS', 'DAMAGE', 'REPAIR', 'CLEANING', 'OTHER', 'RENT_REFUND') NOT NULL;

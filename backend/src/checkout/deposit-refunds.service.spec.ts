@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { DepositRefundsService } from './deposit-refunds.service';
+import * as checkoutRentRefundWriter from './checkout-rent-refund-writer';
 
 function transactional<T extends object>(tx: T) {
   const client = {
@@ -114,7 +115,7 @@ describe('DepositRefundsService', () => {
 
     expect(result[0].files[0].fileAsset.sizeBytes).toBe('128');
   });
-  it('accepts only the locked deposit plus prepayment refund total', async () => {
+  it('accepts only the locked three-component refund total', async () => {
     const settlement = {
       id: 1,
       contractId: 3,
@@ -123,6 +124,7 @@ describe('DepositRefundsService', () => {
       finalReceivable: '0.00',
       depositRefundableAmount: '800.00',
       prepaymentRefundableAmount: '500.00',
+      rentRefundableAmount: '0.00',
       prepaymentBalance: '500.00',
       contract: { status: 'PENDING_CHECKOUT' },
     };
@@ -153,7 +155,7 @@ describe('DepositRefundsService', () => {
         { ...dto, refundAmount: '1299.99' },
         { id: 2, username: 'admin', role: 'ADMIN' },
       ),
-    ).rejects.toThrow('退款金额必须等于结算单锁定的合计应退金额');
+    ).rejects.toThrow('退款金额必须等于结算单锁定的三类合计应退金额');
     expect(create).toHaveBeenCalledTimes(1);
     expectContractMutationOrder(
       'depositRefund.submit',
@@ -210,6 +212,9 @@ describe('DepositRefundsService', () => {
           id: 1,
           contractId: 3,
           refundAmount: '1300.00',
+          depositRefundAmount: '800.00',
+          prepaymentRefundAmount: '500.00',
+          rentRefundAmount: '0.00',
           approvalStatus: 'PENDING',
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
@@ -219,6 +224,7 @@ describe('DepositRefundsService', () => {
             finalReceivable: '0.00',
             depositRefundableAmount: '800.00',
             prepaymentRefundableAmount: '500.00',
+            rentRefundableAmount: '0.00',
             prepaymentBalance: '500.00',
             contract: {
               status: 'PENDING_CHECKOUT',
@@ -249,6 +255,7 @@ describe('DepositRefundsService', () => {
       },
       room: { update: jest.fn() },
       roomStatusHistory: { create: jest.fn() },
+      securityAuditLog: { create: jest.fn() },
     };
     mockRoomContractLocks(tx, 3, 7);
     const transaction = jest.fn(
@@ -300,6 +307,9 @@ describe('DepositRefundsService', () => {
           id: 1,
           contractId: 3,
           refundAmount: '800.00',
+          depositRefundAmount: '800.00',
+          prepaymentRefundAmount: '0.00',
+          rentRefundAmount: '0.00',
           approvalStatus: 'PENDING',
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
@@ -309,6 +319,7 @@ describe('DepositRefundsService', () => {
             finalReceivable: '0.00',
             depositRefundableAmount: '800.00',
             prepaymentRefundableAmount: '0.00',
+            rentRefundableAmount: '0.00',
             contract: {
               status: 'PENDING_CHECKOUT',
               roomId: 7,
@@ -436,18 +447,13 @@ describe('DepositRefundsService', () => {
     expectRoomBeforeTargetContractLock(approveTx.$queryRaw);
   });
 
-  it('rejects deposit-refund submission while a positive rent refund is still locked without any write', async () => {
-    const depositRefundCreate = jest.fn();
-    const depositLedgerWrite = jest.fn();
-    const prepaymentLedgerWrite = jest.fn();
-    const contractWrite = jest.fn();
-    const roomWrite = jest.fn();
-    const fileFind = jest.fn().mockResolvedValue([{ id: 4 }]);
+  it('records the locked deposit, prepayment, and rent split instead of client-supplied components', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 33 });
     const harness = transactional({
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
-          id: 8,
-          contractId: 3,
+          id: 9,
+          contractId: 4,
           status: 'APPROVED',
           handoverDate: new Date('2026-08-01'),
           finalReceivable: '0.00',
@@ -457,65 +463,100 @@ describe('DepositRefundsService', () => {
           contract: { status: 'PENDING_CHECKOUT' },
         }),
       },
-      fileAsset: { findMany: fileFind },
-      depositRefund: { create: depositRefundCreate },
-      depositTransaction: { create: depositLedgerWrite },
-      prepaymentTransaction: { create: prepaymentLedgerWrite },
-      contract: { update: contractWrite },
-      room: { update: roomWrite },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 501,
+            paymentAllocationId: 101,
+            paymentId: 11,
+            rentBillId: 20,
+            reservedAmount: new Prisma.Decimal('100.00'),
+            item: {
+              checkoutSettlementId: 9,
+              itemType: 'RENT_REFUND',
+              amount: new Prisma.Decimal('100.00'),
+            },
+            paymentAllocation: { paymentId: 11, rentBillId: 20 },
+          },
+        ]),
+      },
+      fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
+      depositRefund: { create },
     });
-    const service = new DepositRefundsService({
-      db: harness.db,
-    } as never);
+    const service = new DepositRefundsService({ db: harness.db } as never);
+    const dto = {
+      checkoutSettlementId: 9,
+      refundAmount: '1400.00',
+      refundDate: '2026-08-30',
+      refundMethod: 'BANK_TRANSFER',
+      proofFileIds: [4],
+      depositRefundAmount: '0.01',
+      prepaymentRefundAmount: '0.01',
+      rentRefundAmount: '1399.98',
+    } as never;
+
+    await expect(
+      service.submit(dto, { id: 2, username: 'admin', role: 'ADMIN' }),
+    ).resolves.toEqual({ id: 33 });
+    const data = create.mock.calls[0][0].data;
+    expect({
+      refundAmount: new Prisma.Decimal(data.refundAmount).toFixed(2),
+      depositRefundAmount: new Prisma.Decimal(data.depositRefundAmount).toFixed(
+        2,
+      ),
+      prepaymentRefundAmount: new Prisma.Decimal(
+        data.prepaymentRefundAmount,
+      ).toFixed(2),
+      rentRefundAmount: new Prisma.Decimal(data.rentRefundAmount).toFixed(2),
+    }).toEqual({
+      refundAmount: '1400.00',
+      depositRefundAmount: '800.00',
+      prepaymentRefundAmount: '500.00',
+      rentRefundAmount: '100.00',
+    });
 
     await expect(
       service.submit(
-        {
-          checkoutSettlementId: 8,
-          refundAmount: '1300.00',
-          refundDate: '2026-08-02',
-          refundMethod: 'BANK_TRANSFER',
-          proofFileIds: [4],
-        } as never,
+        { ...dto, refundAmount: '1399.99' },
         { id: 2, username: 'admin', role: 'ADMIN' },
       ),
-    ).rejects.toThrow('退租租金退款尚未完成，当前不能登记或确认押金退款。');
-
-    expect(fileFind).not.toHaveBeenCalled();
-    expect(depositRefundCreate).not.toHaveBeenCalled();
-    expect(depositLedgerWrite).not.toHaveBeenCalled();
-    expect(prepaymentLedgerWrite).not.toHaveBeenCalled();
-    expect(contractWrite).not.toHaveBeenCalled();
-    expect(roomWrite).not.toHaveBeenCalled();
+    ).rejects.toThrow('退款金额必须等于结算单锁定的三类合计应退金额');
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects deposit-refund approval while a positive rent refund is still locked without financial or final-state writes', async () => {
-    const refundStatusWrite = jest.fn().mockResolvedValue({ count: 1 });
-    const settlementStatusWrite = jest.fn().mockResolvedValue({ count: 1 });
+  function combinedApprovalTx(refundOverrides: Record<string, unknown> = {}) {
     const depositLedgerWrite = jest.fn();
     const prepaymentLedgerWrite = jest.fn();
-    const fileWrite = jest.fn();
+    const proofWrite = jest.fn();
+    const settlementWrite = jest.fn().mockResolvedValue({ count: 1 });
     const contractWrite = jest.fn();
     const roomWrite = jest.fn();
     const historyWrite = jest.fn();
+    const auditWrite = jest.fn();
+    const refundStatusWrite = jest.fn().mockResolvedValue({ count: 1 });
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       depositRefund: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
-          id: 1,
-          contractId: 3,
-          refundAmount: '1300.00',
+          id: 33,
+          contractId: 4,
+          checkoutSettlementId: 9,
+          refundAmount: new Prisma.Decimal('1400.00'),
+          depositRefundAmount: new Prisma.Decimal('800.00'),
+          prepaymentRefundAmount: new Prisma.Decimal('500.00'),
+          rentRefundAmount: new Prisma.Decimal('100.00'),
+          refundDate: new Date('2026-08-30'),
           approvalStatus: 'PENDING',
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
-            id: 8,
+            id: 9,
             status: 'APPROVED',
             handoverDate: new Date('2026-08-01'),
-            finalReceivable: '0.00',
+            finalReceivable: new Prisma.Decimal('0.00'),
             supplementalRequired: false,
-            depositRefundableAmount: '800.00',
-            prepaymentRefundableAmount: '500.00',
-            rentRefundableAmount: '100.00',
+            depositRefundableAmount: new Prisma.Decimal('800.00'),
+            prepaymentRefundableAmount: new Prisma.Decimal('500.00'),
+            rentRefundableAmount: new Prisma.Decimal('100.00'),
             targetRoomStatus: 'EMPTY',
             contract: {
               status: 'PENDING_CHECKOUT',
@@ -523,8 +564,26 @@ describe('DepositRefundsService', () => {
               room: { roomStatus: 'PENDING_CHECKOUT' },
             },
           },
+          ...refundOverrides,
         }),
         updateMany: refundStatusWrite,
+      },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 501,
+            paymentAllocationId: 101,
+            paymentId: 11,
+            rentBillId: 20,
+            reservedAmount: new Prisma.Decimal('100.00'),
+            item: {
+              checkoutSettlementId: 9,
+              itemType: 'RENT_REFUND',
+              amount: new Prisma.Decimal('100.00'),
+            },
+            paymentAllocation: { paymentId: 11, rentBillId: 20 },
+          },
+        ]),
       },
       depositTransaction: {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
@@ -534,38 +593,154 @@ describe('DepositRefundsService', () => {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
         create: prepaymentLedgerWrite,
       },
-      fileAsset: { updateMany: fileWrite },
-      checkoutSettlement: { updateMany: settlementStatusWrite },
-      contract: { update: contractWrite },
+      fileAsset: { updateMany: proofWrite },
+      checkoutSettlement: { updateMany: settlementWrite },
+      contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 4, roomId: 7 }),
+        update: contractWrite,
+      },
       room: { update: roomWrite },
       roomStatusHistory: { create: historyWrite },
+      securityAuditLog: { create: auditWrite },
     };
-    mockRoomContractLocks(tx, 3, 7);
+    mockRoomContractLocks(tx, 4, 7);
+    return {
+      tx,
+      depositLedgerWrite,
+      prepaymentLedgerWrite,
+      proofWrite,
+      settlementWrite,
+      contractWrite,
+      roomWrite,
+      historyWrite,
+      auditWrite,
+      refundStatusWrite,
+    };
+  }
+
+  it('approves one external refund and atomically applies all three locked components', async () => {
+    const harness = combinedApprovalTx();
+    const writer = jest
+      .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
+      .mockResolvedValue({
+        appliedAmount: '100.00',
+        affectedBillIds: [20],
+        affectedPaymentIds: [11],
+      });
     const service = new DepositRefundsService({
       db: {
         $transaction: jest.fn(
-          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+          (callback: (client: typeof harness.tx) => Promise<unknown>) =>
+            callback(harness.tx),
+        ),
+      },
+    } as never);
+
+    await service.approve(33, {
+      id: 1,
+      username: 'root',
+      role: 'SUPER_ADMIN',
+    });
+
+    expect(writer).toHaveBeenCalledWith(harness.tx, {
+      settlementId: 9,
+      depositRefundId: 33,
+      approvedBy: 1,
+      occurredAt: expect.any(Date),
+    });
+    expect(harness.depositLedgerWrite).toHaveBeenCalledTimes(1);
+    expect(harness.prepaymentLedgerWrite).toHaveBeenCalledTimes(1);
+    expect(harness.proofWrite).toHaveBeenCalledTimes(1);
+    expect(harness.settlementWrite).toHaveBeenCalledWith({
+      where: { id: 9, status: 'APPROVED' },
+      data: { status: 'COMPLETED' },
+    });
+    expect(harness.contractWrite).toHaveBeenCalledWith({
+      where: { id: 4 },
+      data: { status: 'ENDED' },
+    });
+    expect(harness.roomWrite).toHaveBeenCalledTimes(1);
+    expect(harness.historyWrite).toHaveBeenCalledTimes(1);
+    expect(harness.auditWrite).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        eventType: 'CHECKOUT_REFUND_APPROVED',
+        entityType: 'DEPOSIT_REFUND',
+        entityId: 33,
+        operatorId: 1,
+        eventData: {
+          checkoutSettlementId: 9,
+          refundAmount: '1400.00',
+          depositRefundAmount: '800.00',
+          prepaymentRefundAmount: '500.00',
+          rentRefundAmount: '100.00',
+        },
+      }),
+    });
+    writer.mockRestore();
+  });
+
+  it('rejects a tampered stored split before claiming or applying the refund', async () => {
+    const harness = combinedApprovalTx({
+      rentRefundAmount: new Prisma.Decimal('99.99'),
+    });
+    const writer = jest.spyOn(
+      checkoutRentRefundWriter,
+      'applyCheckoutRentRefund',
+    );
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof harness.tx) => Promise<unknown>) =>
+            callback(harness.tx),
         ),
       },
     } as never);
 
     await expect(
-      service.approve(1, {
+      service.approve(33, {
         id: 1,
         username: 'root',
         role: 'SUPER_ADMIN',
       }),
-    ).rejects.toThrow('退租租金退款尚未完成，当前不能登记或确认押金退款。');
+    ).rejects.toThrow('退款申请的三类锁定金额与结算单不一致');
 
-    expect(tx.depositTransaction.findFirst).not.toHaveBeenCalled();
-    expect(tx.prepaymentTransaction.findFirst).not.toHaveBeenCalled();
-    expect(refundStatusWrite).not.toHaveBeenCalled();
-    expect(settlementStatusWrite).not.toHaveBeenCalled();
-    expect(depositLedgerWrite).not.toHaveBeenCalled();
-    expect(prepaymentLedgerWrite).not.toHaveBeenCalled();
-    expect(fileWrite).not.toHaveBeenCalled();
-    expect(contractWrite).not.toHaveBeenCalled();
-    expect(roomWrite).not.toHaveBeenCalled();
-    expect(historyWrite).not.toHaveBeenCalled();
+    expect(harness.refundStatusWrite).not.toHaveBeenCalled();
+    expect(writer).not.toHaveBeenCalled();
+    expect(harness.settlementWrite).not.toHaveBeenCalled();
+    writer.mockRestore();
+  });
+
+  it('does not execute later ledger or final-state steps when rent accounting fails', async () => {
+    const harness = combinedApprovalTx();
+    const writer = jest
+      .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
+      .mockRejectedValue(new Error('模拟租金回冲失败'));
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof harness.tx) => Promise<unknown>) =>
+            callback(harness.tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(33, {
+        id: 1,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).rejects.toThrow('模拟租金回冲失败');
+
+    expect(harness.refundStatusWrite).toHaveBeenCalledTimes(1);
+    expect(harness.depositLedgerWrite).not.toHaveBeenCalled();
+    expect(harness.prepaymentLedgerWrite).not.toHaveBeenCalled();
+    expect(harness.proofWrite).not.toHaveBeenCalled();
+    expect(harness.settlementWrite).not.toHaveBeenCalled();
+    expect(harness.contractWrite).not.toHaveBeenCalled();
+    expect(harness.roomWrite).not.toHaveBeenCalled();
+    expect(harness.historyWrite).not.toHaveBeenCalled();
+    expect(harness.auditWrite).not.toHaveBeenCalled();
+    writer.mockRestore();
   });
 });
