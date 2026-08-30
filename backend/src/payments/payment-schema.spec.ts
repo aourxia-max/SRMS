@@ -6,6 +6,7 @@ import {
   Prisma,
   RefundAdjustmentDecision,
 } from '@prisma/client';
+import { execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -166,5 +167,19 @@ describe('payment workflow Prisma model', () => {
     const guardInserts = statements.filter((item) => item.startsWith('INSERT INTO') && item.includes('checkout_rent_refund_backfill_guard'));
     expect(guardInserts).toHaveLength(2);
     expect(guardInserts[1]).toMatch(/refund_amount.*deposit_refundable_amount.*prepayment_refundable_amount/);
+  });
+  it('exposes complete allocation field semantics through Prisma metadata', () => {
+    const allocation = model('CheckoutRentRefundAllocation');
+    const fields = new Map(allocation?.fields.map((field) => [field.name, field]));
+    expect(fields.get('reservedAmount')).toMatchObject({ kind: 'scalar', type: 'Decimal' });
+    expect(fields.get('status')).toMatchObject({ kind: 'enum', type: 'CheckoutRentRefundAllocationStatus' });
+    expect(fields.get('reservedAt')).toMatchObject({ type: 'DateTime' });
+    expect(fields.get('releasedAt')).toMatchObject({ type: 'DateTime' });
+    expect(fields.get('appliedAt')).toMatchObject({ type: 'DateTime' });
+    expect(allocation?.fields.filter((field) => field.kind === 'object').map((field) => field.type)).toEqual(expect.arrayContaining(['CheckoutSettlementItem', 'PaymentAllocation', 'Payment', 'RentBill', 'DepositRefund']));
+    const sql = execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['prisma', 'migrate', 'diff', '--from-empty', '--to-schema', 'prisma/schema.prisma', '--script'], { cwd: process.cwd(), encoding: 'utf8' });
+    expect(sql).toMatch(/checkout_rent_refund_allocations[\s\S]*reserved_amount.*DECIMAL\(14, 2\).*NOT NULL[\s\S]*status.*DEFAULT 'RESERVED'[\s\S]*reserved_at.*DATETIME\(3\).*NOT NULL[\s\S]*released_at.*DATETIME\(3\).*NULL[\s\S]*applied_at.*DATETIME\(3\).*NULL/);
+    expect(sql).toMatch(/idx_checkout_rent_refund_item_status[\s\S]*idx_checkout_rent_refund_allocation_status[\s\S]*idx_checkout_rent_refund_refund/);
+    expect(sql).toMatch(/fk_checkout_rent_refund_item[\s\S]*fk_checkout_rent_refund_allocation[\s\S]*fk_checkout_rent_refund_payment[\s\S]*fk_checkout_rent_refund_bill[\s\S]*fk_checkout_rent_refund_refund/);
   });
 });
