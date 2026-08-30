@@ -1725,6 +1725,100 @@ describe("CheckoutTopNav", () => {
 });
 
 describe("Task8 completed detail requests", () => {
+  it("revokes a late proof response when a completed-detail selection replaces its context", async () => {
+    const api = checkoutApi as unknown as {
+      detail: ReturnType<typeof vi.fn>;
+      downloadRefundProof: ReturnType<typeof vi.fn>;
+    };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+
+    api.detail.mockReset();
+    api.detail
+      .mockResolvedValueOnce({
+        id: 17,
+        settlementNo: "TZ-PROOF-A",
+        status: "COMPLETED",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        totalRefundAmount: "0.00",
+        finalReceivable: "0.00",
+        depositRefunds: [
+          {
+            id: 6,
+            approvalStatus: "APPROVED",
+            refundAmount: "100.00",
+            files: [
+              {
+                fileAssetId: 77,
+                originalName: "A-凭证.png",
+                mimeType: "image/png",
+              },
+            ],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: 18,
+        settlementNo: "TZ-CONTEXT-B",
+        status: "COMPLETED",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        totalRefundAmount: "0.00",
+        finalReceivable: "0.00",
+        depositRefunds: [],
+      });
+    let resolveProof!: (value: {
+      data: Blob;
+      headers: Record<string, string>;
+    }) => void;
+    api.downloadRefundProof.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProof = resolve;
+        }),
+    );
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:proof-from-a");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL");
+    const completed = wrapper.findComponent(CompletedCheckoutContractsPanel);
+
+    completed.vm.$emit("select", 17);
+    await flushPromises();
+    await wrapper
+      .get('[data-test="refund-proof-preview-6-77"]')
+      .trigger("click");
+    completed.vm.$emit("select", 18);
+    await flushPromises();
+    resolveProof({
+      data: new Blob(["proof"], { type: "image/png" }),
+      headers: {
+        "content-type": "image/png",
+        "content-disposition":
+          "attachment; filename*=UTF-8''A-%E5%87%AD%E8%AF%81.png",
+      },
+    });
+    await flushPromises();
+
+    expect(
+      wrapper.get(".checkout-workspace__readonly-detail").text(),
+    ).toContain("TZ-CONTEXT-B");
+    expect(
+      wrapper.find('[data-test="refund-proof-preview-dialog"]').exists(),
+    ).toBe(false);
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:proof-from-a");
+  });
+
   it("keeps the newer completed detail when an older request resolves late", async () => {
     const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn> };
     const wrapper = mount(CheckoutWorkspace, {

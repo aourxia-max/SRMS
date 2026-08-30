@@ -3,7 +3,7 @@ import { CheckoutService } from './checkout.service';
 import { DepositRefundsService } from './deposit-refunds.service';
 
 function checkoutDetail(
-  status: 'APPROVED' | 'COMPLETED',
+  status: 'APPROVED' | 'COMPLETED' | 'REJECTED',
   allocations: Array<{
     paymentAllocationId: number;
     status: 'RESERVED' | 'RELEASED' | 'APPLIED';
@@ -51,6 +51,24 @@ function checkoutDetail(
   };
 }
 
+function refundCandidate(
+  id: number,
+  approvalStatus: 'PENDING' | 'APPROVED' | 'REJECTED',
+  submittedAt: string,
+) {
+  return {
+    id,
+    refundNo: `TK-${id}`,
+    refundAmount: '800.00',
+    refundDate: new Date('2026-08-02'),
+    refundMethod: 'BANK_TRANSFER',
+    approvalStatus,
+    submittedAt: new Date(submittedAt),
+    approvedAt: approvalStatus === 'APPROVED' ? new Date('2026-08-03') : null,
+    files: [],
+  };
+}
+
 function settlement(id = 1) {
   return {
     id,
@@ -79,6 +97,87 @@ const admin = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
 describe('Task 8 combined checkout refund hardening', () => {
   it.each([
+    ['COMPLETED', 'APPROVED', 12],
+    ['APPROVED', 'PENDING', 11],
+    ['REJECTED', undefined, undefined],
+  ] as const)(
+    'returns only the %s settlement refund context, never the newer opposite history',
+    async (settlementStatus, expectedRefundStatus, expectedRefundId) => {
+      const candidates = [
+        refundCandidate(10, 'REJECTED', '2026-08-04T10:00:00.000Z'),
+        refundCandidate(11, 'PENDING', '2026-08-03T10:00:00.000Z'),
+        refundCandidate(12, 'APPROVED', '2026-08-02T10:00:00.000Z'),
+      ];
+      const findUniqueOrThrow = jest.fn().mockImplementation(({ include }) => {
+        const relation = include.depositRefunds;
+        const statuses = relation
+          ? 'in' in relation.where.approvalStatus
+            ? relation.where.approvalStatus.in
+            : [relation.where.approvalStatus]
+          : [];
+        const depositRefunds = candidates
+          .filter((refund) => statuses.includes(refund.approvalStatus))
+          .sort(
+            (left, right) =>
+              right.submittedAt.getTime() - left.submittedAt.getTime() ||
+              right.id - left.id,
+          )
+          .slice(0, relation?.take);
+        return Promise.resolve({
+          ...checkoutDetail(settlementStatus, []),
+          depositRefunds,
+        });
+      });
+      const findFirst = jest
+        .fn()
+        .mockImplementation(({ where }) =>
+          Promise.resolve(
+            candidates
+              .filter(
+                (refund) => refund.approvalStatus === where.approvalStatus,
+              )
+              .sort(
+                (left, right) =>
+                  right.submittedAt.getTime() - left.submittedAt.getTime() ||
+                  right.id - left.id,
+              )[0] ?? null,
+          ),
+        );
+      const service = new CheckoutService({
+        db: {
+          checkoutSettlement: { findUniqueOrThrow },
+          depositRefund: { findFirst },
+        },
+      } as never);
+
+      const result = await service.getDetail(2);
+
+      expect(result.depositRefunds).toEqual(
+        expectedRefundId
+          ? [
+              expect.objectContaining({
+                id: expectedRefundId,
+                approvalStatus: expectedRefundStatus,
+              }),
+            ]
+          : [],
+      );
+      if (expectedRefundStatus) {
+        expect(findFirst).toHaveBeenCalledWith({
+          where: {
+            checkoutSettlementId: 2,
+            approvalStatus: expectedRefundStatus,
+          },
+          orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
+          select: expect.any(Object),
+        });
+      } else {
+        expect(findFirst).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([
     ['APPROVED', 'RESERVED', 18],
     ['COMPLETED', 'APPLIED', 20],
   ] as const)(
@@ -92,7 +191,10 @@ describe('Task 8 combined checkout refund hardening', () => {
         ]),
       );
       const service = new CheckoutService({
-        db: { checkoutSettlement: { findUniqueOrThrow } },
+        db: {
+          checkoutSettlement: { findUniqueOrThrow },
+          depositRefund: { findFirst: jest.fn().mockResolvedValue(null) },
+        },
       } as never);
 
       const result = await service.getDetail(2);

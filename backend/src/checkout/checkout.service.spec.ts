@@ -1067,6 +1067,19 @@ describe('CheckoutService', () => {
             ],
           }),
         },
+        depositRefund: {
+          findFirst: jest.fn().mockResolvedValue({
+            id: 9,
+            refundNo: 'TK202608020001',
+            refundAmount: new Prisma.Decimal('1300.00'),
+            refundDate: new Date('2026-08-02'),
+            refundMethod: 'BANK_TRANSFER',
+            approvalStatus: 'PENDING',
+            submittedAt: new Date('2026-08-02T09:00:00.000Z'),
+            approvedAt: null,
+            files: [],
+          }),
+        },
       },
     } as never);
 
@@ -2862,19 +2875,6 @@ describe('CheckoutService', () => {
       expect.objectContaining({
         where: { id: 9 },
         include: expect.objectContaining({
-          depositRefunds: expect.objectContaining({
-            where: { approvalStatus: { in: ['PENDING', 'APPROVED'] } },
-            orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
-            take: 1,
-            select: expect.objectContaining({
-              files: {
-                select: {
-                  fileAssetId: true,
-                  fileAsset: { select: { originalName: true, mimeType: true } },
-                },
-              },
-            }),
-          }),
           items: expect.objectContaining({
             include: expect.objectContaining({
               checkoutRentRefundAllocations: expect.objectContaining({

@@ -240,29 +240,40 @@ export class CheckoutService {
               },
             },
           },
-          depositRefunds: {
-            where: { approvalStatus: { in: ['PENDING', 'APPROVED'] } },
-            orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
-            take: 1,
-            select: {
-              id: true,
-              refundNo: true,
-              refundAmount: true,
-              refundDate: true,
-              refundMethod: true,
-              approvalStatus: true,
-              submittedAt: true,
-              approvedAt: true,
-              files: {
-                select: {
-                  fileAssetId: true,
-                  fileAsset: { select: { originalName: true, mimeType: true } },
-                },
+        },
+      });
+    const refundApprovalStatus =
+      settlement.status === 'APPROVED'
+        ? 'PENDING'
+        : settlement.status === 'COMPLETED'
+          ? 'APPROVED'
+          : undefined;
+    const depositRefund = refundApprovalStatus
+      ? await this.prisma.db.depositRefund.findFirst({
+          where: {
+            checkoutSettlementId: settlement.id,
+            approvalStatus: refundApprovalStatus,
+          },
+          orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
+          select: {
+            id: true,
+            refundNo: true,
+            refundAmount: true,
+            refundDate: true,
+            refundMethod: true,
+            approvalStatus: true,
+            submittedAt: true,
+            approvedAt: true,
+            files: {
+              select: {
+                fileAssetId: true,
+                fileAsset: { select: { originalName: true, mimeType: true } },
               },
             },
           },
-        },
-      });
+        })
+      : null;
+    const depositRefunds = depositRefund ? [depositRefund] : [];
     const visibleReservationStatus =
       settlement.status === 'APPROVED' ? 'RESERVED' : 'APPLIED';
     const rentRefundAllocations = settlement.items.flatMap((item) =>
@@ -333,7 +344,7 @@ export class CheckoutService {
             amount: this.money(item.amount),
           };
         }),
-      depositRefunds: settlement.depositRefunds.map(({ files, ...refund }) => ({
+      depositRefunds: depositRefunds.map(({ files, ...refund }) => ({
         ...refund,
         refundAmount: this.money(refund.refundAmount),
         files: files.map(({ fileAssetId, fileAsset }) => ({

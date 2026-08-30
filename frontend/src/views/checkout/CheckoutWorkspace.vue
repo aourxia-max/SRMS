@@ -146,6 +146,7 @@ async function loadCompletedContracts(
   }
 }
 async function openCompletedDetail(settlementId: number) {
+  closeRefundProofPreview();
   const requestVersion = ++completedDetailRequestVersion;
   actionError.value = "";
   try {
