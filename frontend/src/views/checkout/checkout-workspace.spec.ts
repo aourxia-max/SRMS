@@ -1725,6 +1725,96 @@ describe("CheckoutTopNav", () => {
 });
 
 describe("Task8 completed detail requests", () => {
+  it("invalidates a completed-detail download when the workspace unmounts", async () => {
+    const api = checkoutApi as unknown as {
+      detail: ReturnType<typeof vi.fn>;
+      downloadRefundProof: ReturnType<typeof vi.fn>;
+    };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+
+    api.detail.mockReset();
+    api.detail.mockResolvedValueOnce({
+      id: 17,
+      settlementNo: "TZ-UNMOUNT-A",
+      status: "COMPLETED",
+      contractId: 1,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "0.00",
+      finalReceivable: "0.00",
+      depositRefunds: [
+        {
+          id: 6,
+          approvalStatus: "APPROVED",
+          refundAmount: "100.00",
+          files: [{ fileAssetId: 77, originalName: "A-凭证.png" }],
+        },
+      ],
+    });
+    let resolveDownload!: (value: {
+      data: Blob;
+      headers: Record<string, string>;
+    }) => void;
+    api.downloadRefundProof.mockReset();
+    api.downloadRefundProof.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:unmounted-download");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL");
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    try {
+      const completed = wrapper.findComponent(CompletedCheckoutContractsPanel);
+      completed.vm.$emit("select", 17);
+      await flushPromises();
+      const staleDownloadButton = wrapper.get(
+        '[data-test="refund-proof-download-6-77"]',
+      );
+      await staleDownloadButton.trigger("click");
+      await flushPromises();
+      expect(api.downloadRefundProof).toHaveBeenCalledWith(6, 77);
+      createObjectURL.mockClear();
+      revokeObjectURL.mockClear();
+      click.mockClear();
+
+      wrapper.unmount();
+      resolveDownload({
+        data: new Blob(["proof"], { type: "image/png" }),
+        headers: {
+          "content-type": "image/png",
+          "content-disposition": "attachment; filename*=UTF-8''A-proof.png",
+        },
+      });
+      await flushPromises();
+
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(click).not.toHaveBeenCalled();
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+
+      api.downloadRefundProof.mockClear();
+      await staleDownloadButton.trigger("click");
+      await flushPromises();
+      expect(api.downloadRefundProof).not.toHaveBeenCalled();
+    } finally {
+      click.mockRestore();
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+    }
+  });
+
   it("clears A detail and rejects its stale proof action while B detail is pending", async () => {
     const api = checkoutApi as unknown as {
       detail: ReturnType<typeof vi.fn>;

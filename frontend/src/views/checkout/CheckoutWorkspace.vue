@@ -315,7 +315,11 @@ async function previewRefundProof(
       actionError.value = message(error, "退款凭证预览失败，请稍后重试");
   }
 }
-onBeforeUnmount(closeRefundProofPreview);
+onBeforeUnmount(() => {
+  completedDetailRequestVersion += 1;
+  completedDetail.value = undefined;
+  closeRefundProofPreview();
+});
 
 async function loadFinanceSnapshot(contractId: number) {
   try {
