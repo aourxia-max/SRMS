@@ -175,6 +175,24 @@ async function lockCheckoutRentRefundAvailability(
   );
 }
 
+export async function lockAndPlanCheckoutRentRefund(
+  tx: Prisma.TransactionClient,
+  input: {
+    contractId: number;
+    currentSettlementId: number;
+    actualCheckoutDate: Date;
+    requestedAmount: Prisma.Decimal.Value;
+  },
+) {
+  await lockCheckoutRentRefundAvailability(tx, input.contractId);
+  return planCheckoutRentRefund(tx, {
+    contractId: input.contractId,
+    currentSettlementId: input.currentSettlementId,
+    actualCheckoutDate: input.actualCheckoutDate,
+    requestedAmount: input.requestedAmount,
+  });
+}
+
 async function lockSettlementReservations(
   tx: Prisma.TransactionClient,
   settlementId: number,

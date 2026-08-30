@@ -87,6 +87,34 @@ describe('RefundsService adjustment decisions', () => {
         adjustments: [adjustment],
       },
     };
+    const paymentStatus = {
+      id: 81,
+      allocations: [
+        {
+          allocatedAmount: new Prisma.Decimal('500.00'),
+          refundAllocations: [
+            {
+              id: 601,
+              paymentRefundId: 201,
+              reversedAmount: new Prisma.Decimal('100.00'),
+              paymentRefund: {
+                approvalStatus: 'PENDING',
+              },
+            },
+          ] as Array<{
+            id: number;
+            paymentRefundId: number;
+            reversedAmount: Prisma.Decimal;
+            paymentRefund: { approvalStatus: 'PENDING' | 'APPROVED' };
+          }>,
+          checkoutRentRefundAllocations: [] as Array<{
+            id: number;
+            reservedAmount: Prisma.Decimal;
+            status: 'RESERVED' | 'RELEASED' | 'APPLIED';
+          }>,
+        },
+      ],
+    };
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 201 }]),
       paymentRefund: {
@@ -104,7 +132,10 @@ describe('RefundsService adjustment decisions', () => {
         update: jest.fn().mockResolvedValue({}),
         findMany: jest.fn().mockResolvedValue([bill]),
       },
-      payment: { update: jest.fn().mockResolvedValue({}) },
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(paymentStatus),
+        update: jest.fn().mockResolvedValue({}),
+      },
       checkoutSettlement: {
         findFirst: jest.fn().mockResolvedValue({
           id: 901,
@@ -131,7 +162,12 @@ describe('RefundsService adjustment decisions', () => {
         ),
       },
     };
-    return { tx, service: new RefundsService(prisma as never) };
+    return {
+      tx,
+      refund,
+      paymentStatus,
+      service: new RefundsService(prisma as never),
+    };
   }
 
   it('defaults the business flow to an explicit reversal decision', async () => {
@@ -357,6 +393,82 @@ describe('RefundsService adjustment decisions', () => {
     expect(tx.billAdjustment.create).not.toHaveBeenCalled();
     expect(tx.paymentRefundAdjustmentDecision.create).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      label: '部分退款',
+      currentOrdinaryRefund: '400.00',
+      appliedCheckoutRefund: '100.00',
+      paymentAmount: '400.00',
+      expectedStatus: 'PARTIALLY_REFUNDED',
+    },
+    {
+      label: '全额退款',
+      currentOrdinaryRefund: '300.00',
+      appliedCheckoutRefund: '700.00',
+      paymentAmount: '2000.00',
+      expectedStatus: 'FULLY_REFUNDED',
+    },
+  ])(
+    'keeps $label status correct when checkout is approved before an ordinary refund',
+    async ({
+      currentOrdinaryRefund,
+      appliedCheckoutRefund,
+      paymentAmount,
+      expectedStatus,
+    }) => {
+      const harness = fixture(502);
+      harness.refund.refundAmount = currentOrdinaryRefund;
+      harness.refund.allocations[0].reversedAmount = new Prisma.Decimal(
+        currentOrdinaryRefund,
+      );
+      harness.refund.allocations[0].paymentAllocation.allocatedAmount =
+        new Prisma.Decimal('1000.00');
+      harness.refund.payment.amount = new Prisma.Decimal(paymentAmount);
+      harness.refund.payment.status = 'PARTIALLY_REFUNDED';
+      harness.paymentStatus.allocations[0] = {
+        allocatedAmount: new Prisma.Decimal('1000.00'),
+        refundAllocations: [
+          {
+            id: 601,
+            paymentRefundId: 201,
+            reversedAmount: new Prisma.Decimal(currentOrdinaryRefund),
+            paymentRefund: { approvalStatus: 'PENDING' },
+          },
+          {
+            id: 602,
+            paymentRefundId: 202,
+            reversedAmount: new Prisma.Decimal('800.00'),
+            paymentRefund: { approvalStatus: 'PENDING' },
+          },
+        ],
+        checkoutRentRefundAllocations: [
+          {
+            id: 701,
+            reservedAmount: new Prisma.Decimal(appliedCheckoutRefund),
+            status: 'APPLIED',
+          },
+          {
+            id: 702,
+            reservedAmount: new Prisma.Decimal('800.00'),
+            status: 'RESERVED',
+          },
+          {
+            id: 703,
+            reservedAmount: new Prisma.Decimal('800.00'),
+            status: 'RELEASED',
+          },
+        ],
+      };
+
+      await harness.service.approve(201, { adjustmentDecisions: [] }, user);
+
+      expect(harness.tx.payment.update).toHaveBeenCalledWith({
+        where: { id: 81 },
+        data: { status: expectedStatus },
+      });
+    },
+  );
 
   it('reopens the checkout supplemental balance after an approved refund', async () => {
     const { tx, service } = fixture(502);

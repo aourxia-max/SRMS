@@ -13,10 +13,13 @@ function paymentRow(
     id: number;
     allocatedAmount: Prisma.Decimal.Value;
     refundAllocations?: Array<{
+      id?: number;
+      paymentRefundId?: number;
       reversedAmount: Prisma.Decimal.Value;
       approvalStatus: 'PENDING' | 'APPROVED';
     }>;
     checkoutAllocations?: Array<{
+      id?: number;
       reservedAmount: Prisma.Decimal.Value;
       status: 'RESERVED' | 'RELEASED' | 'APPLIED';
     }>;
@@ -30,12 +33,17 @@ function paymentRow(
     allocations: allocations.map((allocation) => ({
       id: allocation.id,
       allocatedAmount: decimal(allocation.allocatedAmount),
-      refundAllocations: (allocation.refundAllocations ?? []).map((item) => ({
-        reversedAmount: decimal(item.reversedAmount),
-        paymentRefund: { approvalStatus: item.approvalStatus },
-      })),
+      refundAllocations: (allocation.refundAllocations ?? []).map(
+        (item, index) => ({
+          id: item.id ?? allocation.id * 100 + index,
+          paymentRefundId: item.paymentRefundId ?? allocation.id * 100 + index,
+          reversedAmount: decimal(item.reversedAmount),
+          paymentRefund: { approvalStatus: item.approvalStatus },
+        }),
+      ),
       checkoutRentRefundAllocations: (allocation.checkoutAllocations ?? []).map(
-        (item) => ({
+        (item, index) => ({
+          id: item.id ?? allocation.id * 100 + index,
           reservedAmount: decimal(item.reservedAmount),
           status: item.status,
         }),
@@ -83,6 +91,36 @@ function allocation(overrides: TestRecord = {}) {
   };
 }
 
+function candidateRow(
+  id: number,
+  availableAmount: Prisma.Decimal.Value,
+  overrides: TestRecord = {},
+) {
+  const allocatedAmount = decimal('1000.00');
+  const available = decimal(availableAmount);
+  return {
+    id,
+    paymentId: 11,
+    rentBillId: 20,
+    allocatedAmount,
+    reversedAmount: decimal('0.00'),
+    payment: {
+      paymentDate: new Date('2026-08-10'),
+      voidRequests: [],
+    },
+    rentBill: {
+      billNo: `ZJ-${id}`,
+      periodStart: new Date('2026-08-01'),
+      periodEnd: new Date('2026-08-31'),
+    },
+    refundAllocations: allocatedAmount.equals(available)
+      ? []
+      : [{ reversedAmount: allocatedAmount.minus(available) }],
+    checkoutRentRefundAllocations: [],
+    ...overrides,
+  };
+}
+
 function writerHarness(
   options: {
     amount?: Prisma.Decimal.Value;
@@ -93,6 +131,7 @@ function writerHarness(
     bills?: TestRecord[];
     allocations?: TestRecord[];
     payments?: TestRecord[];
+    candidateRows?: TestRecord[];
   } = {},
 ) {
   const amount = decimal(options.amount ?? '1000.00');
@@ -103,6 +142,7 @@ function writerHarness(
     depositRefundableAmount: decimal('0.00'),
     prepaymentRefundableAmount: decimal('0.00'),
     rentRefundableAmount: amount,
+    actualCheckoutDate: new Date('2026-08-15'),
     ...options.settlement,
   };
   const refund = {
@@ -133,6 +173,69 @@ function writerHarness(
   const payments = options.payments ?? [
     paymentRow(11, [{ id: 101, allocatedAmount: '3000.00' }]),
   ];
+  const reservedByAllocation = reservations.reduce((totals, item) => {
+    const current =
+      totals.get(item.paymentAllocationId) ?? new Prisma.Decimal(0);
+    totals.set(item.paymentAllocationId, current.plus(item.reservedAmount));
+    return totals;
+  }, new Map<number, Prisma.Decimal>());
+  const candidateRows =
+    options.candidateRows ??
+    allocations.map((item, index) => {
+      const available = reservedByAllocation.get(item.id) ?? decimal(0);
+      const capacity = decimal(item.allocatedAmount).minus(item.reversedAmount);
+      const pending = Prisma.Decimal.max(
+        new Prisma.Decimal(0),
+        capacity.minus(available),
+      );
+      return {
+        id: item.id,
+        paymentId: item.paymentId,
+        rentBillId: item.rentBillId,
+        allocatedAmount: item.allocatedAmount,
+        reversedAmount: item.reversedAmount,
+        payment: {
+          paymentDate: new Date(
+            `2026-08-${String(10 + index).padStart(2, '0')}`,
+          ),
+          voidRequests: [],
+        },
+        rentBill: {
+          billNo: `ZJ-${item.rentBillId}`,
+          periodStart: new Date('2026-08-01'),
+          periodEnd: new Date('2026-08-31'),
+        },
+        refundAllocations: pending.gt(0) ? [{ reversedAmount: pending }] : [],
+        checkoutRentRefundAllocations: reservations
+          .filter((reservation) => reservation.paymentAllocationId === item.id)
+          .map((reservation) => ({
+            reservedAmount: reservation.reservedAmount,
+            item: { checkoutSettlementId: 9 },
+          })),
+      };
+    });
+  const paymentStatusRows = payments.map((payment) => ({
+    ...payment,
+    allocations: payment.allocations.map((paymentAllocation: TestRecord) => ({
+      ...paymentAllocation,
+      checkoutRentRefundAllocations: [
+        ...paymentAllocation.checkoutRentRefundAllocations,
+        ...reservations
+          .filter(
+            (reservation) =>
+              reservation.paymentAllocationId === paymentAllocation.id &&
+              !paymentAllocation.checkoutRentRefundAllocations.some(
+                (existing: TestRecord) => existing.id === reservation.id,
+              ),
+          )
+          .map((reservation) => ({
+            id: reservation.id,
+            reservedAmount: reservation.reservedAmount,
+            status: reservation.status,
+          })),
+      ],
+    })),
+  }));
 
   const billStates = new Map(
     bills.map((item) => [item.id, { ...item }] as const),
@@ -193,8 +296,10 @@ function writerHarness(
     paymentAllocation: {
       findMany: jest
         .fn()
-        .mockImplementation(() =>
-          [...allocationStates.values()].map((item) => ({ ...item })),
+        .mockImplementation((args) =>
+          args?.select?.payment && args?.select?.rentBill
+            ? candidateRows.map((item) => ({ ...item }))
+            : [...allocationStates.values()].map((item) => ({ ...item })),
         ),
       update: jest.fn().mockImplementation(({ where, data }) => {
         const current = allocationStates.get(where.id);
@@ -205,6 +310,15 @@ function writerHarness(
     },
     payment: {
       findMany: jest.fn().mockResolvedValue(payments),
+      findUniqueOrThrow: jest
+        .fn()
+        .mockImplementation(({ where }: { where: { id: number } }) => {
+          const payment = paymentStatusRows.find(
+            (item) => item.id === where.id,
+          );
+          if (!payment) throw new Error('收款不存在');
+          return payment;
+        }),
       update: jest.fn().mockImplementation(({ where, data }) => {
         const current = paymentStates.get(where.id);
         if (!current) throw new Error('收款不存在');
@@ -486,6 +600,82 @@ describe('applyCheckoutRentRefund', () => {
     expect(harness.paymentStates.get(11)!.status).toBe('PARTIALLY_REFUNDED');
   });
 
+  it.each([
+    {
+      label: '部分退款',
+      currentCheckoutRefund: '400.00',
+      approvedOrdinaryRefund: '200.00',
+      expectedStatus: 'PARTIALLY_REFUNDED',
+    },
+    {
+      label: '全额退款',
+      currentCheckoutRefund: '700.00',
+      approvedOrdinaryRefund: '300.00',
+      expectedStatus: 'FULLY_REFUNDED',
+    },
+  ])(
+    'keeps $label status correct when an ordinary refund is approved before checkout',
+    async ({
+      currentCheckoutRefund,
+      approvedOrdinaryRefund,
+      expectedStatus,
+    }) => {
+      const harness = writerHarness({
+        amount: currentCheckoutRefund,
+        reservations: [
+          reservation({
+            reservedAmount: decimal(currentCheckoutRefund),
+          }),
+        ],
+        bills: [
+          bill({
+            payableAmount: decimal('700.00'),
+            receivedAmount: decimal('700.00'),
+          }),
+        ],
+        allocations: [
+          allocation({
+            allocatedAmount: decimal('700.00'),
+          }),
+        ],
+        payments: [
+          {
+            ...paymentRow(11, [
+              {
+                id: 101,
+                allocatedAmount: '700.00',
+                refundAllocations: [
+                  {
+                    reversedAmount: '900.00',
+                    approvalStatus: 'PENDING',
+                  },
+                ],
+                checkoutAllocations: [
+                  { reservedAmount: '900.00', status: 'RELEASED' },
+                ],
+              },
+              {
+                id: 102,
+                allocatedAmount: '300.00',
+                refundAllocations: [
+                  {
+                    reversedAmount: approvedOrdinaryRefund,
+                    approvalStatus: 'APPROVED',
+                  },
+                ],
+              },
+            ]),
+            status: 'PARTIALLY_REFUNDED',
+          },
+        ],
+      });
+
+      await applyCheckoutRentRefund(harness.tx as never, input);
+
+      expect(harness.paymentStates.get(11)!.status).toBe(expectedStatus);
+    },
+  );
+
   it.each(['RELEASED', 'APPLIED'] as const)(
     'rejects %s reservations and performs no accounting write',
     async (status) => {
@@ -526,6 +716,86 @@ describe('applyCheckoutRentRefund', () => {
     expect(harness.tx.rentBill.update).not.toHaveBeenCalled();
   });
 
+  it('rejects a missing locked checkout date before changing any balance', async () => {
+    const harness = writerHarness({
+      settlement: { actualCheckoutDate: null },
+    });
+
+    await expect(
+      applyCheckoutRentRefund(harness.tx as never, input),
+    ).rejects.toThrow(
+      '退租租金退款金额或锁定快照已变化，请退回结算草稿后重新提交。',
+    );
+    expect(harness.tx.rentBill.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects equal-total reservations whose allocation amounts differ from the locked allocator plan', async () => {
+    const harness = writerHarness({
+      reservations: [
+        reservation({
+          id: 501,
+          paymentAllocationId: 101,
+          reservedAmount: decimal('600.00'),
+        }),
+        reservation({
+          id: 502,
+          paymentAllocationId: 102,
+          reservedAmount: decimal('400.00'),
+        }),
+      ],
+      allocations: [
+        allocation({
+          id: 101,
+          allocatedAmount: decimal('1000.00'),
+        }),
+        allocation({
+          id: 102,
+          allocatedAmount: decimal('1000.00'),
+        }),
+      ],
+      payments: [
+        paymentRow(11, [
+          { id: 101, allocatedAmount: '1000.00' },
+          { id: 102, allocatedAmount: '1000.00' },
+        ]),
+      ],
+      candidateRows: [candidateRow(101, '400.00'), candidateRow(102, '600.00')],
+    });
+
+    await expect(
+      applyCheckoutRentRefund(harness.tx as never, input),
+    ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
+    expect(harness.tx.rentBill.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate reservation rows even when their combined amount matches one planned allocation', async () => {
+    const harness = writerHarness({
+      reservations: [
+        reservation({
+          id: 501,
+          reservedAmount: decimal('500.00'),
+        }),
+        reservation({
+          id: 502,
+          reservedAmount: decimal('500.00'),
+        }),
+      ],
+      allocations: [
+        allocation({
+          id: 101,
+          allocatedAmount: decimal('1000.00'),
+        }),
+      ],
+      payments: [paymentRow(11, [{ id: 101, allocatedAmount: '1000.00' }])],
+      candidateRows: [candidateRow(101, '1000.00')],
+    });
+
+    await expect(
+      applyCheckoutRentRefund(harness.tx as never, input),
+    ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
+    expect(harness.tx.rentBill.update).not.toHaveBeenCalled();
+  });
+
   it('rejects a stored deposit/prepayment split that was swapped without changing the total', async () => {
     const harness = writerHarness({
       settlement: {
@@ -550,6 +820,13 @@ describe('applyCheckoutRentRefund', () => {
   it('rejects cached payment and bill references that no longer match the allocation', async () => {
     const harness = writerHarness({
       reservations: [reservation({ paymentId: 12 })],
+      candidateRows: [
+        candidateRow(101, '1000.00', {
+          paymentId: 12,
+          allocatedAmount: decimal('3000.00'),
+          refundAllocations: [{ reversedAmount: decimal('2000.00') }],
+        }),
+      ],
     });
 
     await expect(
@@ -596,9 +873,7 @@ describe('applyCheckoutRentRefund', () => {
     });
     await expect(
       applyCheckoutRentRefund(allocationChanged.tx as never, input),
-    ).rejects.toThrow(
-      '退租租金退款超过当前可回冲金额，请退回结算草稿后重新提交。',
-    );
+    ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
 
     const billChanged = writerHarness({
       bills: [

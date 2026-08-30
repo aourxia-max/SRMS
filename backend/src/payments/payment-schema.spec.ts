@@ -14,6 +14,23 @@ import { resolve } from 'path';
 describe('payment workflow Prisma model', () => {
   const model = (name: string) =>
     Prisma.dmmf.datamodel.models.find((item) => item.name === name);
+  let schemaSql: string | undefined;
+  const generatedSchemaSql = () => {
+    schemaSql ??= execFileSync(
+      process.execPath,
+      [
+        resolve(process.cwd(), 'node_modules/prisma/build/index.js'),
+        'migrate',
+        'diff',
+        '--from-empty',
+        '--to-schema',
+        'prisma/schema.prisma',
+        '--script',
+      ],
+      { cwd: process.cwd(), encoding: 'utf8' },
+    );
+    return schemaSql;
+  };
 
   it('provides an internal automatic payment method and unique source field', () => {
     expect(
@@ -118,28 +135,48 @@ describe('payment workflow Prisma model', () => {
     const adjustmentFields = new Map(
       model('BillAdjustment')?.fields.map((field) => [field.name, field]),
     );
-    expect(adjustmentFields.get('checkoutSettlementItemId')).toMatchObject({
+    const settlementItemFields = new Map(
+      model('CheckoutSettlementItem')?.fields.map((field) => [
+        field.name,
+        field,
+      ]),
+    );
+    const sourceId = adjustmentFields.get('checkoutSettlementItemId');
+    const sourceRelation = adjustmentFields.get('checkoutSettlementItem');
+    const inverseRelation = settlementItemFields.get('billAdjustments');
+    expect(sourceId).toMatchObject({
       kind: 'scalar',
       type: 'Int',
       dbName: 'checkout_settlement_item_id',
     });
-    expect(adjustmentFields.get('checkoutSettlementItem')).toMatchObject({
+    expect(sourceRelation).toMatchObject({
       kind: 'object',
       type: 'CheckoutSettlementItem',
     });
+    expect(inverseRelation).toMatchObject({
+      kind: 'object',
+      type: 'BillAdjustment',
+    });
+    expect({
+      sourceRelationName: sourceRelation?.relationName,
+      inverseRelationName: inverseRelation?.relationName,
+    }).toEqual({
+      sourceRelationName: 'BillAdjustmentToCheckoutSettlementItem',
+      inverseRelationName: 'BillAdjustmentToCheckoutSettlementItem',
+    });
 
-    const migration = readFileSync(
-      resolve(
-        process.cwd(),
-        'prisma/migrations/20260830090000_checkout_rent_refund/migration.sql',
-      ),
-      'utf8',
+    const sql = generatedSchemaSql();
+    const billAdjustmentTable = sql.match(
+      /CREATE TABLE `bill_adjustments` \(([\s\S]*?)\n\) DEFAULT CHARACTER SET/,
+    )?.[1];
+    expect(billAdjustmentTable).toMatch(
+      /`checkout_settlement_item_id` INTEGER UNSIGNED NULL,/,
     );
-    expect(migration).toMatch(
-      /ALTER TABLE `bill_adjustments`[\s\S]*ADD COLUMN `checkout_settlement_item_id` INT UNSIGNED NULL/,
+    expect(billAdjustmentTable).toMatch(
+      /INDEX `idx_bill_adjustment_checkout_item`\(`checkout_settlement_item_id`\)/,
     );
-    expect(migration).toMatch(
-      /CONSTRAINT `fk_bill_adjustment_checkout_item` FOREIGN KEY \(`checkout_settlement_item_id`\) REFERENCES `checkout_settlement_items` \(`id`\)/,
+    expect(sql).toMatch(
+      /ALTER TABLE `bill_adjustments` ADD CONSTRAINT `fk_bill_adjustment_checkout_item` FOREIGN KEY \(`checkout_settlement_item_id`\) REFERENCES `checkout_settlement_items`\(`id`\)/,
     );
   });
 
@@ -241,19 +278,7 @@ describe('payment workflow Prisma model', () => {
         'DepositRefund',
       ]),
     );
-    const sql = execFileSync(
-      process.execPath,
-      [
-        resolve(process.cwd(), 'node_modules/prisma/build/index.js'),
-        'migrate',
-        'diff',
-        '--from-empty',
-        '--to-schema',
-        'prisma/schema.prisma',
-        '--script',
-      ],
-      { cwd: process.cwd(), encoding: 'utf8' },
-    );
+    const sql = generatedSchemaSql();
     expect(sql).toMatch(
       /CREATE TABLE `checkout_settlement_items`[\s\S]*`item_type` ENUM\([^)]*'RENT_REFUND'[^)]*\) NOT NULL/,
     );

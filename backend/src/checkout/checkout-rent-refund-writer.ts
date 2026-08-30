@@ -1,5 +1,13 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import {
+  CHECKOUT_RENT_REFUND_RESERVATION_CHANGED_MESSAGE,
+  lockAndPlanCheckoutRentRefund,
+} from './checkout-rent-refund-reservations';
+import {
+  calculatePaymentRefundStatus,
+  type PaymentRefundStatusResult,
+} from '../payments/payment-refund-status';
 
 const SNAPSHOT_CHANGED_MESSAGE =
   '退租租金退款金额或锁定快照已变化，请退回结算草稿后重新提交。';
@@ -92,6 +100,7 @@ export async function applyCheckoutRentRefund(
       depositRefundableAmount: true,
       prepaymentRefundableAmount: true,
       rentRefundableAmount: true,
+      actualCheckoutDate: true,
     },
   });
   const refund = await tx.depositRefund.findUniqueOrThrow({
@@ -179,6 +188,7 @@ export async function applyCheckoutRentRefund(
   if (
     items.length !== 1 ||
     !item ||
+    !settlement.actualCheckoutDate ||
     item.checkoutSettlementId !== settlement.id ||
     item.itemType !== 'RENT_REFUND' ||
     settlementAmount.lte(0) ||
@@ -192,6 +202,49 @@ export async function applyCheckoutRentRefund(
     !reservedTotal.toDecimalPlaces(2).equals(settlementAmount)
   )
     throw new BadRequestException(SNAPSHOT_CHANGED_MESSAGE);
+
+  let lockedPlan;
+  try {
+    ({ plan: lockedPlan } = await lockAndPlanCheckoutRentRefund(tx, {
+      contractId: settlement.contractId,
+      currentSettlementId: settlement.id,
+      actualCheckoutDate: settlement.actualCheckoutDate,
+      requestedAmount: settlementAmount,
+    }));
+  } catch (error) {
+    if (error instanceof BadRequestException)
+      throw new BadRequestException(
+        CHECKOUT_RENT_REFUND_RESERVATION_CHANGED_MESSAGE,
+      );
+    throw error;
+  }
+  const storedPlan = activeReservations
+    .map((reservation) =>
+      [
+        reservation.paymentAllocationId,
+        reservation.paymentId,
+        reservation.rentBillId,
+        asMoney(reservation.reservedAmount).toFixed(2),
+      ].join(':'),
+    )
+    .sort();
+  const expectedPlan = lockedPlan.allocations
+    .map((allocation) =>
+      [
+        allocation.paymentAllocationId,
+        allocation.paymentId,
+        allocation.rentBillId,
+        asMoney(allocation.amount).toFixed(2),
+      ].join(':'),
+    )
+    .sort();
+  if (
+    storedPlan.length !== expectedPlan.length ||
+    storedPlan.some((entry, index) => entry !== expectedPlan[index])
+  )
+    throw new BadRequestException(
+      CHECKOUT_RENT_REFUND_RESERVATION_CHANGED_MESSAGE,
+    );
 
   const billIds = [
     ...new Set(activeReservations.map((reservation) => reservation.rentBillId)),
@@ -235,21 +288,6 @@ export async function applyCheckoutRentRefund(
       contractId: true,
       paymentCategory: true,
       status: true,
-      allocations: {
-        select: {
-          id: true,
-          allocatedAmount: true,
-          refundAllocations: {
-            select: {
-              reversedAmount: true,
-              paymentRefund: { select: { approvalStatus: true } },
-            },
-          },
-          checkoutRentRefundAllocations: {
-            select: { reservedAmount: true, status: true },
-          },
-        },
-      },
     },
   });
 
@@ -269,7 +307,6 @@ export async function applyCheckoutRentRefund(
   );
   const paymentById = new Map(payments.map((payment) => [payment.id, payment]));
   const amountByBill = new Map<number, Prisma.Decimal>();
-  const amountByPayment = new Map<number, Prisma.Decimal>();
   const amountByAllocation = new Map<number, Prisma.Decimal>();
 
   for (const reservation of activeReservations) {
@@ -297,7 +334,6 @@ export async function applyCheckoutRentRefund(
     )
       throw new BadRequestException(REFERENCE_CHANGED_MESSAGE);
     addAmount(amountByBill, reservation.rentBillId, reservationAmount);
-    addAmount(amountByPayment, reservation.paymentId, reservationAmount);
     addAmount(
       amountByAllocation,
       reservation.paymentAllocationId,
@@ -330,53 +366,18 @@ export async function applyCheckoutRentRefund(
 
   const nextPaymentStatus = new Map<
     number,
-    'PARTIALLY_REFUNDED' | 'FULLY_REFUNDED'
+    PaymentRefundStatusResult['status']
   >();
   for (const paymentId of paymentIds) {
-    const payment = paymentById.get(paymentId)!;
-    const allocatedTotal = payment.allocations.reduce(
-      (sum, paymentAllocation) => sum.plus(paymentAllocation.allocatedAmount),
-      new Prisma.Decimal(0),
-    );
-    const approvedOrdinaryRefund = payment.allocations.reduce(
-      (sum, paymentAllocation) =>
-        paymentAllocation.refundAllocations.reduce(
-          (allocationSum, refundAllocation) =>
-            refundAllocation.paymentRefund.approvalStatus === 'APPROVED'
-              ? allocationSum.plus(refundAllocation.reversedAmount)
-              : allocationSum,
-          sum,
-        ),
-      new Prisma.Decimal(0),
-    );
-    const appliedCheckoutRefund = payment.allocations.reduce(
-      (sum, paymentAllocation) =>
-        paymentAllocation.checkoutRentRefundAllocations.reduce(
-          (allocationSum, checkoutAllocation) =>
-            checkoutAllocation.status === 'APPLIED'
-              ? allocationSum.plus(checkoutAllocation.reservedAmount)
-              : allocationSum,
-          sum,
-        ),
-      new Prisma.Decimal(0),
-    );
-    const refundedTotal = approvedOrdinaryRefund
-      .plus(appliedCheckoutRefund)
-      .plus(amountByPayment.get(paymentId) ?? 0)
-      .toDecimalPlaces(2);
-    if (
-      allocatedTotal.lte(0) ||
-      refundedTotal.gt(allocatedTotal.toDecimalPlaces(2))
-    )
-      throw new BadRequestException(
-        '收款退款累计金额异常，不能执行退租租金退款。',
-      );
-    nextPaymentStatus.set(
+    const paymentRefundStatus = await calculatePaymentRefundStatus(tx, {
       paymentId,
-      refundedTotal.equals(allocatedTotal.toDecimalPlaces(2))
-        ? 'FULLY_REFUNDED'
-        : 'PARTIALLY_REFUNDED',
-    );
+      current: {
+        checkoutRentRefundAllocationIds: activeReservations
+          .filter((reservation) => reservation.paymentId === paymentId)
+          .map((reservation) => reservation.id),
+      },
+    });
+    nextPaymentStatus.set(paymentId, paymentRefundStatus.status);
   }
 
   for (const billId of billIds) {

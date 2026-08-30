@@ -126,7 +126,7 @@ describe('DepositRefundsService', () => {
       prepaymentRefundableAmount: '500.00',
       rentRefundableAmount: '0.00',
       prepaymentBalance: '500.00',
-      contract: { status: 'PENDING_CHECKOUT' },
+      contract: { id: 3, status: 'PENDING_CHECKOUT' },
     };
     const create = jest.fn().mockResolvedValue({ id: 9 });
     const harness = transactional({
@@ -166,6 +166,42 @@ describe('DepositRefundsService', () => {
     );
   });
 
+  it('rejects submission when the settlement scalar and related contract disagree', async () => {
+    const create = jest.fn();
+    const harness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'APPROVED',
+          handoverDate: new Date('2026-08-01'),
+          finalReceivable: '0.00',
+          depositRefundableAmount: '800.00',
+          prepaymentRefundableAmount: '0.00',
+          rentRefundableAmount: '0.00',
+          contract: { id: 4, status: 'PENDING_CHECKOUT' },
+        }),
+      },
+      fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
+      depositRefund: { create },
+    });
+    const service = new DepositRefundsService({ db: harness.db } as never);
+
+    await expect(
+      service.submit(
+        {
+          checkoutSettlementId: 1,
+          refundAmount: '800.00',
+          refundDate: '2026-08-02',
+          refundMethod: 'BANK_TRANSFER',
+          proofFileIds: [4],
+        } as never,
+        { id: 2, username: 'admin', role: 'ADMIN' },
+      ),
+    ).rejects.toThrow('结算单合同归属异常，不能登记押金退款');
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('allows refund registration after a required supplemental receivable is fully collected', async () => {
     const create = jest.fn().mockResolvedValue({ id: 9 });
     const service = new DepositRefundsService({
@@ -181,7 +217,7 @@ describe('DepositRefundsService', () => {
             supplementalOutstandingAmount: '0.00',
             depositRefundableAmount: '800.00',
             prepaymentRefundableAmount: '0.00',
-            contract: { status: 'PENDING_CHECKOUT' },
+            contract: { id: 3, status: 'PENDING_CHECKOUT' },
           }),
         },
         fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
@@ -219,6 +255,7 @@ describe('DepositRefundsService', () => {
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
             id: 8,
+            contractId: 3,
             status: 'APPROVED',
             handoverDate: new Date('2026-08-01'),
             finalReceivable: '0.00',
@@ -227,6 +264,7 @@ describe('DepositRefundsService', () => {
             rentRefundableAmount: '0.00',
             prepaymentBalance: '500.00',
             contract: {
+              id: 3,
               status: 'PENDING_CHECKOUT',
               roomId: 7,
               room: { roomStatus: 'PENDING_CHECKOUT' },
@@ -244,7 +282,16 @@ describe('DepositRefundsService', () => {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
         create: prepaymentTransactionCreate,
       },
-      fileAsset: { updateMany: jest.fn() },
+      fileAsset: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 4,
+            category: 'DEPOSIT_REFUND_PROOF',
+            lockedAt: null,
+          },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       checkoutSettlement: {
         update: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -277,7 +324,7 @@ describe('DepositRefundsService', () => {
     expect(
       depositTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('800');
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(5);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(6);
     expect(prepaymentTransactionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ transactionType: 'REFUND' }),
@@ -314,6 +361,7 @@ describe('DepositRefundsService', () => {
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
             id: 8,
+            contractId: 3,
             status: 'APPROVED',
             handoverDate: new Date('2026-08-01'),
             finalReceivable: '0.00',
@@ -321,6 +369,7 @@ describe('DepositRefundsService', () => {
             prepaymentRefundableAmount: '0.00',
             rentRefundableAmount: '0.00',
             contract: {
+              id: 3,
               status: 'PENDING_CHECKOUT',
               roomId: 7,
               room: { roomStatus: 'PENDING_CHECKOUT' },
@@ -337,7 +386,16 @@ describe('DepositRefundsService', () => {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '0.00' }),
         create: jest.fn(),
       },
-      fileAsset: { updateMany: jest.fn() },
+      fileAsset: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 4,
+            category: 'DEPOSIT_REFUND_PROOF',
+            lockedAt: null,
+          },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       checkoutSettlement: { updateMany: jest.fn() },
       contract: { update: jest.fn() },
       room: { update: jest.fn() },
@@ -370,7 +428,7 @@ describe('DepositRefundsService', () => {
           finalReceivable: '0.00',
           depositRefundableAmount: '800.00',
           prepaymentRefundableAmount: '0.00',
-          contract: { status: 'VOIDED' },
+          contract: { id: 3, status: 'VOIDED' },
         }),
       },
       depositRefund: { create: submitCreate },
@@ -411,12 +469,14 @@ describe('DepositRefundsService', () => {
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
             id: 8,
+            contractId: 3,
             status: 'APPROVED',
             handoverDate: new Date('2026-08-01'),
             finalReceivable: '0.00',
             depositRefundableAmount: '800.00',
             prepaymentRefundableAmount: '0.00',
             contract: {
+              id: 3,
               status: 'VOIDED',
               roomId: 7,
               room: { roomStatus: 'PENDING_CHECKOUT' },
@@ -460,7 +520,7 @@ describe('DepositRefundsService', () => {
           depositRefundableAmount: '800.00',
           prepaymentRefundableAmount: '500.00',
           rentRefundableAmount: '100.00',
-          contract: { status: 'PENDING_CHECKOUT' },
+          contract: { id: 4, status: 'PENDING_CHECKOUT' },
         }),
       },
       checkoutRentRefundAllocation: {
@@ -524,10 +584,39 @@ describe('DepositRefundsService', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  function combinedApprovalTx(refundOverrides: Record<string, unknown> = {}) {
+  function combinedApprovalTx(
+    refundOverrides: Record<string, unknown> = {},
+    proofState: {
+      id: number;
+      category: string;
+      lockedAt: Date | null;
+    } = {
+      id: 4,
+      category: 'DEPOSIT_REFUND_PROOF',
+      lockedAt: null,
+    },
+  ) {
     const depositLedgerWrite = jest.fn();
     const prepaymentLedgerWrite = jest.fn();
-    const proofWrite = jest.fn();
+    const proofRead = jest.fn().mockImplementation(({ where }) => {
+      const ids = new Set<number>(where.id.in);
+      return ids.has(proofState.id) &&
+        proofState.category === where.category &&
+        proofState.lockedAt === where.lockedAt
+        ? [{ ...proofState }]
+        : [];
+    });
+    const proofWrite = jest.fn().mockImplementation(({ where, data }) => {
+      const ids = new Set<number>(where.id.in);
+      const categoryMatches =
+        where.category === undefined || where.category === proofState.category;
+      const lockMatches =
+        where.lockedAt === undefined || where.lockedAt === proofState.lockedAt;
+      if (!ids.has(proofState.id) || !categoryMatches || !lockMatches)
+        return { count: 0 };
+      proofState.lockedAt = data.lockedAt;
+      return { count: 1 };
+    });
     const settlementWrite = jest.fn().mockResolvedValue({ count: 1 });
     const contractWrite = jest.fn();
     const roomWrite = jest.fn();
@@ -550,6 +639,7 @@ describe('DepositRefundsService', () => {
           files: [{ fileAssetId: 4 }],
           checkoutSettlement: {
             id: 9,
+            contractId: 4,
             status: 'APPROVED',
             handoverDate: new Date('2026-08-01'),
             finalReceivable: new Prisma.Decimal('0.00'),
@@ -559,6 +649,7 @@ describe('DepositRefundsService', () => {
             rentRefundableAmount: new Prisma.Decimal('100.00'),
             targetRoomStatus: 'EMPTY',
             contract: {
+              id: 4,
               status: 'PENDING_CHECKOUT',
               roomId: 7,
               room: { roomStatus: 'PENDING_CHECKOUT' },
@@ -593,7 +684,7 @@ describe('DepositRefundsService', () => {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
         create: prepaymentLedgerWrite,
       },
-      fileAsset: { updateMany: proofWrite },
+      fileAsset: { findMany: proofRead, updateMany: proofWrite },
       checkoutSettlement: { updateMany: settlementWrite },
       contract: {
         findUnique: jest.fn().mockResolvedValue({ id: 4, roomId: 7 }),
@@ -608,6 +699,7 @@ describe('DepositRefundsService', () => {
       tx,
       depositLedgerWrite,
       prepaymentLedgerWrite,
+      proofRead,
       proofWrite,
       settlementWrite,
       contractWrite,
@@ -617,6 +709,189 @@ describe('DepositRefundsService', () => {
       refundStatusWrite,
     };
   }
+
+  it('rejects a zero-rent refund whose contract differs from the settlement before any write', async () => {
+    const harness = combinedApprovalTx();
+    const refund = await harness.tx.depositRefund.findUniqueOrThrow({
+      where: { id: 33 },
+    });
+    refund.refundAmount = new Prisma.Decimal('1300.00');
+    refund.rentRefundAmount = new Prisma.Decimal('0.00');
+    refund.checkoutSettlement.contractId = 5;
+    refund.checkoutSettlement.rentRefundableAmount = new Prisma.Decimal('0.00');
+    refund.checkoutSettlement.contract.id = 5;
+    harness.tx.depositRefund.findUniqueOrThrow.mockResolvedValue(refund);
+    const writer = jest.spyOn(
+      checkoutRentRefundWriter,
+      'applyCheckoutRentRefund',
+    );
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof harness.tx) => Promise<unknown>) =>
+            callback(harness.tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(33, {
+        id: 1,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).rejects.toThrow('退款申请与结算单合同归属不一致，不能确认退款');
+
+    expect(harness.refundStatusWrite).not.toHaveBeenCalled();
+    expect(writer).not.toHaveBeenCalled();
+    expect(harness.depositLedgerWrite).not.toHaveBeenCalled();
+    expect(harness.prepaymentLedgerWrite).not.toHaveBeenCalled();
+    expect(harness.proofWrite).not.toHaveBeenCalled();
+    expect(harness.settlementWrite).not.toHaveBeenCalled();
+    expect(harness.contractWrite).not.toHaveBeenCalled();
+    expect(harness.roomWrite).not.toHaveBeenCalled();
+    expect(harness.historyWrite).not.toHaveBeenCalled();
+    expect(harness.auditWrite).not.toHaveBeenCalled();
+    writer.mockRestore();
+  });
+
+  it('rejects a linked proof with the wrong category before claiming the refund', async () => {
+    const proofState = {
+      id: 4,
+      category: 'PAYMENT_PROOF',
+      lockedAt: null as Date | null,
+    };
+    const harness = combinedApprovalTx({}, proofState);
+    const writer = jest
+      .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
+      .mockResolvedValue({
+        appliedAmount: '100.00',
+        affectedBillIds: [20],
+        affectedPaymentIds: [11],
+      });
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof harness.tx) => Promise<unknown>) =>
+            callback(harness.tx),
+        ),
+      },
+    } as never);
+
+    try {
+      await expect(
+        service.approve(33, {
+          id: 1,
+          username: 'root',
+          role: 'SUPER_ADMIN',
+        }),
+      ).rejects.toThrow('退款凭证不存在、类型不正确或已被其他业务占用');
+      expect(harness.refundStatusWrite).not.toHaveBeenCalled();
+      expect(writer).not.toHaveBeenCalled();
+      expect(harness.depositLedgerWrite).not.toHaveBeenCalled();
+      expect(harness.proofWrite).not.toHaveBeenCalled();
+    } finally {
+      writer.mockRestore();
+    }
+  });
+
+  it('rejects a concurrent proof claim when the conditional update count changes', async () => {
+    const harness = combinedApprovalTx();
+    harness.proofWrite.mockResolvedValueOnce({ count: 0 });
+    const writer = jest
+      .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
+      .mockResolvedValue({
+        appliedAmount: '100.00',
+        affectedBillIds: [20],
+        affectedPaymentIds: [11],
+      });
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof harness.tx) => Promise<unknown>) =>
+            callback(harness.tx),
+        ),
+      },
+    } as never);
+
+    try {
+      await expect(
+        service.approve(33, {
+          id: 1,
+          username: 'root',
+          role: 'SUPER_ADMIN',
+        }),
+      ).rejects.toThrow('退款凭证已被其他业务占用，请刷新后重试');
+      expect(harness.refundStatusWrite).not.toHaveBeenCalled();
+      expect(writer).not.toHaveBeenCalled();
+      expect(harness.depositLedgerWrite).not.toHaveBeenCalled();
+    } finally {
+      writer.mockRestore();
+    }
+  });
+
+  it('allows only the first of two refunds that share one proof to approve', async () => {
+    const sharedProof = {
+      id: 4,
+      category: 'DEPOSIT_REFUND_PROOF',
+      lockedAt: null as Date | null,
+    };
+    const first = combinedApprovalTx({ id: 33 }, sharedProof);
+    const second = combinedApprovalTx({ id: 34 }, sharedProof);
+    const writer = jest
+      .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
+      .mockResolvedValue({
+        appliedAmount: '100.00',
+        affectedBillIds: [20],
+        affectedPaymentIds: [11],
+      });
+    const firstService = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof first.tx) => Promise<unknown>) =>
+            callback(first.tx),
+        ),
+      },
+    } as never);
+    const secondService = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof second.tx) => Promise<unknown>) =>
+            callback(second.tx),
+        ),
+      },
+    } as never);
+
+    try {
+      await expect(
+        firstService.approve(33, {
+          id: 1,
+          username: 'root',
+          role: 'SUPER_ADMIN',
+        }),
+      ).resolves.toMatchObject({ id: 33 });
+      await expect(
+        secondService.approve(34, {
+          id: 1,
+          username: 'root',
+          role: 'SUPER_ADMIN',
+        }),
+      ).rejects.toThrow('退款凭证不存在、类型不正确或已被其他业务占用');
+
+      expect(first.refundStatusWrite).toHaveBeenCalledTimes(1);
+      expect(second.refundStatusWrite).not.toHaveBeenCalled();
+      expect(sharedProof.lockedAt).toBeInstanceOf(Date);
+      const proofLockSql = first.tx.$queryRaw.mock.calls
+        .map(
+          ([query]) =>
+            (query as { strings?: readonly string[] }).strings?.join('?') ?? '',
+        )
+        .find((sql) => sql.includes('FROM file_assets'));
+      expect(proofLockSql).toContain('ORDER BY fa.id FOR UPDATE');
+    } finally {
+      writer.mockRestore();
+    }
+  });
 
   it('approves one external refund and atomically applies all three locked components', async () => {
     const harness = combinedApprovalTx();
@@ -735,7 +1010,7 @@ describe('DepositRefundsService', () => {
     expect(harness.refundStatusWrite).toHaveBeenCalledTimes(1);
     expect(harness.depositLedgerWrite).not.toHaveBeenCalled();
     expect(harness.prepaymentLedgerWrite).not.toHaveBeenCalled();
-    expect(harness.proofWrite).not.toHaveBeenCalled();
+    expect(harness.proofWrite).toHaveBeenCalledTimes(1);
     expect(harness.settlementWrite).not.toHaveBeenCalled();
     expect(harness.contractWrite).not.toHaveBeenCalled();
     expect(harness.roomWrite).not.toHaveBeenCalled();

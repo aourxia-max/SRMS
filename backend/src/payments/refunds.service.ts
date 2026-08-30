@@ -17,6 +17,7 @@ import {
 } from './checkout-supplemental-balance';
 import { assertContractNotVoided } from '../contracts/contract-operability';
 import { assertNoCheckoutRentRefundReservation } from '../checkout/checkout-rent-refund-reservations';
+import { calculatePaymentRefundStatus } from './payment-refund-status';
 
 @Injectable()
 export class RefundsService {
@@ -286,20 +287,13 @@ export class RefundsService {
           },
         });
       }
-      const previous = await tx.paymentRefund.aggregate({
-        where: { paymentId: refund.paymentId, approvalStatus: 'APPROVED' },
-        _sum: { refundAmount: true },
+      const paymentRefundStatus = await calculatePaymentRefundStatus(tx, {
+        paymentId: refund.paymentId,
+        current: { paymentRefundId: refund.id },
       });
-      const refunded = new Prisma.Decimal(previous._sum.refundAmount ?? 0).plus(
-        refund.refundAmount,
-      );
       await tx.payment.update({
         where: { id: refund.paymentId },
-        data: {
-          status: refunded.gte(refund.payment.amount)
-            ? 'FULLY_REFUNDED'
-            : 'PARTIALLY_REFUNDED',
-        },
+        data: { status: paymentRefundStatus.status },
       });
       await reopenCheckoutSupplementalBalance(
         tx,

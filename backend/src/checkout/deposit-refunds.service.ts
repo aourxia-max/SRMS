@@ -47,6 +47,8 @@ export class DepositRefundsService {
         where: { id: dto.checkoutSettlementId },
         include: { contract: true },
       });
+      if (settlement.contractId !== settlement.contract.id)
+        throw new BadRequestException('结算单合同归属异常，不能登记押金退款');
       assertContractNotVoided(settlement.contract.status, '登记押金退款');
       if (
         settlement.status !== 'APPROVED' ||
@@ -132,6 +134,13 @@ export class DepositRefundsService {
           },
         });
         const settlement = refund.checkoutSettlement;
+        if (
+          refund.contractId !== settlement.contractId ||
+          settlement.contractId !== settlement.contract.id
+        )
+          throw new BadRequestException(
+            '退款申请与结算单合同归属不一致，不能确认退款',
+          );
         if (refund.approvalStatus !== 'PENDING')
           throw new BadRequestException(
             '当前不满足确认押金退款并结束合同的条件',
@@ -141,11 +150,41 @@ export class DepositRefundsService {
           settlement.status !== 'APPROVED' ||
           settlement.contract.status !== 'PENDING_CHECKOUT' ||
           !settlement.handoverDate ||
-          !this.isSupplementalCleared(settlement) ||
-          !refund.files.length
+          !this.isSupplementalCleared(settlement)
         )
           throw new BadRequestException(
             '当前不满足确认押金退款并结束合同的条件',
+          );
+        const proofFileIds = [
+          ...new Set(refund.files.map((file) => file.fileAssetId)),
+        ].sort((left, right) => left - right);
+        if (!proofFileIds.length || proofFileIds.length !== refund.files.length)
+          throw new BadRequestException(
+            '退款凭证不存在、类型不正确或已被其他业务占用',
+          );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT fa.id FROM file_assets fa WHERE fa.id IN (${Prisma.join(
+            proofFileIds,
+          )}) ORDER BY fa.id FOR UPDATE`,
+        );
+        const proofFiles = await tx.fileAsset.findMany({
+          where: {
+            id: { in: proofFileIds },
+            category: 'DEPOSIT_REFUND_PROOF',
+            lockedAt: null,
+          },
+          select: { id: true, category: true, lockedAt: true },
+        });
+        if (
+          proofFiles.length !== proofFileIds.length ||
+          proofFiles.some(
+            (file) =>
+              file.category !== 'DEPOSIT_REFUND_PROOF' ||
+              file.lockedAt !== null,
+          )
+        )
+          throw new BadRequestException(
+            '退款凭证不存在、类型不正确或已被其他业务占用',
           );
         const depositRefundableAmount = new Prisma.Decimal(
           settlement.depositRefundableAmount,
@@ -209,6 +248,16 @@ export class DepositRefundsService {
             settlement.contractId,
           );
         const occurredAt = new Date();
+        const claimedProofs = await tx.fileAsset.updateMany({
+          where: {
+            id: { in: proofFileIds },
+            category: 'DEPOSIT_REFUND_PROOF',
+            lockedAt: null,
+          },
+          data: { lockedAt: occurredAt },
+        });
+        if (claimedProofs.count !== proofFileIds.length)
+          throw new ConflictException('退款凭证已被其他业务占用，请刷新后重试');
         const claimedRefund = await tx.depositRefund.updateMany({
           where: { id, approvalStatus: 'PENDING' },
           data: {
@@ -252,10 +301,6 @@ export class DepositRefundsService {
             },
           });
         }
-        await tx.fileAsset.updateMany({
-          where: { id: { in: refund.files.map((file) => file.fileAssetId) } },
-          data: { lockedAt: occurredAt },
-        });
         const claimedSettlement = await tx.checkoutSettlement.updateMany({
           where: { id: settlement.id, status: 'APPROVED' },
           data: { status: 'COMPLETED' },
