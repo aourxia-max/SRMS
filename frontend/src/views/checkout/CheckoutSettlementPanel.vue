@@ -40,6 +40,7 @@ const actionableSettlements = computed(() =>
     ["DRAFT", "PENDING", "REJECTED"].includes(item.status),
   ),
 );
+const canOperate = computed(() => props.role !== "VISITOR");
 const canApprove = computed(() => props.role === "SUPER_ADMIN");
 const selected = computed(
   () =>
@@ -260,7 +261,7 @@ function cancelSelected() {
         >
           <strong>{{ statusText(selected.status) }}</strong
           ><span v-if="selected.status === 'APPROVED'"
-            >结算已锁定，请前往“押金退还确认”完成最终处理。</span
+            >结算已锁定，请前往“退租退款确认”完成最终处理。</span
           ><span v-else-if="selected.status === 'REJECTED'">{{
             selected.rejectedReason || "请修改结算内容后重新提交。"
           }}</span>
@@ -284,7 +285,7 @@ function cancelSelected() {
             }}</small>
           </div>
         </div>
-        <template v-if="selected.status === 'DRAFT'">
+        <template v-if="selected.status === 'DRAFT' && canOperate">
           <div
             v-if="errors.length"
             class="settlement-panel__errors"
@@ -474,11 +475,15 @@ function cancelSelected() {
             </button>
           </div>
         </template>
+        <p v-else-if="selected.status === 'DRAFT'" class="settlement-panel__hint">
+          访客仅可查看，不可编辑或提交退租结算。
+        </p>
         <div
           v-else-if="selected.status === 'PENDING'"
           class="settlement-panel__actions"
         >
           <button
+            v-if="canOperate"
             type="button"
             class="danger-button"
             data-test="settlement-cancel"
@@ -504,6 +509,7 @@ function cancelSelected() {
           class="settlement-panel__actions"
         >
           <button
+            v-if="canOperate"
             type="button"
             class="danger-button"
             data-test="settlement-cancel"
@@ -513,6 +519,7 @@ function cancelSelected() {
             取消退租结算
           </button>
           <button
+            v-if="canApprove"
             type="button"
             class="secondary-button"
             @click="emit('returnToDraft', selected.id)"

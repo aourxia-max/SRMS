@@ -134,7 +134,7 @@ describe('DepositRefundsService', () => {
         findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
       },
       fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
-      depositRefund: { create },
+      depositRefund: { findFirst: jest.fn().mockResolvedValue(null), create },
     });
     const service = new DepositRefundsService({
       db: harness.db,
@@ -183,7 +183,7 @@ describe('DepositRefundsService', () => {
         }),
       },
       fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
-      depositRefund: { create },
+      depositRefund: { findFirst: jest.fn().mockResolvedValue(null), create },
     });
     const service = new DepositRefundsService({ db: harness.db } as never);
 
@@ -221,7 +221,7 @@ describe('DepositRefundsService', () => {
           }),
         },
         fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
-        depositRefund: { create },
+        depositRefund: { findFirst: jest.fn().mockResolvedValue(null), create },
       }).db,
     } as never);
 
@@ -431,7 +431,10 @@ describe('DepositRefundsService', () => {
           contract: { id: 3, status: 'VOIDED' },
         }),
       },
-      depositRefund: { create: submitCreate },
+      depositRefund: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: submitCreate,
+      },
     });
     const submitService = new DepositRefundsService({
       db: submitHarness.db,
@@ -541,7 +544,7 @@ describe('DepositRefundsService', () => {
         ]),
       },
       fileAsset: { findMany: jest.fn().mockResolvedValue([{ id: 4 }]) },
-      depositRefund: { create },
+      depositRefund: { findFirst: jest.fn().mockResolvedValue(null), create },
     });
     const service = new DepositRefundsService({ db: harness.db } as never);
     const dto = {

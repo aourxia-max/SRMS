@@ -37,6 +37,8 @@ watch(
   () => {
     proofFileIds.value = [];
     errors.value = [];
+    form.refundDate = today;
+    form.refundMethod = "WECHAT";
     form.remark = "";
   },
 );
@@ -375,25 +377,6 @@ defineExpose({ addProof });
 }
 .refund-panel__amounts span,
 .refund-panel__amounts strong {
-  .refund-panel__allocations {
-    margin-top: 20px;
-    padding: 16px;
-    border: 1px solid #dce7f8;
-    border-radius: 8px;
-    background: #f7faff;
-  }
-  .refund-panel__allocations h3 {
-    margin: 0;
-    font-size: 15px;
-  }
-  .refund-panel__allocations ul {
-    display: grid;
-    gap: 8px;
-    margin: 12px 0 0;
-    padding-left: 20px;
-    color: #4a5b72;
-    font-size: 14px;
-  }
   display: block;
 }
 .refund-panel__amounts span {
@@ -532,9 +515,11 @@ defineExpose({ addProof });
   margin: 0;
   color: #66758b;
 }
-.refund-panel > .refund-panel__allocations {
+
+
+
+.refund-panel__card .refund-panel__allocations {
   display: grid;
-  grid-column: 1 / -1;
   gap: 10px;
   margin-top: 20px;
   padding: 16px;
@@ -542,11 +527,11 @@ defineExpose({ addProof });
   border-radius: 8px;
   background: #f7faff;
 }
-.refund-panel > .refund-panel__allocations h3,
-.refund-panel > .refund-panel__allocations ul {
+.refund-panel__card .refund-panel__allocations h3,
+.refund-panel__card .refund-panel__allocations ul {
   margin: 0;
 }
-.refund-panel > .refund-panel__allocations ul {
+.refund-panel__card .refund-panel__allocations ul {
   display: grid;
   gap: 8px;
   padding-left: 20px;

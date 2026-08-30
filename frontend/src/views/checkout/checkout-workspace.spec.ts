@@ -9,6 +9,15 @@ import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
 import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
 const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+function checkoutTestPinia() {
+  const pinia = createPinia();
+  pinia.state.value.session = {
+    accessToken: "test-token",
+    initialized: true,
+    user: { id: 1, username: "admin", displayName: "管理员", role: "ADMIN" },
+  };
+  return pinia;
+}
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: routeQuery.value }),
   useRouter: () => ({ push: vi.fn() }),
@@ -134,7 +143,7 @@ describe("CheckoutTopNav", () => {
   });
   it("places checkout workflow navigation at the top without the old page intro block", () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
 
     expect(wrapper.find(".checkout-workspace__header").exists()).toBe(false);
@@ -144,7 +153,7 @@ describe("CheckoutTopNav", () => {
   });
   it("opens the initiate checkout workspace by default", () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
 
     expect(wrapper.text()).toContain("发起退租");
@@ -164,7 +173,7 @@ describe("CheckoutTopNav", () => {
   });
   it("loads active contracts into the initiate checkout form", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
 
@@ -203,8 +212,7 @@ describe("CheckoutTopNav", () => {
           rentRefundAllocations: [
             {
               paymentAllocationId: 18,
-              paymentId: 12,
-              rentBillId: 8,
+              status: "RESERVED",
               billNo: "ZJ2026090001",
               periodStart: "2026-09-01",
               periodEnd: "2026-09-30",
@@ -228,7 +236,7 @@ describe("CheckoutTopNav", () => {
   });
   it("loads settlement records when switching to the settlement tab", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -252,7 +260,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -332,7 +340,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -385,7 +393,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -435,7 +443,7 @@ describe("CheckoutTopNav", () => {
       rentRefundAllocations: [],
     });
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -482,7 +490,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -527,7 +535,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -596,7 +604,7 @@ describe("CheckoutTopNav", () => {
     ]);
     api.preview.mockRejectedValueOnce(new Error("preview failed"));
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -646,7 +654,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -698,7 +706,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -753,7 +761,7 @@ describe("CheckoutTopNav", () => {
         }),
     );
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -796,7 +804,7 @@ describe("CheckoutTopNav", () => {
     ]);
     api.submit.mockRejectedValueOnce(new Error("submit failed"));
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -839,7 +847,7 @@ describe("CheckoutTopNav", () => {
     ]);
     api.preview.mockRejectedValueOnce(new Error("preview failed"));
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -862,7 +870,7 @@ describe("CheckoutTopNav", () => {
   });
   it("renders the fourth completed-contracts tab and loads only read-only history", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
@@ -876,7 +884,7 @@ describe("CheckoutTopNav", () => {
   });
   it("opens the completed settlement detail without any editing action", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
@@ -896,7 +904,7 @@ describe("CheckoutTopNav", () => {
   it("opens an existing settlement in the completed read-only detail from a valid route query", async () => {
     routeQuery.value = { settlementId: "17" };
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
 
@@ -912,7 +920,7 @@ describe("CheckoutTopNav", () => {
     async (settlementId) => {
       routeQuery.value = { settlementId };
       const wrapper = mount(CheckoutWorkspace, {
-        global: { plugins: [createPinia()] },
+        global: { plugins: [checkoutTestPinia()] },
       });
       await flushPromises();
 
@@ -982,7 +990,7 @@ describe("CheckoutTopNav", () => {
   });
   it("shows room and refund statuses in Chinese in the read-only detail", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
@@ -1012,7 +1020,7 @@ describe("CheckoutTopNav", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
@@ -1071,7 +1079,7 @@ describe("CheckoutTopNav", () => {
         },
       });
       const wrapper = mount(CheckoutWorkspace, {
-        global: { plugins: [createPinia()] },
+        global: { plugins: [checkoutTestPinia()] },
       });
       await flushPromises();
       await wrapper
@@ -1110,7 +1118,7 @@ describe("CheckoutTopNav", () => {
       }
     ).downloadRefundProof.mockRejectedValueOnce(new Error("network"));
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
@@ -1132,7 +1140,7 @@ describe("CheckoutTopNav", () => {
 
   it("shows only actionable settlement cards and hides approved records from the settlement tab", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -1185,7 +1193,7 @@ describe("CheckoutTopNav", () => {
     };
     const initialSettlementCalls = api.settlements.mock.calls.length;
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -1205,7 +1213,7 @@ describe("CheckoutTopNav", () => {
       detail: ReturnType<typeof vi.fn>;
     };
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
 
     await flushPromises();
@@ -1284,7 +1292,7 @@ describe("CheckoutTopNav", () => {
   });
   it("shows the approved zero-refund settlement in the final confirmation tab", async () => {
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(3)").trigger("click");
@@ -1532,7 +1540,7 @@ describe("CheckoutTopNav", () => {
       },
     });
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
@@ -1592,6 +1600,112 @@ describe("CheckoutTopNav", () => {
     await submit.trigger("click");
     expect(wrapper.emitted("submit")).toBeUndefined();
   });
+
+  it("resets all mutable refund registration values when the settlement changes", async () => {
+    const wrapper = mount(CheckoutRefundPanel, {
+      props: {
+        role: "ADMIN",
+        settlement: {
+          id: 2, settlementNo: "TZ-OLD", status: "APPROVED", contractId: 3,
+          depositRefundableAmount: "100.00", prepaymentRefundableAmount: "0.00",
+          rentRefundableAmount: "0.00", totalRefundAmount: "100.00", finalReceivable: "0.00",
+        },
+      },
+    });
+    await wrapper.get('input[type="date"]').setValue("2026-08-15");
+    await wrapper.get("select").setValue("BANK_TRANSFER");
+    await wrapper.get("textarea").setValue("旧工单备注");
+    (wrapper.vm as unknown as { addProof: (id: number) => void }).addProof(77);
+    await wrapper.setProps({
+      settlement: {
+        id: 3, settlementNo: "TZ-NEW", status: "APPROVED", contractId: 3,
+        depositRefundableAmount: "200.00", prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00", totalRefundAmount: "200.00", finalReceivable: "0.00",
+      },
+    });
+    (wrapper.vm as unknown as { addProof: (id: number) => void }).addProof(88);
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-test="refund-submit"]').trigger("click");
+
+    expect(wrapper.emitted("submit")?.[0]?.[0]).toMatchObject({
+      checkoutSettlementId: 3,
+      refundDate: expect.not.stringMatching("2026-08-15"),
+      refundMethod: "WECHAT",
+      proofFileIds: [88],
+    });
+    expect(wrapper.emitted("submit")?.[0]?.[0]).not.toHaveProperty("remark");
+  });
+
+  it.each(["DRAFT", "PENDING", "REJECTED"] as const)(
+    "keeps VISITOR read-only for a %s settlement",
+    (status) => {
+      const wrapper = mount(CheckoutSettlementPanel, {
+        props: {
+          role: "VISITOR",
+          settlements: [{
+            id: 10, settlementNo: "TZ202608010010", status, contractId: 3,
+            depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00",
+            rentRefundableAmount: "0.00", finalReceivable: "0.00",
+          }],
+        },
+      });
+
+      expect(wrapper.find(".settlement-panel__form-grid").exists()).toBe(false);
+      expect(wrapper.find('[data-test="settlement-submit"]').exists()).toBe(false);
+      expect(wrapper.find('[data-test="settlement-cancel"]').exists()).toBe(false);
+      expect(wrapper.text()).not.toContain("退回草稿并编辑");
+      expect(wrapper.findAll("button").some((button) => button.text() === "确认结算")).toBe(false);
+    },
+  );
+
+  it("allows ADMIN draft operations but reserves pending approval and rejection for SUPER_ADMIN", () => {
+    const settlement = {
+      id: 10, settlementNo: "TZ202608010010", contractId: 3,
+      depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00", finalReceivable: "0.00",
+    };
+    const adminDraft = mount(CheckoutSettlementPanel, {
+      props: { role: "ADMIN", settlements: [{ ...settlement, status: "DRAFT" }] },
+    });
+    const adminPending = mount(CheckoutSettlementPanel, {
+      props: { role: "ADMIN", settlements: [{ ...settlement, status: "PENDING" }] },
+    });
+    const adminRejected = mount(CheckoutSettlementPanel, {
+      props: { role: "ADMIN", settlements: [{ ...settlement, status: "REJECTED" }] },
+    });
+    const superAdmin = mount(CheckoutSettlementPanel, {
+      props: { role: "SUPER_ADMIN", settlements: [{ ...settlement, status: "PENDING" }] },
+    });
+
+    expect(adminDraft.find('[data-test="settlement-submit"]').exists()).toBe(true);
+    expect(adminPending.findAll("button").some((button) => button.text() === "确认结算")).toBe(false);
+    expect(adminRejected.text()).not.toContain("退回草稿并编辑");
+    expect(superAdmin.text()).toContain("确认结算");
+  });
+  it("revokes a late refund proof preview after switching tabs", async () => {
+    const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn>; downloadRefundProof: ReturnType<typeof vi.fn> };
+    let resolveDownload!: (value: { data: Blob; headers: Record<string, string> }) => void;
+    api.detail.mockResolvedValueOnce({
+      id: 9, settlementNo: "TZ202608010009", status: "APPROVED", contractId: 1,
+      depositRefundableAmount: "100.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "0.00", totalRefundAmount: "100.00", finalReceivable: "0.00",
+      depositRefunds: [{ id: 6, approvalStatus: "PENDING", refundAmount: "100.00", files: [{ fileAssetId: 77, originalName: "真实凭证.png", mimeType: "image/png" }] }],
+    });
+    api.downloadRefundProof.mockImplementationOnce(() => new Promise((resolve) => { resolveDownload = resolve; }));
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:late-proof");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL");
+    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [checkoutTestPinia()] } });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-refund"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="refund-proof-preview-6-77"]').trigger("click");
+    await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
+    resolveDownload({ data: new Blob(["proof"], { type: "image/png" }), headers: { "content-type": "image/png", "content-disposition": "attachment; filename*=UTF-8''真实凭证.png" } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="refund-proof-preview-dialog"]').exists()).toBe(false);
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:late-proof");
+  });
 });
 
 describe("CheckoutTopNav", () => {
@@ -1614,7 +1728,7 @@ describe("Task8 completed detail requests", () => {
   it("keeps the newer completed detail when an older request resolves late", async () => {
     const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn> };
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
@@ -1670,7 +1784,7 @@ describe("Task8 completed detail requests", () => {
   it("does not restore a late completed detail after leaving the tab", async () => {
     const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn> };
     const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
+      global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");

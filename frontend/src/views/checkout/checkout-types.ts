@@ -83,19 +83,25 @@ export type CheckoutSettlement = {
   contract?: CheckoutContract;
   items?: CheckoutSettlementItem[];
   depositRefunds?: DepositRefund[];
-  rentRefundAllocations?: CheckoutRentRefundAllocationPreview[];
+  rentRefundAllocations?: CheckoutRentRefundAllocationDetail[];
 };
 
 export type CheckoutRentRefundAllocationPreview = {
   paymentAllocationId: number;
   paymentId: number;
-  receiptNo?: string;
+  receiptNo: string;
   rentBillId: number;
   billNo: string;
   amount: string;
-  status?: "RESERVED" | "APPLIED";
-  periodStart?: string;
-  periodEnd?: string;
+};
+
+export type CheckoutRentRefundAllocationDetail = {
+  paymentAllocationId: number;
+  status: "RESERVED" | "APPLIED";
+  billNo: string;
+  periodStart: string;
+  periodEnd: string;
+  amount: string;
 };
 
 export type CheckoutSettlementPreview = {

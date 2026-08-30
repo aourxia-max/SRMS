@@ -84,7 +84,7 @@ export class DepositRefundsService {
           settlement.id,
           rentRefundAmount,
         );
-      const activeRefund = await tx.depositRefund.findFirst?.({
+      const activeRefund = await tx.depositRefund.findFirst({
         where: {
           checkoutSettlementId: settlement.id,
           approvalStatus: { in: ['PENDING', 'APPROVED'] },

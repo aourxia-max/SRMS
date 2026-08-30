@@ -1025,6 +1025,7 @@ describe('CheckoutService', () => {
         checkoutSettlement: {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 1,
+            status: 'APPROVED',
             rentReceivable: new Prisma.Decimal('0.00'),
             rentReceived: new Prisma.Decimal('0.00'),
             rentOutstanding: new Prisma.Decimal('0.00'),
@@ -1050,6 +1051,7 @@ describe('CheckoutService', () => {
                 checkoutRentRefundAllocations: [
                   {
                     paymentAllocationId: 18,
+                    status: 'RESERVED',
                     reservedAmount: new Prisma.Decimal('100.00'),
                     rentBill: {
                       billNo: 'ZJ2026090001',
@@ -1061,7 +1063,7 @@ describe('CheckoutService', () => {
               },
             ],
             depositRefunds: [
-              { id: 9, refundAmount: new Prisma.Decimal('1300.00') },
+              { id: 9, refundAmount: new Prisma.Decimal('1300.00'), files: [] },
             ],
           }),
         },
@@ -2856,30 +2858,32 @@ describe('CheckoutService', () => {
       rentRefundableAmount: '0.00',
       items: [],
     });
-    expect(findUniqueOrThrow).toHaveBeenCalledWith({
-      where: { id: 9 },
-      include: expect.objectContaining({
-        items: {
-          orderBy: { sortOrder: 'asc' },
-          include: {
-            checkoutRentRefundAllocations: {
-              where: { status: 'RESERVED' },
-              select: {
-                id: true,
-                paymentAllocationId: true,
-                reservedAmount: true,
-                rentBill: {
-                  select: {
-                    billNo: true,
-                    periodStart: true,
-                    periodEnd: true,
-                  },
+    expect(findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 9 },
+        include: expect.objectContaining({
+          depositRefunds: expect.objectContaining({
+            where: { approvalStatus: { in: ['PENDING', 'APPROVED'] } },
+            orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+            select: expect.objectContaining({
+              files: {
+                select: {
+                  fileAssetId: true,
+                  fileAsset: { select: { originalName: true, mimeType: true } },
                 },
               },
-            },
-          },
-        },
+            }),
+          }),
+          items: expect.objectContaining({
+            include: expect.objectContaining({
+              checkoutRentRefundAllocations: expect.objectContaining({
+                select: expect.objectContaining({ status: true }),
+              }),
+            }),
+          }),
+        }),
       }),
-    });
+    );
   });
 });

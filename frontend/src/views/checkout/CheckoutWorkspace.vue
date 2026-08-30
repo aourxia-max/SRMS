@@ -65,7 +65,10 @@ const refundRole = computed<"SUPER_ADMIN" | "ADMIN" | "VISITOR">(
 applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
 function setRefundSettlement(next?: CheckoutSettlement) {
-  if (refundSettlement.value?.id !== next?.id) refundRequestVersion += 1;
+  if (refundSettlement.value?.id !== next?.id) {
+    refundRequestVersion += 1;
+    closeRefundProofPreview();
+  }
   refundSettlement.value = next;
 }
 function message(error: unknown, fallback: string) {
@@ -156,6 +159,7 @@ async function openCompletedDetail(settlementId: number) {
 }
 function changeTab(tab: CheckoutTab) {
   activeTab.value = tab;
+  closeRefundProofPreview();
   clearSettlementPreview();
   completedDetailRequestVersion += 1;
   completedDetail.value = undefined;
@@ -573,7 +577,7 @@ onMounted(initialize);
                   class="checkout-workspace__proof-download"
                   @click="downloadRefundProof(refund.id, file.fileAssetId)"
                 >
-                  下载凭证（凭证编号：{{ file.fileAssetId }}）
+                  下载凭证：{{ file.originalName || "退款凭证-" + file.fileAssetId }}（凭证编号：{{ file.fileAssetId }}）
                 </button>
               </template>
             </div>

@@ -241,6 +241,9 @@ export class CheckoutService {
             },
           },
           depositRefunds: {
+            where: { approvalStatus: { in: ['PENDING', 'APPROVED'] } },
+            orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
+            take: 1,
             select: {
               id: true,
               refundNo: true,
@@ -250,7 +253,12 @@ export class CheckoutService {
               approvalStatus: true,
               submittedAt: true,
               approvedAt: true,
-              files: { select: { fileAssetId: true } },
+              files: {
+                select: {
+                  fileAssetId: true,
+                  fileAsset: { select: { originalName: true, mimeType: true } },
+                },
+              },
             },
           },
         },
@@ -325,9 +333,14 @@ export class CheckoutService {
             amount: this.money(item.amount),
           };
         }),
-      depositRefunds: settlement.depositRefunds.map((refund) => ({
+      depositRefunds: settlement.depositRefunds.map(({ files, ...refund }) => ({
         ...refund,
         refundAmount: this.money(refund.refundAmount),
+        files: files.map(({ fileAssetId, fileAsset }) => ({
+          fileAssetId,
+          originalName: fileAsset.originalName,
+          mimeType: fileAsset.mimeType,
+        })),
       })),
     };
   }
