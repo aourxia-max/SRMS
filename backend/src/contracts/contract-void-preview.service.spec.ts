@@ -168,7 +168,7 @@ function contractFixture() {
         id: 102,
         checkoutType: 'EARLY',
         originContractStatus: 'ACTIVE',
-        status: 'DRAFT',
+        status: 'APPROVED',
         rentReceivable: new Prisma.Decimal('0.00'),
         rentReceived: new Prisma.Decimal('0.00'),
         rentOutstanding: new Prisma.Decimal('0.00'),
@@ -293,7 +293,7 @@ describe('ContractVoidPreviewService', () => {
             depositRefundableAmount: '1000.00',
             occurredAt: '2026-08-08T00:00:00.000Z',
           }),
-          expect.objectContaining({ id: 102, status: 'DRAFT' }),
+          expect.objectContaining({ id: 102, status: 'APPROVED' }),
         ],
         commissions: [
           {
@@ -391,7 +391,12 @@ describe('ContractVoidPreviewService', () => {
       ]),
       sourceSnapshot: {
         checkoutRentRefundAllocations: expect.arrayContaining([
-          expect.objectContaining({ id: 501, reservedAmount: '1000.00' }),
+          expect.objectContaining({
+            id: 501,
+            reservedAmount: '1000.00',
+            reservedAt: '2026-08-20T01:00:00.000Z',
+            releasedAt: null,
+          }),
         ]),
         adjustments: expect.arrayContaining([
           expect.objectContaining({

@@ -28,6 +28,13 @@ type CheckoutWorkflowDelegate = {
   findMany(args: unknown): Promise<CheckoutWorkflowRow[]>;
   updateMany(args: unknown): Promise<{ count: number }>;
 };
+type CheckoutRentRefundAllocationDelegate = {
+  findMany(
+    args: unknown,
+  ): Promise<Array<{ id: number; status: string; reservedAt: Date }>>;
+  updateMany(args: unknown): Promise<{ count: number }>;
+};
+
 type PlannedRow = Omit<
   Prisma.ContractVoidReversalCreateManyInput,
   'idempotencyKey'
@@ -584,7 +591,7 @@ export class ContractVoidReversalWriter {
     const rows = await delegate.findMany({
       where: {
         id: { in: impact.pending.checkouts },
-        status: { in: ['DRAFT', 'PENDING'] },
+        status: { in: ['DRAFT', 'PENDING', 'APPROVED'] },
       },
       select: { id: true, status: true },
       orderBy: { id: 'asc' },
@@ -599,8 +606,50 @@ export class ContractVoidReversalWriter {
       throw new ConflictException('合同关联审批状态已并发变化，请重新预览');
     }
     const ids = rows.map((row) => row.id);
+    const allocationDelegate =
+      tx.checkoutRentRefundAllocation as unknown as CheckoutRentRefundAllocationDelegate;
+    const allocations = await allocationDelegate.findMany({
+      where: {
+        status: 'RESERVED',
+        item: { checkoutSettlementId: { in: ids } },
+      },
+      select: { id: true, status: true, reservedAt: true },
+      orderBy: { id: 'asc' },
+    });
+    if (allocations.length) {
+      const released = await allocationDelegate.updateMany({
+        where: {
+          id: { in: allocations.map((row) => row.id) },
+          status: 'RESERVED',
+        },
+        data: { status: 'RELEASED', releasedAt: now },
+      });
+      if (released.count !== allocations.length) {
+        throw new ConflictException('合同关联审批状态已并发变化，请重新预览');
+      }
+      for (const allocation of allocations) {
+        add(
+          indicatorRow({
+            requestId: request.id,
+            category: 'CHECKOUT',
+            entityType: 'CheckoutRentRefundAllocation',
+            entityId: allocation.id,
+            correctionOccurredAt: now,
+            originalOccurredAt: allocation.reservedAt.toISOString(),
+            metadata: {
+              previousStatus: allocation.status,
+              nextStatus: 'RELEASED',
+              affectsNetImpact: false,
+            },
+          }),
+        );
+      }
+    }
     const updated = await delegate.updateMany({
-      where: { id: { in: ids }, status: { in: ['DRAFT', 'PENDING'] } },
+      where: {
+        id: { in: ids },
+        status: { in: ['DRAFT', 'PENDING', 'APPROVED'] },
+      },
       data: { status: 'CANCELLED' },
     });
     if (updated.count !== rows.length) {

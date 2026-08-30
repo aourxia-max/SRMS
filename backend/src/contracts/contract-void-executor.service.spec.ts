@@ -258,6 +258,8 @@ describe('ContractVoidExecutorService', () => {
       expect.stringContaining('prepayment_transactions'),
       expect.stringContaining('pricing_rebates'),
       expect.stringContaining('checkout_settlements'),
+      expect.stringContaining('checkout_settlement_items'),
+      expect.stringContaining('checkout_rent_refund_allocations'),
       expect.stringContaining('deposit_refunds'),
       expect.stringContaining('deposit_transactions'),
       expect.stringContaining('contract_commissions'),

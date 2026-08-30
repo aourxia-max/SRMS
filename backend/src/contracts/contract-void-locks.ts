@@ -91,6 +91,12 @@ export async function lockContractVoidRelatedRows(
     Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
   );
   await tx.$queryRaw(
+    Prisma.sql`SELECT csi.id FROM checkout_settlement_items csi JOIN checkout_settlements cs ON cs.id = csi.checkout_settlement_id WHERE cs.contract_id = ${contractId} ORDER BY csi.id FOR UPDATE`,
+  );
+  await tx.$queryRaw(
+    Prisma.sql`SELECT crra.id FROM checkout_rent_refund_allocations crra JOIN checkout_settlement_items csi ON csi.id = crra.checkout_settlement_item_id JOIN checkout_settlements cs ON cs.id = csi.checkout_settlement_id WHERE cs.contract_id = ${contractId} ORDER BY crra.id FOR UPDATE`,
+  );
+  await tx.$queryRaw(
     Prisma.sql`SELECT id FROM deposit_refunds WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
   );
   await tx.$queryRaw(

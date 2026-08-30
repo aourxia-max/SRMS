@@ -93,4 +93,31 @@ describe('contract void exclusive lock scope', () => {
       ),
     );
   });
+
+  it('locks checkout settlements, items, and rent refund allocations in parent-first id order', async () => {
+    const tx = { $queryRaw: jest.fn().mockResolvedValue([]) };
+
+    await lockContractVoidRelatedRows(tx as never, 7);
+
+    const statements = tx.$queryRaw.mock.calls.map(([query]) =>
+      (query as { strings: string[] }).strings.join('?'),
+    );
+    const settlementIndex = statements.findIndex((sql) =>
+      sql.includes('FROM checkout_settlements'),
+    );
+    const itemIndex = statements.findIndex((sql) =>
+      sql.includes('FROM checkout_settlement_items'),
+    );
+    const allocationIndex = statements.findIndex((sql) =>
+      sql.includes('FROM checkout_rent_refund_allocations'),
+    );
+
+    expect(settlementIndex).toBeGreaterThanOrEqual(0);
+    expect(itemIndex).toBeGreaterThan(settlementIndex);
+    expect(allocationIndex).toBeGreaterThan(itemIndex);
+    expect(statements[itemIndex]).toContain('ORDER BY csi.id FOR UPDATE');
+    expect(statements[allocationIndex]).toContain(
+      'ORDER BY crra.id FOR UPDATE',
+    );
+  });
 });

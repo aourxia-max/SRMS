@@ -4,11 +4,15 @@ import ElementPlus from "element-plus";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PaymentDetailView from "./PaymentDetailView.vue";
+import { checkoutApi } from "../../services/checkout";
 import { paymentLifecycleTags } from "./payment-lifecycle-tags";
 import { paymentApi } from "../../services/payments";
 
+vi.mock("../../services/checkout", () => ({
+  checkoutApi: { downloadRefundProof: vi.fn() },
+}));
 vi.mock("../../services/payments", () => ({
   paymentApi: { list: vi.fn(), detail: vi.fn() },
 }));
@@ -57,6 +61,15 @@ describe("paymentLifecycleTags", () => {
   });
 });
 describe("收款详情退租租金退款", () => {
+  const originalCreateObjectURL = Object.getOwnPropertyDescriptor(
+    URL,
+    "createObjectURL",
+  );
+  const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(
+    URL,
+    "revokeObjectURL",
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     setActivePinia(createPinia());
@@ -124,12 +137,29 @@ describe("收款详情退租租金退款", () => {
             refundNo: "YJTK202608300033",
             refundDate: "2026-08-30",
             refundMethod: "BANK_TRANSFER",
-            proofFiles: [],
+            proofFiles: [
+              {
+                id: 43,
+                originalName: "退租合并退款凭证.webp",
+                mimeType: "image/webp",
+                sizeBytes: "2048",
+              },
+            ],
           },
         },
       ],
       receipt: { correctionProvenance: null },
     } as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalCreateObjectURL)
+      Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+    if (originalRevokeObjectURL)
+      Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectURL);
+    else Reflect.deleteProperty(URL, "revokeObjectURL");
   });
 
   it("shows an applied checkout rent refund as read-only detail rather than a refund action", async () => {
@@ -152,7 +182,53 @@ describe("收款详情退租租金退款", () => {
     expect(refunds.text()).toContain("退租租金退款");
     expect(refunds.text()).toContain("TZ202608300001");
     expect(refunds.text()).toContain("¥1000.00");
-    expect(refunds.findAll("button")).toHaveLength(0);
+    expect(refunds.findAll("button")).toHaveLength(1);
+    expect(refunds.text()).toContain("退租合并退款凭证.webp");
+    wrapper.unmount();
+  });
+  it("shows the actual combined-refund proof filename and previews it through the checkout API", async () => {
+    const createObjectURL = vi.fn().mockReturnValue("blob:checkout-refund-43");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.mocked(checkoutApi.downloadRefundProof).mockResolvedValue({
+      data: new Blob(["checkout refund proof"], { type: "image/webp" }),
+    } as never);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/payments/detail/:id?", component: PaymentDetailView },
+        { path: "/payments/collect", component: { template: "<div />" } },
+        { path: "/payments/reviews", component: { template: "<div />" } },
+      ],
+    });
+    await router.push("/payments/detail/81");
+    await router.isReady();
+    const wrapper = mount(PaymentDetailView, {
+      global: { plugins: [createPinia(), router, ElementPlus] },
+    });
+    await flushPromises();
+
+    const refunds = wrapper.get('[data-testid="checkout-rent-refunds"]');
+    expect(refunds.text()).toContain("退款单号：YJTK202608300033");
+    expect(refunds.text()).toContain("退租合并退款凭证.webp");
+    await wrapper
+      .get('[data-test="preview-checkout-refund-proof-43"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(checkoutApi.downloadRefundProof).toHaveBeenCalledWith(33, 43);
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(
+      document.body
+        .querySelector('[data-test="checkout-refund-proof-preview"]')
+        ?.getAttribute("src"),
+    ).toBe("blob:checkout-refund-43");
     wrapper.unmount();
   });
 });

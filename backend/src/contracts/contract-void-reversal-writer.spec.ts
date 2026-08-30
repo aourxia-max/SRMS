@@ -245,7 +245,7 @@ describe('ContractVoidReversalWriter', () => {
       },
       completedCheckoutIds: [],
     });
-    impact.sourceSnapshot.checkoutSettlements[0].status = 'DRAFT';
+    impact.sourceSnapshot.checkoutSettlements[0].status = 'APPROVED';
     const { tx, inserted } = txFixture();
     tx.contractChange.findMany.mockResolvedValue([
       { id: 61, approvalStatus: 'DRAFT' },
@@ -263,8 +263,16 @@ describe('ContractVoidReversalWriter', () => {
       { id: 71, approvalStatus: 'PENDING' },
     ]);
     tx.checkoutSettlement.findMany.mockResolvedValue([
-      { id: 81, status: 'DRAFT' },
+      { id: 81, status: 'APPROVED' },
     ]);
+    tx.checkoutRentRefundAllocation = {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 501, status: 'RESERVED', reservedAt: now, releasedAt: null },
+        ]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
     tx.depositRefund.findMany.mockResolvedValue([
       { id: 82, approvalStatus: 'PENDING' },
     ]);
@@ -293,10 +301,22 @@ describe('ContractVoidReversalWriter', () => {
         }),
       );
     }
+    expect(tx.checkoutRentRefundAllocation.findMany).toHaveBeenCalledWith({
+      where: {
+        status: 'RESERVED',
+        item: { checkoutSettlementId: { in: [81] } },
+      },
+      select: { id: true, status: true, reservedAt: true },
+      orderBy: { id: 'asc' },
+    });
+    expect(tx.checkoutRentRefundAllocation.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [501] }, status: 'RESERVED' },
+      data: { status: 'RELEASED', releasedAt: now },
+    });
     expect(tx.checkoutSettlement.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ['DRAFT', 'PENDING'] },
+          status: { in: ['DRAFT', 'PENDING', 'APPROVED'] },
         }),
         data: { status: 'CANCELLED' },
       }),
@@ -314,6 +334,21 @@ describe('ContractVoidReversalWriter', () => {
         (row.metadata as { nextStatus?: string }).nextStatus === 'CANCELLED',
     );
     expect(cancellationRows).toHaveLength(7);
+    expect(
+      inserted().filter(
+        (row) =>
+          (row.metadata as { nextStatus?: string }).nextStatus === 'RELEASED',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        originalEntityType: 'CheckoutRentRefundAllocation',
+        originalEntityId: 501,
+        metadata: expect.objectContaining({
+          previousStatus: 'RESERVED',
+          nextStatus: 'RELEASED',
+        }),
+      }),
+    ]);
     expect(cancellationRows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -322,6 +357,7 @@ describe('ContractVoidReversalWriter', () => {
           amount: expect.objectContaining({}),
           metadata: { previousStatus: 'DRAFT', nextStatus: 'CANCELLED' },
         }),
+
         expect.objectContaining({
           originalEntityType: 'DepositRefund',
           originalEntityId: 82,
@@ -517,7 +553,37 @@ describe('ContractVoidReversalWriter', () => {
         }),
       ]),
     );
-    expect((tx as any).checkoutRentRefundAllocation).toBeUndefined();
+  });
+  it('rejects the void when a reserved rent refund cannot be released atomically', async () => {
+    const impact = executionImpact({
+      pending: {
+        adjustments: [],
+        refunds: [],
+        voidRequests: [],
+        changes: [],
+        rebates: [],
+        checkouts: [81],
+        depositRefunds: [],
+      },
+      completedCheckoutIds: [],
+    });
+    impact.sourceSnapshot.checkoutSettlements[0].status = 'PENDING';
+    const { tx } = txFixture();
+    tx.checkoutSettlement.findMany.mockResolvedValue([
+      { id: 81, status: 'PENDING' },
+    ]);
+    tx.checkoutRentRefundAllocation = {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ id: 501, status: 'RESERVED', reservedAt: now }]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+
+    await expect(
+      new ContractVoidReversalWriter().write(tx as never, request, impact, now),
+    ).rejects.toThrow('合同关联审批状态已并发变化，请重新预览');
+    expect(tx.checkoutSettlement.updateMany).not.toHaveBeenCalled();
+    expect(tx.contractVoidReversal.createMany).not.toHaveBeenCalled();
   });
   it('throws and writes no reversal trace when a cancellation count mismatches', async () => {
     const impact = executionImpact({

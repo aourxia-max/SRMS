@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import PaymentRecordList from "../../components/payments/PaymentRecordList.vue";
 import PaymentWorkspace from "../../components/payments/PaymentWorkspace.vue";
+import { checkoutApi } from "../../services/checkout";
 import { paymentApi } from "../../services/payments";
 import { useSessionStore } from "../../stores/session";
 import type {
@@ -64,6 +65,12 @@ const lifecycleTags = computed(() =>
 const checkoutRentRefunds = computed(
   () => detail.value?.checkoutRentRefunds ?? [],
 );
+const checkoutRefundProofPreviewOpen = ref(false);
+const checkoutRefundProofPreview = ref<{
+  originalName: string;
+  mimeType: string;
+  url: string;
+} | null>(null);
 const isAutomaticDeposit = computed(
   () =>
     detail.value?.paymentCategory === "DEPOSIT" &&
@@ -87,6 +94,28 @@ function billLabel(bill: PaymentDetail["allocations"][number]["bill"]) {
   return bill.billCategory === "CHECKOUT_SUPPLEMENTAL"
     ? "验房扣款"
     : `第 ${bill.periodSeq} 期`;
+}
+async function previewCheckoutRefundProof(
+  refundId: number,
+  file: { id: number; originalName: string; mimeType: string },
+) {
+  try {
+    const response = await checkoutApi.downloadRefundProof(refundId, file.id);
+    closeCheckoutRefundProofPreview();
+    checkoutRefundProofPreview.value = {
+      ...file,
+      url: URL.createObjectURL(response.data),
+    };
+    checkoutRefundProofPreviewOpen.value = true;
+  } catch {
+    ElMessage.error("退款凭证预览失败，请稍后重试");
+  }
+}
+function closeCheckoutRefundProofPreview() {
+  if (checkoutRefundProofPreview.value) {
+    URL.revokeObjectURL(checkoutRefundProofPreview.value.url);
+    checkoutRefundProofPreview.value = null;
+  }
 }
 function printReceipt() {
   window.print();
@@ -383,11 +412,39 @@ onMounted(() => void initialize());
             <el-tag type="warning">退租租金退款</el-tag
             ><span>{{ row.settlementNo }} · {{ money(row.amount) }}</span
             ><span>{{ row.statusText }}</span
-            ><span v-if="row.depositRefund"
-              >· 退款凭证 {{ row.depositRefund.refundNo }}</span
+            ><template v-if="row.depositRefund"
+              ><span>· 退款单号：{{ row.depositRefund.refundNo }}</span
+              ><el-button
+                v-for="file in row.depositRefund.proofFiles"
+                :key="file.id"
+                :data-test="`preview-checkout-refund-proof-${file.id}`"
+                link
+                type="primary"
+                @click="previewCheckoutRefundProof(row.depositRefund!.id, file)"
+                >{{ file.originalName }}</el-button
+              ></template
             >
           </div></el-card
         >
+        <el-dialog
+          v-model="checkoutRefundProofPreviewOpen"
+          :title="checkoutRefundProofPreview?.originalName || '退款凭证预览'"
+          append-to-body
+          width="820px"
+          @closed="closeCheckoutRefundProofPreview"
+          ><img
+            v-if="checkoutRefundProofPreview?.mimeType.startsWith('image/')"
+            data-test="checkout-refund-proof-preview"
+            :src="checkoutRefundProofPreview.url"
+            :alt="checkoutRefundProofPreview.originalName"
+            class="checkout-refund-proof-preview" /><iframe
+            v-else-if="checkoutRefundProofPreview"
+            data-test="checkout-refund-proof-preview"
+            :src="checkoutRefundProofPreview.url"
+            :title="checkoutRefundProofPreview.originalName"
+            class="checkout-refund-proof-preview"
+          ></iframe
+        ></el-dialog>
         <el-card shadow="never"
           ><template #header><b>优惠与减免</b></template
           ><el-table :data="detail.adjustments" size="small"
@@ -694,6 +751,13 @@ onMounted(() => void initialize());
   align-items: center;
   padding: 10px 0;
   border-bottom: 1px solid #edf0f5;
+}
+.checkout-refund-proof-preview {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  border: 0;
+  object-fit: contain;
 }
 .dialog-form {
   margin-top: 18px;

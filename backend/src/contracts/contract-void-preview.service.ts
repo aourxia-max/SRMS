@@ -54,6 +54,8 @@ type ContractVoidSourceSnapshot = {
     depositRefundId: number | null;
     status: string;
     reservedAmount: string;
+    reservedAt: string;
+    releasedAt: string | null;
     occurredAt: string | null;
   }>;
   adjustments: Array<{
@@ -271,6 +273,8 @@ export class ContractVoidPreviewService {
                 depositRefundId: true,
                 status: true,
                 reservedAmount: true,
+                reservedAt: true,
+                releasedAt: true,
                 appliedAt: true,
               },
             },
@@ -525,7 +529,9 @@ export class ContractVoidPreviewService {
           .filter((item) => ['DRAFT', 'PENDING'].includes(item.approvalStatus))
           .map((item) => item.id),
         checkouts: contract.checkoutSettlements
-          .filter((item) => ['DRAFT', 'PENDING'].includes(item.status))
+          .filter((item) =>
+            ['DRAFT', 'PENDING', 'APPROVED'].includes(item.status),
+          )
           .map((item) => item.id),
         depositRefunds: contract.depositRefunds
           .filter((item) => ['DRAFT', 'PENDING'].includes(item.approvalStatus))
@@ -608,6 +614,8 @@ export class ContractVoidPreviewService {
           depositRefundId: refund.depositRefundId,
           status: refund.status,
           reservedAmount: money(refund.reservedAmount),
+          reservedAt: refund.reservedAt.toISOString(),
+          releasedAt: dateText(refund.releasedAt),
           occurredAt: dateText(refund.appliedAt),
         })),
         adjustments: adjustments.map((adjustment) => ({
