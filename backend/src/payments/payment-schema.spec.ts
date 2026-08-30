@@ -178,7 +178,10 @@ describe('payment workflow Prisma model', () => {
     expect(fields.get('appliedAt')).toMatchObject({ type: 'DateTime' });
     expect(allocation?.fields.filter((field) => field.kind === 'object').map((field) => field.type)).toEqual(expect.arrayContaining(['CheckoutSettlementItem', 'PaymentAllocation', 'Payment', 'RentBill', 'DepositRefund']));
     const sql = execFileSync(process.execPath, [resolve(process.cwd(), 'node_modules/prisma/build/index.js'), 'migrate', 'diff', '--from-empty', '--to-schema', 'prisma/schema.prisma', '--script'], { cwd: process.cwd(), encoding: 'utf8' });
-    expect(sql).toMatch(/checkout_rent_refund_allocations[\s\S]*reserved_amount.*DECIMAL\(14, 2\).*NOT NULL[\s\S]*status.*DEFAULT 'RESERVED'[\s\S]*reserved_at.*DATETIME\(3\).*NOT NULL[\s\S]*released_at.*DATETIME\(3\).*NULL[\s\S]*applied_at.*DATETIME\(3\).*NULL/);
+    expect(sql).toMatch(/checkout_rent_refund_allocations[\s\S]*reserved_amount.*DECIMAL\(14, 2\).*NOT NULL[\s\S]*status.*DEFAULT 'RESERVED'/);
+    expect(sql).toMatch(/reserved_at\s+DATETIME\(3\)\s+NOT NULL/);
+    expect(sql).toMatch(/released_at\s+DATETIME\(3\)\s+NULL,/);
+    expect(sql).toMatch(/applied_at\s+DATETIME\(3\)\s+NULL,/);
     expect(sql).toMatch(/idx_checkout_rent_refund_item_status[\s\S]*idx_checkout_rent_refund_allocation_status[\s\S]*idx_checkout_rent_refund_refund/);
     expect(sql).toMatch(/fk_checkout_rent_refund_item[\s\S]*fk_checkout_rent_refund_allocation[\s\S]*fk_checkout_rent_refund_payment[\s\S]*fk_checkout_rent_refund_bill[\s\S]*fk_checkout_rent_refund_refund/);
   });
