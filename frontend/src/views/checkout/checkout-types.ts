@@ -14,12 +14,7 @@ export type CheckoutContract = {
 export type CheckoutSettlementItem = {
   id?: number;
   itemType:
-    | "RENT_ARREARS"
-    | "RENT_REFUND"
-    | "REPAIR"
-    | "DAMAGE"
-    | "CLEANING"
-    | "OTHER";
+    "RENT_ARREARS" | "RENT_REFUND" | "REPAIR" | "DAMAGE" | "CLEANING" | "OTHER";
   amount: string;
   rentBillId?: number;
   inspectionRecordRef?: string;
@@ -54,7 +49,11 @@ export type DepositRefund = {
   refundNo?: string;
   refundDate?: string;
   refundMethod?: string;
-  files?: Array<{ fileAssetId: number }>;
+  files?: Array<{
+    fileAssetId: number;
+    originalName?: string;
+    mimeType?: string;
+  }>;
 };
 
 export type CheckoutSettlement = {
@@ -73,6 +72,7 @@ export type CheckoutSettlement = {
   depositRefundableAmount: string;
   prepaymentRefundableAmount: string;
   rentRefundableAmount: string;
+  totalRefundAmount?: string;
   finalReceivable: string;
   supplementalRequired?: boolean;
   supplementalArrearsAmount?: string;
@@ -93,6 +93,7 @@ export type CheckoutRentRefundAllocationPreview = {
   rentBillId: number;
   billNo: string;
   amount: string;
+  status?: "RESERVED" | "APPLIED";
   periodStart?: string;
   periodEnd?: string;
 };

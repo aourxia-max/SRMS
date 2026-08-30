@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import type { CheckoutSettlement } from "./checkout-types";
 
 const props = defineProps<{
@@ -13,6 +13,7 @@ const emit = defineEmits<{
   upload: [file: File];
   submit: [payload: Record<string, unknown>];
   approve: [refundId: number];
+  previewProof: [refundId: number, fileId: number];
   completeZero: [settlementId: number];
   collectSupplemental: [settlementId: number];
 }>();
@@ -25,13 +26,20 @@ const form = reactive({
 });
 const proofFileIds = ref<number[]>([]);
 const errors = ref<string[]>([]);
-const total = computed(
+const total = computed(() => Number(props.settlement?.totalRefundAmount ?? 0));
+const isRefundViewable = computed(
   () =>
-    Number(props.settlement?.depositRefundableAmount || 0) +
-    Number(props.settlement?.prepaymentRefundableAmount || 0) +
-    Number(props.settlement?.rentRefundableAmount || 0),
+    props.settlement?.status === "APPROVED" ||
+    props.settlement?.status === "COMPLETED",
 );
-const isApproved = computed(() => props.settlement?.status === "APPROVED");
+watch(
+  () => props.settlement?.id,
+  () => {
+    proofFileIds.value = [];
+    errors.value = [];
+    form.remark = "";
+  },
+);
 const hasSupplementalReceivable = computed(() => {
   if (props.settlement?.supplementalRequired) {
     return Number(props.settlement.supplementalOutstandingAmount || 0) > 0;
@@ -61,7 +69,7 @@ function format(value: number) {
   });
 }
 function selectFile(event: Event) {
-  if (props.uploading || props.role === "VISITOR") return;
+  if (props.uploading || props.submitting || props.role === "VISITOR") return;
   const file = (event.target as HTMLInputElement).files?.[0];
   if (file) emit("upload", file);
 }
@@ -69,7 +77,7 @@ function addProof(id: number) {
   if (!proofFileIds.value.includes(id)) proofFileIds.value.push(id);
 }
 function submit() {
-  if (props.submitting || props.role === "VISITOR") return;
+  if (props.uploading || props.submitting || props.role === "VISITOR") return;
   errors.value = [];
   if (!form.refundDate) errors.value.push("请选择退款日期");
   if (!form.refundMethod) errors.value.push("请选择退款方式");
@@ -100,20 +108,44 @@ defineExpose({ addProof });
     <div v-if="!settlement" class="refund-panel__empty">
       请选择已确认的退租结算单。
     </div>
-    <div v-else-if="!isApproved" class="refund-panel__empty">
+    <div v-else-if="!isRefundViewable" class="refund-panel__empty">
       当前结算单尚未确认，暂不能进行最终退款处理。
     </div>
     <article
       v-else-if="hasSupplementalReceivable"
       class="refund-panel__card refund-panel__supplemental"
     >
-      <span class="refund-panel__badge refund-panel__badge--warning">待补收</span>
+      <span class="refund-panel__badge refund-panel__badge--warning"
+        >待补收</span
+      >
       <h3>请先收清退租补收款</h3>
-      <p>本次退租尚有待补收 ¥{{ format(supplementalOutstandingAmount) }}。收清前不能确认退款或完成退租。</p>
-      <dl v-if="settlement.supplementalRequired" class="refund-panel__supplemental-breakdown">
-        <div><dt>欠租补收</dt><dd>¥{{ format(Number(settlement.supplementalArrearsAmount || 0)) }}</dd></div>
-        <div><dt>验房扣款</dt><dd>¥{{ format(Number(settlement.supplementalInspectionAmount || 0)) }}</dd></div>
-        <div><dt>本次已收</dt><dd>¥{{ format(Number(settlement.supplementalReceivedAmount || 0)) }}</dd></div>
+      <p>
+        本次退租尚有待补收 ¥{{
+          format(supplementalOutstandingAmount)
+        }}。收清前不能确认退款或完成退租。
+      </p>
+      <dl
+        v-if="settlement.supplementalRequired"
+        class="refund-panel__supplemental-breakdown"
+      >
+        <div>
+          <dt>欠租补收</dt>
+          <dd>
+            ¥{{ format(Number(settlement.supplementalArrearsAmount || 0)) }}
+          </dd>
+        </div>
+        <div>
+          <dt>验房扣款</dt>
+          <dd>
+            ¥{{ format(Number(settlement.supplementalInspectionAmount || 0)) }}
+          </dd>
+        </div>
+        <div>
+          <dt>本次已收</dt>
+          <dd>
+            ¥{{ format(Number(settlement.supplementalReceivedAmount || 0)) }}
+          </dd>
+        </div>
       </dl>
       <button
         v-if="role !== 'VISITOR'"
@@ -168,17 +200,28 @@ defineExpose({ addProof });
         </div>
         <div>
           <span>应退租金</span
-          ><strong>¥{{ format(Number(settlement.rentRefundableAmount || 0)) }}</strong>
+          ><strong
+            >¥{{ format(Number(settlement.rentRefundableAmount || 0)) }}</strong
+          >
         </div>
         <div class="refund-panel__total">
           <span>合计退款金额</span><strong>¥{{ format(total) }}</strong>
         </div>
       </div>
-      <section v-if="settlement.rentRefundAllocations?.length" class="refund-panel__allocations">
+      <section
+        v-if="settlement.rentRefundAllocations?.length"
+        class="refund-panel__allocations"
+      >
         <h3>系统自动回冲明细</h3>
         <ul>
-          <li v-for="allocation in settlement.rentRefundAllocations" :key="allocation.paymentAllocationId">
-            {{ allocation.billNo }} · {{ allocation.periodStart }} 至 {{ allocation.periodEnd }} · ¥{{ format(Number(allocation.amount)) }}
+          <li
+            v-for="allocation in settlement.rentRefundAllocations"
+            :key="allocation.paymentAllocationId"
+          >
+            {{ allocation.billNo }} · {{ allocation.periodStart }} 至
+            {{ allocation.periodEnd }} · ¥{{
+              format(Number(allocation.amount))
+            }}
           </li>
         </ul>
       </section>
@@ -196,7 +239,20 @@ defineExpose({ addProof });
           >{{ pendingRefund.refundNo || `退款单 #${pendingRefund.id}` }} · ¥{{
             format(Number(pendingRefund.refundAmount))
           }}</span
-        ><button
+        >
+        <div v-if="pendingRefund.files?.length" class="refund-panel__proofs">
+          <button
+            v-for="file in pendingRefund.files"
+            :key="file.fileAssetId"
+            :data-test="`refund-proof-preview-${pendingRefund.id}-${file.fileAssetId}`"
+            type="button"
+            class="refund-panel__proof-button"
+            @click="emit('previewProof', pendingRefund.id, file.fileAssetId)"
+          >
+            预览凭证：{{ file.originalName || `凭证 #${file.fileAssetId}` }}
+          </button>
+        </div>
+        <button
           v-if="role === 'SUPER_ADMIN'"
           data-test="refund-approve"
           type="button"
@@ -209,7 +265,11 @@ defineExpose({ addProof });
         <p v-else>仅超级管理员可以进行最终确认。</p>
       </section>
       <template v-else>
-        <div v-if="role !== 'VISITOR' && errors.length" class="refund-panel__errors" role="alert">
+        <div
+          v-if="role !== 'VISITOR' && errors.length"
+          class="refund-panel__errors"
+          role="alert"
+        >
           <p v-for="error in errors" :key="error">{{ error }}</p>
         </div>
         <div v-if="role !== 'VISITOR'" class="refund-panel__grid">
@@ -228,10 +288,17 @@ defineExpose({ addProof });
             ><span><i>*</i>上传退款凭证</span
             ><input
               type="file"
-              :disabled="uploading"
+              :disabled="uploading || submitting"
               accept="image/png,image/jpeg,image/webp,application/pdf"
               @change="selectFile"
-            /><small>已上传 {{ proofFileIds.length }} 份凭证</small></label
+            /><small
+              >已上传 {{ proofFileIds.length }} 份凭证<span
+                v-if="proofFileIds.length"
+                >（{{
+                  proofFileIds.map((id) => `凭证 #${id}`).join("、")
+                }}）</span
+              ></small
+            ></label
           ><label class="refund-panel__wide"
             ><span>备注</span
             ><textarea v-model="form.remark" rows="3" maxlength="1000" />
@@ -242,7 +309,7 @@ defineExpose({ addProof });
             data-test="refund-submit"
             type="button"
             class="primary-button"
-            :disabled="submitting || !proofFileIds.length"
+            :disabled="uploading || submitting || !proofFileIds.length"
             @click="submit"
           >
             登记合并退款
@@ -308,25 +375,25 @@ defineExpose({ addProof });
 }
 .refund-panel__amounts span,
 .refund-panel__amounts strong {
-.refund-panel__allocations {
-  margin-top: 20px;
-  padding: 16px;
-  border: 1px solid #dce7f8;
-  border-radius: 8px;
-  background: #f7faff;
-}
-.refund-panel__allocations h3 {
-  margin: 0;
-  font-size: 15px;
-}
-.refund-panel__allocations ul {
-  display: grid;
-  gap: 8px;
-  margin: 12px 0 0;
-  padding-left: 20px;
-  color: #4a5b72;
-  font-size: 14px;
-}
+  .refund-panel__allocations {
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid #dce7f8;
+    border-radius: 8px;
+    background: #f7faff;
+  }
+  .refund-panel__allocations h3 {
+    margin: 0;
+    font-size: 15px;
+  }
+  .refund-panel__allocations ul {
+    display: grid;
+    gap: 8px;
+    margin: 12px 0 0;
+    padding-left: 20px;
+    color: #4a5b72;
+    font-size: 14px;
+  }
   display: block;
 }
 .refund-panel__amounts span {
@@ -449,9 +516,42 @@ defineExpose({ addProof });
 .refund-panel__status span {
   color: #4e705b;
 }
+.refund-panel__proofs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.refund-panel__proof-button {
+  border: 0;
+  color: #246bfd;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
 .refund-panel__status p {
   margin: 0;
   color: #66758b;
+}
+.refund-panel > .refund-panel__allocations {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid #dce7f8;
+  border-radius: 8px;
+  background: #f7faff;
+}
+.refund-panel > .refund-panel__allocations h3,
+.refund-panel > .refund-panel__allocations ul {
+  margin: 0;
+}
+.refund-panel > .refund-panel__allocations ul {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+  color: #4a5b72;
+  font-size: 14px;
 }
 @media (max-width: 760px) {
   .refund-panel__card,

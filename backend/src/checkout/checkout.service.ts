@@ -224,11 +224,11 @@ export class CheckoutService {
             orderBy: { sortOrder: 'asc' },
             include: {
               checkoutRentRefundAllocations: {
-                where: { status: 'RESERVED' },
                 select: {
                   id: true,
                   paymentAllocationId: true,
                   reservedAmount: true,
+                  status: true,
                   rentBill: {
                     select: {
                       billNo: true,
@@ -255,15 +255,28 @@ export class CheckoutService {
           },
         },
       });
+    const visibleReservationStatus =
+      settlement.status === 'APPROVED' ? 'RESERVED' : 'APPLIED';
     const rentRefundAllocations = settlement.items.flatMap((item) =>
-      item.checkoutRentRefundAllocations.map((allocation) => ({
-        paymentAllocationId: allocation.paymentAllocationId,
-        billNo: allocation.rentBill.billNo,
-        periodStart: allocation.rentBill.periodStart.toISOString().slice(0, 10),
-        periodEnd: allocation.rentBill.periodEnd.toISOString().slice(0, 10),
-        amount: this.money(allocation.reservedAmount),
-      })),
+      item.checkoutRentRefundAllocations
+        .filter((allocation) => allocation.status === visibleReservationStatus)
+        .map((allocation) => ({
+          paymentAllocationId: allocation.paymentAllocationId,
+          status: allocation.status,
+          billNo: allocation.rentBill.billNo,
+          periodStart: allocation.rentBill.periodStart
+            .toISOString()
+            .slice(0, 10),
+          periodEnd: allocation.rentBill.periodEnd.toISOString().slice(0, 10),
+          amount: this.money(allocation.reservedAmount),
+        })),
     );
+    const totalRefundAmount = new Prisma.Decimal(
+      settlement.depositRefundableAmount,
+    )
+      .plus(settlement.prepaymentRefundableAmount)
+      .plus(settlement.rentRefundableAmount)
+      .toDecimalPlaces(2);
 
     return {
       ...settlement,
@@ -279,6 +292,7 @@ export class CheckoutService {
         settlement.prepaymentRefundableAmount,
       ),
       rentRefundableAmount: this.money(settlement.rentRefundableAmount),
+      totalRefundAmount: this.money(totalRefundAmount),
       rentRefundAllocations,
       finalReceivable: this.money(settlement.finalReceivable),
       supplementalRequired: settlement.supplementalRequired,

@@ -198,7 +198,7 @@ describe('DepositRefundsService', () => {
         } as never,
         { id: 2, username: 'admin', role: 'ADMIN' },
       ),
-    ).rejects.toThrow('结算单合同归属异常，不能登记押金退款');
+    ).rejects.toThrow('结算单合同归属异常，不能登记退租合并退款');
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -448,7 +448,7 @@ describe('DepositRefundsService', () => {
         } as never,
         { id: 2, username: 'admin', role: 'ADMIN' },
       ),
-    ).rejects.toThrow('已作废合同不能登记押金退款');
+    ).rejects.toThrow('已作废合同不能登记退租合并退款');
     expect(submitCreate).not.toHaveBeenCalled();
     expect(
       submitHarness.client.$queryRaw.mock.invocationCallOrder[0],
@@ -502,7 +502,7 @@ describe('DepositRefundsService', () => {
         username: 'root',
         role: 'SUPER_ADMIN',
       }),
-    ).rejects.toThrow('已作废合同不能确认押金退款');
+    ).rejects.toThrow('已作废合同不能确认退租合并退款');
     expect(approveUpdate).not.toHaveBeenCalled();
     expectRoomBeforeTargetContractLock(approveTx.$queryRaw);
   });

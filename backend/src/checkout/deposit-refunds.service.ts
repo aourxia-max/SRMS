@@ -35,7 +35,9 @@ export class DepositRefundsService {
       !dto.proofFileIds.length ||
       new Set(dto.proofFileIds).size !== dto.proofFileIds.length
     )
-      throw new BadRequestException('押金退款金额必须大于零且必须关联有效凭证');
+      throw new BadRequestException(
+        '退租合并退款金额必须大于零且必须关联有效凭证',
+      );
     return this.prisma.db.$transaction(async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${dto.checkoutSettlementId}) FOR UPDATE`,
@@ -48,15 +50,17 @@ export class DepositRefundsService {
         include: { contract: true },
       });
       if (settlement.contractId !== settlement.contract.id)
-        throw new BadRequestException('结算单合同归属异常，不能登记押金退款');
-      assertContractNotVoided(settlement.contract.status, '登记押金退款');
+        throw new BadRequestException(
+          '结算单合同归属异常，不能登记退租合并退款',
+        );
+      assertContractNotVoided(settlement.contract.status, '登记退租合并退款');
       if (
         settlement.status !== 'APPROVED' ||
         settlement.contract.status !== 'PENDING_CHECKOUT' ||
         !settlement.handoverDate ||
         !this.isSupplementalCleared(settlement)
       )
-        throw new BadRequestException('当前不满足登记押金退款的条件');
+        throw new BadRequestException('当前不满足登记退租合并退款的条件');
       const depositRefundAmount = new Prisma.Decimal(
         settlement.depositRefundableAmount,
       ).toDecimalPlaces(2);
@@ -80,15 +84,48 @@ export class DepositRefundsService {
           settlement.id,
           rentRefundAmount,
         );
+      const activeRefund = await tx.depositRefund.findFirst?.({
+        where: {
+          checkoutSettlementId: settlement.id,
+          approvalStatus: { in: ['PENDING', 'APPROVED'] },
+        },
+        select: { id: true },
+      });
+      if (activeRefund)
+        throw new ConflictException('该结算单已存在待确认或已确认的合并退款');
+      const proofFileIds = [...dto.proofFileIds].sort(
+        (left, right) => left - right,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT fa.id FROM file_assets fa WHERE fa.id IN (${Prisma.join(proofFileIds)}) ORDER BY fa.id FOR UPDATE`,
+      );
       const files = await tx.fileAsset.findMany({
         where: {
-          id: { in: dto.proofFileIds },
+          id: { in: proofFileIds },
           category: 'DEPOSIT_REFUND_PROOF',
+          uploadedBy: user.id,
           lockedAt: null,
+          depositRefundFiles: {
+            none: {
+              depositRefund: {
+                approvalStatus: { in: ['PENDING', 'APPROVED'] },
+              },
+            },
+          },
         },
       });
-      if (files.length !== dto.proofFileIds.length)
-        throw new BadRequestException('押金退款凭证不存在、类型不正确或已锁定');
+      if (
+        files.length !== proofFileIds.length ||
+        files.some(
+          (file) =>
+            ('uploadedBy' in file && file.uploadedBy !== user.id) ||
+            ('category' in file && file.category !== 'DEPOSIT_REFUND_PROOF') ||
+            ('lockedAt' in file && file.lockedAt !== null),
+        )
+      )
+        throw new BadRequestException(
+          '合并退款凭证必须由当前用户上传且未被其他退款占用',
+        );
       return tx.depositRefund.create({
         data: {
           refundNo: `YJTK${Date.now()}${settlement.contractId}`,
@@ -143,9 +180,9 @@ export class DepositRefundsService {
           );
         if (refund.approvalStatus !== 'PENDING')
           throw new BadRequestException(
-            '当前不满足确认押金退款并结束合同的条件',
+            '当前不满足确认退租合并退款并结束合同的条件',
           );
-        assertContractNotVoided(settlement.contract.status, '确认押金退款');
+        assertContractNotVoided(settlement.contract.status, '确认退租合并退款');
         if (
           settlement.status !== 'APPROVED' ||
           settlement.contract.status !== 'PENDING_CHECKOUT' ||
@@ -153,7 +190,7 @@ export class DepositRefundsService {
           !this.isSupplementalCleared(settlement)
         )
           throw new BadRequestException(
-            '当前不满足确认押金退款并结束合同的条件',
+            '当前不满足确认退租合并退款并结束合同的条件',
           );
         const proofFileIds = [
           ...new Set(refund.files.map((file) => file.fileAssetId)),
@@ -323,7 +360,7 @@ export class DepositRefundsService {
             roomId: settlement.contract.roomId,
             fromStatus: settlement.contract.room.roomStatus,
             toStatus: settlement.targetRoomStatus,
-            changeReason: '确认押金退款并结束合同',
+            changeReason: '确认退租合并退款并结束合同',
             businessType: 'DEPOSIT_REFUND',
             businessId: refund.id,
             changedBy: user.id,

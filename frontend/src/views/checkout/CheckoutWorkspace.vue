@@ -43,6 +43,9 @@ const loadingCompletedContracts = ref(false);
 const settlementPreview = ref<CheckoutSettlementPreview>();
 const previewLoading = ref(false);
 let previewRequestVersion = 0;
+let refundRequestVersion = 0;
+let refundProofPreviewVersion = 0;
+let completedDetailRequestVersion = 0;
 const actionError = ref("");
 const previewError = ref("");
 const settlementMutationPending = ref(false);
@@ -56,11 +59,15 @@ const refundProofPreview = ref<{
   mimeType: string;
   fileName: string;
 }>();
-const isSuper = computed(() => session.user?.role === "SUPER_ADMIN");
-const refundRole = computed<"SUPER_ADMIN" | "ADMIN" | "VISITOR">(() => session.user?.role ?? "VISITOR");
+const refundRole = computed<"SUPER_ADMIN" | "ADMIN" | "VISITOR">(
+  () => session.user?.role ?? "VISITOR",
+);
 applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
-
+function setRefundSettlement(next?: CheckoutSettlement) {
+  if (refundSettlement.value?.id !== next?.id) refundRequestVersion += 1;
+  refundSettlement.value = next;
+}
 function message(error: unknown, fallback: string) {
   const backendMessage = (
     error as { response?: { data?: { message?: string | string[] } } }
@@ -107,9 +114,9 @@ async function loadData() {
     contracts.value = loadedContracts;
     settlements.value = loadedSettlements;
     const approved = refundPending[0];
-    refundSettlement.value = approved
-      ? await checkoutApi.detail(approved.id)
-      : undefined;
+    setRefundSettlement(
+      approved ? await checkoutApi.detail(approved.id) : undefined,
+    );
   } catch (error) {
     actionError.value = message(error, "退租数据加载失败，请稍后重试");
   } finally {
@@ -136,16 +143,21 @@ async function loadCompletedContracts(
   }
 }
 async function openCompletedDetail(settlementId: number) {
+  const requestVersion = ++completedDetailRequestVersion;
   actionError.value = "";
   try {
-    completedDetail.value = await checkoutApi.detail(settlementId);
+    const detail = await checkoutApi.detail(settlementId);
+    if (requestVersion === completedDetailRequestVersion)
+      completedDetail.value = detail;
   } catch (error) {
-    actionError.value = message(error, "退租结算详情加载失败，请稍后重试");
+    if (requestVersion === completedDetailRequestVersion)
+      actionError.value = message(error, "退租结算详情加载失败，请稍后重试");
   }
 }
 function changeTab(tab: CheckoutTab) {
   activeTab.value = tab;
   clearSettlementPreview();
+  completedDetailRequestVersion += 1;
   completedDetail.value = undefined;
   if (tab === "completed") void loadCompletedContracts();
 }
@@ -203,6 +215,7 @@ async function downloadRefundProof(refundId: number, fileId: number) {
   }
 }
 function closeRefundProofPreview() {
+  refundProofPreviewVersion += 1;
   if (refundProofPreview.value?.url) {
     URL.revokeObjectURL(refundProofPreview.value.url);
   }
@@ -211,17 +224,24 @@ function closeRefundProofPreview() {
 async function previewRefundProof(refundId: number, fileId: number) {
   actionError.value = "";
   closeRefundProofPreview();
+  const requestVersion = refundProofPreviewVersion;
   try {
     const response = await checkoutApi.downloadRefundProof(refundId, fileId);
     const mimeType = String(
       response.headers["content-type"] || response.data.type || "",
     ).toLowerCase();
     if (!mimeType.startsWith("image/") && mimeType !== "application/pdf") {
-      actionError.value = "该凭证格式暂不支持在线预览，请下载后查看";
+      if (requestVersion === refundProofPreviewVersion)
+        actionError.value = "该凭证格式暂不支持在线预览，请下载后查看";
+      return;
+    }
+    const url = URL.createObjectURL(response.data);
+    if (requestVersion !== refundProofPreviewVersion) {
+      URL.revokeObjectURL(url);
       return;
     }
     refundProofPreview.value = {
-      url: URL.createObjectURL(response.data),
+      url,
       mimeType,
       fileName: refundProofFilename(
         response.headers["content-disposition"],
@@ -229,7 +249,8 @@ async function previewRefundProof(refundId: number, fileId: number) {
       ),
     };
   } catch (error) {
-    actionError.value = message(error, "退款凭证预览失败，请稍后重试");
+    if (requestVersion === refundProofPreviewVersion)
+      actionError.value = message(error, "退款凭证预览失败，请稍后重试");
   }
 }
 onBeforeUnmount(closeRefundProofPreview);
@@ -327,12 +348,19 @@ async function approveSettlement(id: number) {
   }
 }
 async function uploadRefundProof(file: File) {
-  if (refundUploading.value) return;
+  if (refundUploading.value || refundSubmitting.value) return;
+  const requestVersion = refundRequestVersion;
+  const settlementId = refundSettlement.value?.id;
+  if (!settlementId) return;
   refundUploading.value = true;
   actionError.value = "";
   try {
     const result = await checkoutApi.uploadRefundProof(file);
-    refundPanel.value?.addProof(result.id);
+    if (
+      requestVersion === refundRequestVersion &&
+      settlementId === refundSettlement.value?.id
+    )
+      refundPanel.value?.addProof(result.id);
   } catch (error) {
     actionError.value = message(error, "退款凭证上传失败，请稍后重试");
   } finally {
@@ -340,7 +368,7 @@ async function uploadRefundProof(file: File) {
   }
 }
 async function submitRefund(payload: Record<string, unknown>) {
-  if (refundSubmitting.value) return;
+  if (refundUploading.value || refundSubmitting.value) return;
   refundSubmitting.value = true;
   actionError.value = "";
   try {
@@ -419,7 +447,7 @@ onMounted(initialize);
     <CheckoutSettlementPanel
       v-else-if="activeTab === 'settlement'"
       :settlements="settlements"
-      :is-super="isSuper"
+      :role="refundRole"
       @submit="submitSettlement"
       :preview="settlementPreview"
       :preview-loading="previewLoading"
@@ -442,6 +470,7 @@ onMounted(initialize);
       @upload="uploadRefundProof"
       @submit="submitRefund"
       @approve="approveRefund"
+      @preview-proof="previewRefundProof"
       @collect-supplemental="collectSupplemental"
       @complete-zero="completeZeroRefund"
     />
@@ -490,10 +519,29 @@ onMounted(initialize);
             </p>
           </article>
           <article>
+            <h3>合并退款快照</h3>
+            <p>
+              应退押金：¥{{
+                formatMoney(completedDetail.depositRefundableAmount)
+              }}
+            </p>
+            <p>
+              应退预收款：¥{{
+                formatMoney(completedDetail.prepaymentRefundableAmount)
+              }}
+            </p>
+            <p>
+              应退租金：¥{{ formatMoney(completedDetail.rentRefundableAmount) }}
+            </p>
+            <p>
+              合计退款：¥{{
+                formatMoney(completedDetail.totalRefundAmount || "0.00")
+              }}
+            </p>
             <h3>退款凭证</h3>
             <p v-if="!completedDetail.depositRefunds?.length">本次无退款</p>
             <div
-              v-for="refund in completedDetail.depositRefunds"
+              v-for="refund in completedDetail.depositRefunds?.slice(0, 1)"
               :key="refund.id"
               class="checkout-workspace__refund-proof"
             >
@@ -529,6 +577,18 @@ onMounted(initialize);
                 </button>
               </template>
             </div>
+          </article>
+          <article v-if="completedDetail.rentRefundAllocations?.length">
+            <h3>退还租金回冲明细</h3>
+            <p
+              v-for="allocation in completedDetail.rentRefundAllocations"
+              :key="allocation.paymentAllocationId"
+            >
+              {{ allocation.billNo }}：¥{{
+                formatMoney(allocation.amount)
+              }}
+              （{{ allocation.status === "APPLIED" ? "已回冲" : "已预留" }}）
+            </p>
           </article>
         </div>
       </section>

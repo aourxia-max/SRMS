@@ -21,14 +21,12 @@ vi.mock("../../services/checkout", () => ({
         { id: 1, contractNo: "HT202608010001", status: "ACTIVE" },
       ]),
     initiate: vi.fn(),
-    financeSnapshot: vi
-      .fn()
-      .mockResolvedValue({
-        depositBalance: "1000.00",
-        rentOutstanding: "0.00",
-        prepaymentBalance: "0.00",
-        futureBillCount: 0,
-      }),
+    financeSnapshot: vi.fn().mockResolvedValue({
+      depositBalance: "1000.00",
+      rentOutstanding: "0.00",
+      prepaymentBalance: "0.00",
+      futureBillCount: 0,
+    }),
     settlements: vi.fn().mockResolvedValue([
       {
         id: 8,
@@ -200,6 +198,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "7500.00",
           prepaymentRefundableAmount: "1000.00",
           rentRefundableAmount: "2000.00",
+          totalRefundAmount: "10500.00",
           finalReceivable: "0.00",
           rentRefundAllocations: [
             {
@@ -995,7 +994,7 @@ describe("CheckoutTopNav", () => {
 
     expect(wrapper.text()).toContain("空置");
     expect(wrapper.text()).toContain("已确认");
-    expect(wrapper.text()).toContain("已驳回");
+    expect(wrapper.text()).not.toContain("已驳回");
   });
 
   it("downloads a refund proof from the read-only detail", async () => {
@@ -1304,6 +1303,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "500.00",
           rentRefundableAmount: "0.00",
+          totalRefundAmount: "1300.00",
           finalReceivable: "0.00",
         },
       },
@@ -1348,6 +1348,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "500.00",
           rentRefundableAmount: "0.00",
+          totalRefundAmount: "1300.00",
           finalReceivable: "0.00",
           depositRefunds: [
             { id: 9, approvalStatus: "PENDING", refundAmount: "1300.00" },
@@ -1387,6 +1388,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "0.00",
           rentRefundableAmount: "0.00",
+          totalRefundAmount: "800.00",
           finalReceivable: "0.00",
           depositRefunds: [
             { id: 9, approvalStatus: "PENDING", refundAmount: "800.00" },
@@ -1410,6 +1412,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "500.00",
           rentRefundableAmount: "200.00",
+          totalRefundAmount: "1500.00",
           finalReceivable: "0.00",
         },
       },
@@ -1419,7 +1422,10 @@ describe("CheckoutTopNav", () => {
     await wrapper.get('[data-test="refund-submit"]').trigger("click");
 
     expect(wrapper.emitted("submit")?.[0]?.[0]).not.toHaveProperty("remark");
-    const payload = wrapper.emitted("submit")?.[0]?.[0] as Record<string, unknown>;
+    const payload = wrapper.emitted("submit")?.[0]?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(payload).toMatchObject({
       checkoutSettlementId: 2,
       refundAmount: "1500.00",
@@ -1550,6 +1556,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "0.00",
           rentRefundableAmount: "200.00",
+          totalRefundAmount: "1000.00",
           finalReceivable: "0.00",
         },
       },
@@ -1572,6 +1579,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "0.00",
           rentRefundableAmount: "200.00",
+          totalRefundAmount: "1000.00",
           finalReceivable: "0.00",
         },
       },
@@ -1583,7 +1591,7 @@ describe("CheckoutTopNav", () => {
     expect(submit.attributes("disabled")).toBeDefined();
     await submit.trigger("click");
     expect(wrapper.emitted("submit")).toBeUndefined();
-});
+  });
 });
 
 describe("CheckoutTopNav", () => {
@@ -1599,5 +1607,100 @@ describe("CheckoutTopNav", () => {
     const select = wrapper.find('[data-test="checkout-contract-select"]');
     expect((select.element as HTMLSelectElement).value).toBe("1");
     expect(wrapper.emitted("contractChange")).toEqual([[1]]);
+  });
+});
+
+describe("Task8 completed detail requests", () => {
+  it("keeps the newer completed detail when an older request resolves late", async () => {
+    const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn> };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+
+    let resolveFirst!: (value: Record<string, unknown>) => void;
+    let resolveSecond!: (value: Record<string, unknown>) => void;
+    api.detail.mockReset();
+    api.detail
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+    const completed = wrapper.findComponent(CompletedCheckoutContractsPanel);
+    completed.vm.$emit("select", 17);
+    completed.vm.$emit("select", 18);
+    resolveSecond({
+      id: 18,
+      settlementNo: "TZ-NEW",
+      status: "COMPLETED",
+      contractId: 1,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "0.00",
+      finalReceivable: "0.00",
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("TZ-NEW");
+    resolveFirst({
+      id: 17,
+      settlementNo: "TZ-OLD",
+      status: "COMPLETED",
+      contractId: 1,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "0.00",
+      finalReceivable: "0.00",
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("TZ-NEW");
+    expect(wrapper.text()).not.toContain("TZ-OLD");
+  });
+  it("does not restore a late completed detail after leaving the tab", async () => {
+    const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn> };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
+    await flushPromises();
+
+    let resolveDetail!: (value: Record<string, unknown>) => void;
+    api.detail.mockReset();
+    api.detail.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDetail = resolve;
+        }),
+    );
+    wrapper
+      .findComponent(CompletedCheckoutContractsPanel)
+      .vm.$emit("select", 17);
+    await wrapper.get('[data-test="checkout-tab-initiate"]').trigger("click");
+    resolveDetail({
+      id: 17,
+      settlementNo: "TZ-OLD",
+      status: "COMPLETED",
+      contractId: 1,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "0.00",
+      finalReceivable: "0.00",
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("TZ-OLD");
   });
 });

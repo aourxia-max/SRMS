@@ -9,7 +9,7 @@ import type {
 
 const props = defineProps<{
   settlements: CheckoutSettlement[];
-  isSuper?: boolean;
+  role?: "SUPER_ADMIN" | "ADMIN" | "VISITOR";
   preview?: CheckoutSettlementPreview;
   previewLoading?: boolean;
   submitting?: boolean;
@@ -40,6 +40,7 @@ const actionableSettlements = computed(() =>
     ["DRAFT", "PENDING", "REJECTED"].includes(item.status),
   ),
 );
+const canApprove = computed(() => props.role === "SUPER_ADMIN");
 const selected = computed(
   () =>
     actionableSettlements.value.find((item) => item.id === selectedId.value) ??
@@ -123,21 +124,21 @@ function payload(): CheckoutSettlementPayload {
 function previewReady() {
   return Boolean(
     selected.value &&
-      form.actualCheckoutDate &&
-      form.handoverDate &&
-      form.inspectionAt &&
-      items.value.every((item) => {
-        const amount = parseAmount(item.amount);
-        return Boolean(
-          amount !== undefined &&
-            amount > 0 &&
-            item.description.trim() &&
-            (item.itemType === "RENT_REFUND" ||
-              (item.itemType === "RENT_ARREARS"
-                ? item.rentBillId
-                : item.inspectionRecordRef?.trim())),
-        );
-      }),
+    form.actualCheckoutDate &&
+    form.handoverDate &&
+    form.inspectionAt &&
+    items.value.every((item) => {
+      const amount = parseAmount(item.amount);
+      return Boolean(
+        amount !== undefined &&
+        amount > 0 &&
+        item.description.trim() &&
+        (item.itemType === "RENT_REFUND" ||
+          (item.itemType === "RENT_ARREARS"
+            ? item.rentBillId
+            : item.inspectionRecordRef?.trim())),
+      );
+    }),
   );
 }
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
@@ -487,12 +488,16 @@ function cancelSelected() {
             取消退租结算
           </button>
           <button
+            v-if="canApprove"
             type="button"
             class="primary-button"
             @click="emit('approve', selected.id)"
           >
             确认结算
           </button>
+          <p v-else class="settlement-panel__hint">
+            仅超级管理员可以确认结算。
+          </p>
         </div>
         <div
           v-else-if="selected.status === 'REJECTED'"
