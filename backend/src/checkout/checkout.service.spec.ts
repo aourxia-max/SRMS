@@ -1509,6 +1509,7 @@ describe('CheckoutService', () => {
             reversedAmount: new Prisma.Decimal('100.00'),
             payment: { paymentDate: new Date('2026-08-05') },
             rentBill: {
+              billNo: 'ZJ2026080001',
               periodStart: new Date('2026-08-01'),
               periodEnd: new Date('2026-08-31'),
             },
@@ -1516,7 +1517,14 @@ describe('CheckoutService', () => {
               { reversedAmount: new Prisma.Decimal('200.00') },
             ],
             checkoutRentRefundAllocations: [
-              { reservedAmount: new Prisma.Decimal('300.00') },
+              {
+                reservedAmount: new Prisma.Decimal('300.00'),
+                item: { checkoutSettlementId: 8 },
+              },
+              {
+                reservedAmount: new Prisma.Decimal('30.00'),
+                item: { checkoutSettlementId: 9 },
+              },
             ],
           },
           {
@@ -1527,6 +1535,7 @@ describe('CheckoutService', () => {
             reversedAmount: new Prisma.Decimal('50.00'),
             payment: { paymentDate: new Date('2026-08-06') },
             rentBill: {
+              billNo: 'ZJ2026090001',
               periodStart: new Date('2026-09-01'),
               periodEnd: new Date('2026-09-30'),
             },
@@ -1534,7 +1543,14 @@ describe('CheckoutService', () => {
               { reversedAmount: new Prisma.Decimal('25.00') },
             ],
             checkoutRentRefundAllocations: [
-              { reservedAmount: new Prisma.Decimal('75.00') },
+              {
+                reservedAmount: new Prisma.Decimal('75.00'),
+                item: { checkoutSettlementId: 8 },
+              },
+              {
+                reservedAmount: new Prisma.Decimal('25.00'),
+                item: { checkoutSettlementId: 10 },
+              },
             ],
           },
         ]),
@@ -1562,20 +1578,22 @@ describe('CheckoutService', () => {
       depositRefundableAmount: '100.00',
       prepaymentRefundableAmount: '50.00',
       rentRefundableAmount: '600.00',
-      maxRentRefundAmount: '750.00',
+      maxRentRefundAmount: '1070.00',
       totalRefundAmount: '750.00',
       rentRefundAllocations: [
         {
           paymentAllocationId: 102,
           paymentId: 12,
           rentBillId: 22,
-          amount: '350.00',
+          billNo: 'ZJ2026090001',
+          amount: '400.00',
         },
         {
           paymentAllocationId: 101,
           paymentId: 11,
           rentBillId: 21,
-          amount: '250.00',
+          billNo: 'ZJ2026080001',
+          amount: '200.00',
         },
       ],
     });
@@ -1595,14 +1613,19 @@ describe('CheckoutService', () => {
         allocatedAmount: true,
         reversedAmount: true,
         payment: { select: { paymentDate: true } },
-        rentBill: { select: { periodStart: true, periodEnd: true } },
+        rentBill: {
+          select: { billNo: true, periodStart: true, periodEnd: true },
+        },
         refundAllocations: {
           where: { paymentRefund: { approvalStatus: 'PENDING' } },
           select: { reversedAmount: true },
         },
         checkoutRentRefundAllocations: {
           where: { status: 'RESERVED' },
-          select: { reservedAmount: true },
+          select: {
+            reservedAmount: true,
+            item: { select: { checkoutSettlementId: true } },
+          },
         },
       },
     });
@@ -1703,5 +1726,154 @@ describe('CheckoutService', () => {
         ],
       } as never),
     ).rejects.toThrow('当前合同没有可回冲的已缴租金。');
+  });
+
+  const rentRefundSubmitHarness = () => {
+    const deleteMany = jest.fn();
+    const update = jest.fn().mockResolvedValue({ id: 1, status: 'PENDING' });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          contract: {
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+        update,
+      },
+      checkoutSettlementItem: { deleteMany },
+    };
+    return {
+      deleteMany,
+      update,
+      service: new CheckoutService({
+        db: {
+          $transaction: jest.fn(
+            (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+          ),
+        },
+      } as never),
+    };
+  };
+
+  it('rejects a rent refund carrying an inspection reference before submit writes', async () => {
+    const { service, deleteMany, update } = rentRefundSubmitHarness();
+
+    await expect(
+      service.submit(
+        1,
+        {
+          actualCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          targetRoomStatus: 'EMPTY',
+          items: [
+            {
+              itemType: 'RENT_REFUND',
+              amount: '100.00',
+              inspectionRecordRef: 'YF-OTHER-CONTRACT',
+              description: '提前退房退还未履行租金',
+            },
+          ],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow('退还租金不能关联租金账单或验房记录');
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a rent refund carrying another contract bill id during preview', async () => {
+    const paymentAllocationFindMany = jest.fn().mockResolvedValue([
+      {
+        id: 101,
+        paymentId: 11,
+        rentBillId: 21,
+        allocatedAmount: new Prisma.Decimal('100.00'),
+        reversedAmount: new Prisma.Decimal('0.00'),
+        payment: { paymentDate: new Date('2026-08-05') },
+        rentBill: {
+          billNo: 'ZJ2026080001',
+          periodStart: new Date('2026-08-01'),
+          periodEnd: new Date('2026-08-31'),
+        },
+        refundAllocations: [],
+        checkoutRentRefundAllocations: [],
+      },
+    ]);
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 8,
+            contractId: 3,
+            status: 'DRAFT',
+            originContractStatus: 'ACTIVE',
+            contract: {
+              id: 3,
+              status: 'PENDING_CHECKOUT',
+              startDate: new Date('2026-01-01'),
+              bills: [],
+            },
+          }),
+        },
+        depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+        prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+        paymentAllocation: { findMany: paymentAllocationFindMany },
+      },
+    } as never);
+
+    await expect(
+      service.preview(8, {
+        actualCheckoutDate: '2026-08-15',
+        handoverDate: '2026-08-15',
+        inspectionAt: '2026-08-15T09:00:00.000Z',
+        targetRoomStatus: 'EMPTY',
+        items: [
+          {
+            itemType: 'RENT_REFUND',
+            amount: '10.00',
+            rentBillId: 999,
+            description: '提前退房退还未履行租金',
+          },
+        ],
+      } as never),
+    ).rejects.toThrow('退还租金不能关联租金账单或验房记录');
+    expect(paymentAllocationFindMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a sub-cent rent refund before submit writes with a Chinese error', async () => {
+    const { service, deleteMany, update } = rentRefundSubmitHarness();
+
+    await expect(
+      service.submit(
+        1,
+        {
+          actualCheckoutDate: '2026-08-20',
+          handoverDate: '2026-08-20',
+          inspectionAt: '2026-08-20T09:00:00.000Z',
+          targetRoomStatus: 'EMPTY',
+          items: [
+            {
+              itemType: 'RENT_REFUND',
+              amount: '0.001',
+              description: '提前退房退还未履行租金',
+            },
+          ],
+        } as never,
+        user,
+      ),
+    ).rejects.toThrow(
+      '结算项目金额必须是大于零、最多12位整数和2位小数的普通十进制字符串',
+    );
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 });

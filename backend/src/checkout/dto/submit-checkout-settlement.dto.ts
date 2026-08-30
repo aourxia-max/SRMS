@@ -15,10 +15,17 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+export const CHECKOUT_SETTLEMENT_AMOUNT_PATTERN =
+  /^(?=.*[1-9])\d{1,12}(?:\.\d{1,2})?$/;
+export const CHECKOUT_SETTLEMENT_AMOUNT_MESSAGE =
+  '结算项目金额必须是大于零、最多12位整数和2位小数的普通十进制字符串';
+
 export class CheckoutSettlementItemDto {
   @IsEnum(CheckoutSettlementItemType) itemType!: CheckoutSettlementItemType;
-  @IsNumberString()
-  @Matches(/^(?=.*[1-9])\d+(?:\.\d+)?$/)
+  @IsNumberString({}, { message: CHECKOUT_SETTLEMENT_AMOUNT_MESSAGE })
+  @Matches(CHECKOUT_SETTLEMENT_AMOUNT_PATTERN, {
+    message: CHECKOUT_SETTLEMENT_AMOUNT_MESSAGE,
+  })
   amount!: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) rentBillId?: number;
   @IsOptional() @IsString() @Length(1, 100) inspectionRecordRef?: string;

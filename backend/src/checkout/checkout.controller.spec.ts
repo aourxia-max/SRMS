@@ -37,8 +37,17 @@ describe('CheckoutController preview route', () => {
     expect(dto.items[0].description).toBe('提前退房退还未履行租金');
   });
 
-  it.each(['0', '-0.01', 'Infinity', 'NaN'])(
-    'rejects a non-positive or non-finite rent refund amount %s',
+  it.each([
+    0.01,
+    '0',
+    '-0.01',
+    '0.001',
+    '1000000000000.00',
+    '1e2',
+    'Infinity',
+    'NaN',
+  ])(
+    'rejects rent refund amount outside DECIMAL(14,2) ordinary-string format: %p',
     async (amount) => {
       const errors = await validate(
         settlementDto({
@@ -49,8 +58,23 @@ describe('CheckoutController preview route', () => {
       );
 
       expect(errors).not.toHaveLength(0);
+      expect(JSON.stringify(errors)).toContain(
+        '结算项目金额必须是大于零、最多12位整数和2位小数的普通十进制字符串',
+      );
     },
   );
+
+  it('accepts the maximum DECIMAL(14,2) rent refund amount', async () => {
+    await expect(
+      validate(
+        settlementDto({
+          itemType: 'RENT_REFUND',
+          amount: '999999999999.99',
+          description: '提前退房退还未履行租金',
+        }),
+      ),
+    ).resolves.toEqual([]);
+  });
 
   it.each(['   ', 'x'.repeat(501)])(
     'rejects an empty or oversized rent refund description',
