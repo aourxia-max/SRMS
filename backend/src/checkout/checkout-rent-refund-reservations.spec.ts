@@ -113,6 +113,9 @@ describe('checkout rent refund reservations', () => {
         (sql as { strings?: readonly string[] }).strings?.join('?'),
       )
       .filter((sql): sql is string => Boolean(sql));
+    const lockValues = tx.$queryRaw.mock.calls.map(
+      ([sql]) => (sql as { values?: readonly unknown[] }).values,
+    );
     expect(
       lockSql.slice(0, 6).map((sql) => ({
         ordered: /ORDER BY [a-z]+\.id FOR UPDATE/.test(sql),
@@ -133,6 +136,11 @@ describe('checkout rent refund reservations', () => {
       { ordered: true, table: 'payment_void_requests' },
       { ordered: true, table: 'checkout_rent_refund_allocations' },
     ]);
+    expect(lockValues.slice(0, 6)).toEqual([[4], [4], [4], [4], [4], [4]]);
+    expect(lockSql[3]).toContain("pr.approval_status = 'PENDING'");
+    expect(lockSql[4]).toContain("pvr.approval_status = 'PENDING'");
+    expect(lockSql[5]).toContain("crra.status = 'RESERVED'");
+    expect(lockValues[6]).toEqual([9]);
     expect(tx.paymentAllocation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
@@ -165,6 +173,60 @@ describe('checkout rent refund reservations', () => {
     expect(tx.checkoutRentRefundAllocation.createMany).not.toHaveBeenCalled();
   });
 
+  it('subtracts every pending refund across multiple payment allocations', async () => {
+    const tx = reservationTx([
+      allocation({
+        refundAllocations: [
+          { reversedAmount: new Prisma.Decimal('150.00') },
+          { reversedAmount: new Prisma.Decimal('50.00') },
+        ],
+        checkoutRentRefundAllocations: [],
+      }),
+      allocation({
+        id: 102,
+        paymentId: 12,
+        rentBillId: 22,
+        allocatedAmount: new Prisma.Decimal('500.00'),
+        reversedAmount: new Prisma.Decimal('0.00'),
+        payment: {
+          paymentDate: new Date('2026-08-06'),
+          voidRequests: [],
+        },
+        rentBill: {
+          billNo: 'ZJ2026090001',
+          periodStart: new Date('2026-09-01'),
+          periodEnd: new Date('2026-09-30'),
+        },
+        refundAllocations: [
+          { reversedAmount: new Prisma.Decimal('25.00') },
+          { reversedAmount: new Prisma.Decimal('75.00') },
+        ],
+        checkoutRentRefundAllocations: [],
+      }),
+    ]);
+
+    await reserveCheckoutRentRefund(tx as never, {
+      settlementId: 9,
+      settlementItemId: 81,
+      contractId: 4,
+      actualCheckoutDate: new Date('2026-08-15'),
+      requestedAmount: '1000.00',
+    });
+
+    expect(tx.checkoutRentRefundAllocation.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          paymentAllocationId: 102,
+          reservedAmount: new Prisma.Decimal('400.00'),
+        }),
+        expect.objectContaining({
+          paymentAllocationId: 101,
+          reservedAmount: new Prisma.Decimal('600.00'),
+        }),
+      ],
+    });
+  });
+
   it('releases reservations idempotently and stamps the release time', async () => {
     const tx = reservationTx();
     tx.checkoutRentRefundAllocation.updateMany.mockResolvedValue({ count: 0 });
@@ -192,6 +254,12 @@ describe('checkout rent refund reservations', () => {
       where: { paymentId: 11, status: 'RESERVED' },
       select: { id: true },
     });
+    const guardSql = tx.$queryRaw.mock.calls[0][0] as {
+      strings?: readonly string[];
+      values?: readonly unknown[];
+    };
+    expect(guardSql.strings?.join('?')).toContain("crra.status = 'RESERVED'");
+    expect(guardSql.values).toEqual([11]);
   });
 
   it('allows a payment reversal when only historical reservations remain', async () => {

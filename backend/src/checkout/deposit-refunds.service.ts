@@ -10,6 +10,17 @@ import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkou
 import { SubmitDepositRefundDto } from './dto/submit-deposit-refund.dto';
 import { assertContractNotVoided } from '../contracts/contract-operability';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
+
+const CHECKOUT_RENT_REFUND_PENDING_MESSAGE =
+  '退租租金退款尚未完成，当前不能登记或确认押金退款。';
+
+function assertNoLockedCheckoutRentRefund(
+  amount: Prisma.Decimal.Value | null | undefined,
+) {
+  if (new Prisma.Decimal(amount ?? 0).gt(0))
+    throw new BadRequestException(CHECKOUT_RENT_REFUND_PENDING_MESSAGE);
+}
+
 @Injectable()
 export class DepositRefundsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -52,6 +63,7 @@ export class DepositRefundsService {
         !this.isSupplementalCleared(settlement)
       )
         throw new BadRequestException('当前不满足登记押金退款的条件');
+      assertNoLockedCheckoutRentRefund(settlement.rentRefundableAmount);
       const expectedRefund = new Prisma.Decimal(
         settlement.depositRefundableAmount,
       ).plus(settlement.prepaymentRefundableAmount);
@@ -130,6 +142,7 @@ export class DepositRefundsService {
           throw new BadRequestException(
             '当前不满足确认押金退款并结束合同的条件',
           );
+        assertNoLockedCheckoutRentRefund(settlement.rentRefundableAmount);
         const depositRefundableAmount = new Prisma.Decimal(
           settlement.depositRefundableAmount,
         );

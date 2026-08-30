@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SubmitVoidRequestDto } from './dto/submit-void-request.dto';
 import { calculateAdjustedBill } from './adjustment-calculator';
 import {
+  assertPaymentIsNotContractAutomaticDeposit,
   assertPaymentReversalRequestAllowed,
   assertPaymentDoesNotTouchProtectedCheckoutArrears,
   reopenCheckoutSupplementalBalance,
@@ -42,9 +43,10 @@ export class VoidRequestsService {
       });
       if (payment.status !== 'CONFIRMED')
         throw new BadRequestException('只有未退款的已确认收款可以申请作废');
-      await assertPaymentReversalRequestAllowed(tx, payment);
+      assertPaymentIsNotContractAutomaticDeposit(payment);
       assertContractNotVoided(payment.contract.status, '发起收款作废');
       await assertNoCheckoutRentRefundReservation(tx, payment.id);
+      await assertPaymentReversalRequestAllowed(tx, payment);
       const pending = await tx.paymentVoidRequest.findFirst({
         where: { paymentId: dto.paymentId, approvalStatus: 'PENDING' },
       });

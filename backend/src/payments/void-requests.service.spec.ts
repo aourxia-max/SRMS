@@ -221,6 +221,44 @@ describe('VoidRequestsService adjustment reversal', () => {
       reload,
       firstWrite,
     );
+    const locks = tx.$queryRaw.mock.calls.map(([sql]) => ({
+      statement:
+        (sql as { strings?: readonly string[] }).strings?.join('?') ?? '',
+      values: (sql as { values?: readonly unknown[] }).values,
+    }));
+    expect(
+      locks.map(({ statement, values }) => ({
+        table: [
+          'contracts',
+          'payments',
+          'checkout_rent_refund_allocations',
+        ].find((table) => statement.includes('FROM ' + table)),
+        ordered:
+          !statement.includes('checkout_rent_refund_allocations') ||
+          statement.includes('ORDER BY crra.id FOR UPDATE'),
+        values,
+      })),
+    ).toEqual([
+      { table: 'contracts', ordered: true, values: [81] },
+      { table: 'payments', ordered: true, values: [81] },
+      {
+        table: 'checkout_rent_refund_allocations',
+        ordered: true,
+        values: [81],
+      },
+    ]);
+    expect(reload.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[2],
+    );
+    expect(tx.$queryRaw.mock.invocationCallOrder[2]).toBeLessThan(
+      tx.checkoutRentRefundAllocation.findFirst.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.checkoutRentRefundAllocation.findFirst.mock.invocationCallOrder[0],
+    ).toBeLessThan(tx.paymentAllocation.findFirst.mock.invocationCallOrder[0]);
+    expect(
+      tx.paymentAllocation.findFirst.mock.invocationCallOrder[0],
+    ).toBeLessThan(firstWrite.mock.invocationCallOrder[0]);
   });
 
   it('orders payment void reject as contract lock, request reload, then reject write', async () => {
@@ -281,10 +319,14 @@ describe('VoidRequestsService adjustment reversal', () => {
           contractId: 7,
           paymentCategory: 'RENT',
           status: 'CONFIRMED',
+          contract: { status: 'ACTIVE' },
         }),
       },
       paymentAllocation: {
         findFirst: jest.fn().mockResolvedValue({ id: 101 }),
+      },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       paymentVoidRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -327,7 +369,9 @@ describe('VoidRequestsService adjustment reversal', () => {
           contract: { status: 'ACTIVE' },
         }),
       },
-      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentAllocation: {
+        findFirst: jest.fn().mockResolvedValue({ id: 101 }),
+      },
       checkoutRentRefundAllocation: {
         findFirst: jest.fn().mockResolvedValue({ id: 501 }),
       },
@@ -356,6 +400,37 @@ describe('VoidRequestsService adjustment reversal', () => {
       ),
     ).rejects.toThrow('相关租金已被退租退款流程占用，不能重复退款或作废。');
     expect(create).not.toHaveBeenCalled();
+    expect(tx.paymentAllocation.findFirst).not.toHaveBeenCalled();
+    const locks = tx.$queryRaw.mock.calls.map(([sql]) => ({
+      statement:
+        (sql as { strings?: readonly string[] }).strings?.join('?') ?? '',
+      values: (sql as { values?: readonly unknown[] }).values,
+    }));
+    expect(
+      locks.map(({ statement, values }) => ({
+        table: [
+          'contracts',
+          'payments',
+          'checkout_rent_refund_allocations',
+        ].find((table) => statement.includes('FROM ' + table)),
+        forUpdate: statement.includes('FOR UPDATE'),
+        values,
+      })),
+    ).toEqual([
+      { table: 'contracts', forUpdate: true, values: [81] },
+      { table: 'payments', forUpdate: true, values: [81] },
+      {
+        table: 'checkout_rent_refund_allocations',
+        forUpdate: true,
+        values: [81],
+      },
+    ]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.payment.findUniqueOrThrow.mock.invocationCallOrder[0],
+    ).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[2]);
   });
 
   it('rejects voiding a contract automatic deposit payment', async () => {
@@ -409,7 +484,11 @@ describe('VoidRequestsService adjustment reversal', () => {
           contractId: 7,
           paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
           status: 'CONFIRMED',
+          contract: { status: 'ACTIVE' },
         }),
+      },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       checkoutSettlement: {
         findFirst: jest.fn().mockResolvedValue({ status: 'COMPLETED' }),
@@ -439,7 +518,7 @@ describe('VoidRequestsService adjustment reversal', () => {
       ),
     ).rejects.toThrow('退租已完成，不能再退款或作废退租补收款');
     expect(create).not.toHaveBeenCalled();
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
     expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
       tx.payment.findUniqueOrThrow.mock.invocationCallOrder[0],
     );

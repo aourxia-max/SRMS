@@ -10,6 +10,7 @@ import { SubmitRefundDto } from './dto/submit-refund.dto';
 import { ApproveRefundDto } from './dto/approve-refund.dto';
 import { calculateAdjustedBill } from './adjustment-calculator';
 import {
+  assertPaymentIsNotContractAutomaticDeposit,
   assertPaymentReversalRequestAllowed,
   assertPaymentDoesNotTouchProtectedCheckoutArrears,
   reopenCheckoutSupplementalBalance,
@@ -68,9 +69,10 @@ export class RefundsService {
       });
       if (!['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(payment.status))
         throw new BadRequestException('该收款当前不能退款');
-      await assertPaymentReversalRequestAllowed(tx, payment);
+      assertPaymentIsNotContractAutomaticDeposit(payment);
       assertContractNotVoided(payment.contract.status, '发起退款');
       await assertNoCheckoutRentRefundReservation(tx, payment.id);
+      await assertPaymentReversalRequestAllowed(tx, payment);
       const original = new Map(
         payment.allocations.map((item) => [item.id, item]),
       );

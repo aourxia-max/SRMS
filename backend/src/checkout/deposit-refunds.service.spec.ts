@@ -435,4 +435,137 @@ describe('DepositRefundsService', () => {
     expect(approveUpdate).not.toHaveBeenCalled();
     expectRoomBeforeTargetContractLock(approveTx.$queryRaw);
   });
+
+  it('rejects deposit-refund submission while a positive rent refund is still locked without any write', async () => {
+    const depositRefundCreate = jest.fn();
+    const depositLedgerWrite = jest.fn();
+    const prepaymentLedgerWrite = jest.fn();
+    const contractWrite = jest.fn();
+    const roomWrite = jest.fn();
+    const fileFind = jest.fn().mockResolvedValue([{ id: 4 }]);
+    const harness = transactional({
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 8,
+          contractId: 3,
+          status: 'APPROVED',
+          handoverDate: new Date('2026-08-01'),
+          finalReceivable: '0.00',
+          depositRefundableAmount: '800.00',
+          prepaymentRefundableAmount: '500.00',
+          rentRefundableAmount: '100.00',
+          contract: { status: 'PENDING_CHECKOUT' },
+        }),
+      },
+      fileAsset: { findMany: fileFind },
+      depositRefund: { create: depositRefundCreate },
+      depositTransaction: { create: depositLedgerWrite },
+      prepaymentTransaction: { create: prepaymentLedgerWrite },
+      contract: { update: contractWrite },
+      room: { update: roomWrite },
+    });
+    const service = new DepositRefundsService({
+      db: harness.db,
+    } as never);
+
+    await expect(
+      service.submit(
+        {
+          checkoutSettlementId: 8,
+          refundAmount: '1300.00',
+          refundDate: '2026-08-02',
+          refundMethod: 'BANK_TRANSFER',
+          proofFileIds: [4],
+        } as never,
+        { id: 2, username: 'admin', role: 'ADMIN' },
+      ),
+    ).rejects.toThrow('退租租金退款尚未完成，当前不能登记或确认押金退款。');
+
+    expect(fileFind).not.toHaveBeenCalled();
+    expect(depositRefundCreate).not.toHaveBeenCalled();
+    expect(depositLedgerWrite).not.toHaveBeenCalled();
+    expect(prepaymentLedgerWrite).not.toHaveBeenCalled();
+    expect(contractWrite).not.toHaveBeenCalled();
+    expect(roomWrite).not.toHaveBeenCalled();
+  });
+
+  it('rejects deposit-refund approval while a positive rent refund is still locked without financial or final-state writes', async () => {
+    const refundStatusWrite = jest.fn().mockResolvedValue({ count: 1 });
+    const settlementStatusWrite = jest.fn().mockResolvedValue({ count: 1 });
+    const depositLedgerWrite = jest.fn();
+    const prepaymentLedgerWrite = jest.fn();
+    const fileWrite = jest.fn();
+    const contractWrite = jest.fn();
+    const roomWrite = jest.fn();
+    const historyWrite = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      depositRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 1,
+          contractId: 3,
+          refundAmount: '1300.00',
+          approvalStatus: 'PENDING',
+          files: [{ fileAssetId: 4 }],
+          checkoutSettlement: {
+            id: 8,
+            status: 'APPROVED',
+            handoverDate: new Date('2026-08-01'),
+            finalReceivable: '0.00',
+            supplementalRequired: false,
+            depositRefundableAmount: '800.00',
+            prepaymentRefundableAmount: '500.00',
+            rentRefundableAmount: '100.00',
+            targetRoomStatus: 'EMPTY',
+            contract: {
+              status: 'PENDING_CHECKOUT',
+              roomId: 7,
+              room: { roomStatus: 'PENDING_CHECKOUT' },
+            },
+          },
+        }),
+        updateMany: refundStatusWrite,
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
+        create: depositLedgerWrite,
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ balanceAfter: '500.00' }),
+        create: prepaymentLedgerWrite,
+      },
+      fileAsset: { updateMany: fileWrite },
+      checkoutSettlement: { updateMany: settlementStatusWrite },
+      contract: { update: contractWrite },
+      room: { update: roomWrite },
+      roomStatusHistory: { create: historyWrite },
+    };
+    mockRoomContractLocks(tx, 3, 7);
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(1, {
+        id: 1,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).rejects.toThrow('退租租金退款尚未完成，当前不能登记或确认押金退款。');
+
+    expect(tx.depositTransaction.findFirst).not.toHaveBeenCalled();
+    expect(tx.prepaymentTransaction.findFirst).not.toHaveBeenCalled();
+    expect(refundStatusWrite).not.toHaveBeenCalled();
+    expect(settlementStatusWrite).not.toHaveBeenCalled();
+    expect(depositLedgerWrite).not.toHaveBeenCalled();
+    expect(prepaymentLedgerWrite).not.toHaveBeenCalled();
+    expect(fileWrite).not.toHaveBeenCalled();
+    expect(contractWrite).not.toHaveBeenCalled();
+    expect(roomWrite).not.toHaveBeenCalled();
+    expect(historyWrite).not.toHaveBeenCalled();
+  });
 });

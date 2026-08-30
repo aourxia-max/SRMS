@@ -30,6 +30,7 @@ function expectContractMutationOrder(
   contractLock: jest.Mock,
   reload: jest.Mock,
   firstWrite: jest.Mock,
+  reloadCallIndex = -1,
 ) {
   const lockIndex = contractLock.mock.calls.findIndex(([query]) => {
     const statement =
@@ -42,7 +43,10 @@ function expectContractMutationOrder(
     { strings?: readonly string[] } | undefined;
   const statement = sql?.strings?.join('?') ?? '';
   const lockOrder = contractLock.mock.invocationCallOrder[lockIndex];
-  const reloadOrder = reload.mock.invocationCallOrder.at(-1);
+  const reloadOrder =
+    reloadCallIndex === -1
+      ? reload.mock.invocationCallOrder.at(-1)
+      : reload.mock.invocationCallOrder[reloadCallIndex];
   const writeOrder = firstWrite.mock.invocationCallOrder[0];
   expect({
     entry,
@@ -552,7 +556,9 @@ describe('CheckoutService', () => {
   });
 
   it('allows a pending-start checkout to use an actual date before the contract start date', async () => {
-    const update = jest.fn().mockResolvedValue({ id: 1, status: 'PENDING' });
+    const update = jest
+      .fn()
+      .mockResolvedValue({ id: 1, status: 'PENDING', items: [] });
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
@@ -594,7 +600,7 @@ describe('CheckoutService', () => {
         } as never,
         user,
       ),
-    ).resolves.toEqual({ id: 1, status: 'PENDING' });
+    ).resolves.toMatchObject({ id: 1, status: 'PENDING' });
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -710,7 +716,7 @@ describe('CheckoutService', () => {
             bills: [],
           },
         }),
-        update: jest.fn().mockResolvedValue({ id: 1, status: 'APPROVED' }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       contract: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
@@ -727,6 +733,9 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ contractId: 3 }),
+        },
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
@@ -742,12 +751,11 @@ describe('CheckoutService', () => {
       tx.$queryRaw,
       tx.checkoutSettlement.findUniqueOrThrow,
       tx.rentBill.updateMany,
+      0,
     );
   });
   it('locks post-offset arrears separately and creates an inspection-only supplemental bill', async () => {
-    const settlementUpdate = jest
-      .fn()
-      .mockResolvedValue({ id: 1, status: 'APPROVED' });
+    const settlementUpdate = jest.fn().mockResolvedValue({ count: 1 });
     const supplementalCreate = jest.fn();
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
@@ -784,7 +792,7 @@ describe('CheckoutService', () => {
             ],
           },
         }),
-        update: settlementUpdate,
+        updateMany: settlementUpdate,
       },
       rentBill: {
         create: supplementalCreate,
@@ -801,6 +809,9 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ contractId: 3 }),
+        },
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
@@ -1251,6 +1262,9 @@ describe('CheckoutService', () => {
     };
     const approveService = new CheckoutService({
       db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ contractId: 3 }),
+        },
         $transaction: jest.fn(
           (callback: (client: typeof approveTx) => Promise<unknown>) =>
             callback(approveTx),
@@ -2082,6 +2096,59 @@ describe('CheckoutService', () => {
         }),
       ],
     });
+    const locks = tx.$queryRaw.mock.calls.map(([sql]) => ({
+      statement:
+        (sql as { strings?: readonly string[] }).strings?.join('?') ?? '',
+      values: (sql as { values?: readonly unknown[] }).values,
+    }));
+    expect(
+      locks.slice(0, 4).map(({ statement, values }) => ({
+        table: /SELECT id FROM ([a-z_]+)/.exec(statement)?.[1],
+        forUpdate: statement.includes('FOR UPDATE'),
+        stable:
+          !statement.includes('rent_bills') ||
+          statement.includes('ORDER BY id FOR UPDATE'),
+        values,
+      })),
+    ).toEqual([
+      { table: 'contracts', forUpdate: true, stable: true, values: [9] },
+      {
+        table: 'checkout_settlements',
+        forUpdate: true,
+        stable: true,
+        values: [9],
+      },
+      { table: 'rent_bills', forUpdate: true, stable: true, values: [9] },
+      {
+        table: 'checkout_settlement_items',
+        forUpdate: true,
+        stable: true,
+        values: [9],
+      },
+    ]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[3]).toBeLessThan(
+      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      tx.checkoutSettlementItem.deleteMany.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.checkoutSettlementItem.deleteMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(settlementUpdate.mock.invocationCallOrder[0]);
+    expect(settlementUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[4],
+    );
+    expect(tx.$queryRaw.mock.invocationCallOrder[10]).toBeLessThan(
+      tx.checkoutRentRefundAllocation.updateMany.mock.invocationCallOrder[0],
+    );
+    expect(
+      tx.checkoutRentRefundAllocation.updateMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(tx.paymentAllocation.findMany.mock.invocationCallOrder[0]);
+    expect(
+      tx.paymentAllocation.findMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(reserveCreateMany.mock.invocationCallOrder[0]);
   });
 
   it.each([
@@ -2189,28 +2256,25 @@ describe('CheckoutService', () => {
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       checkoutSettlement: {
-        findUniqueOrThrow: jest
-          .fn()
-          .mockResolvedValueOnce({ contractId: 4 })
-          .mockResolvedValueOnce({
-            id: 9,
-            contractId: 4,
-            status: 'PENDING',
-            actualCheckoutDate: new Date('2026-08-15'),
-            rentRefundableAmount: new Prisma.Decimal('600.00'),
-            items: [
-              {
-                id: 81,
-                itemType: 'RENT_REFUND',
-                amount: new Prisma.Decimal('600.00'),
-              },
-            ],
-            contract: {
-              status: 'PENDING_CHECKOUT',
-              room: { id: 7 },
-              bills: [],
+        findUniqueOrThrow: jest.fn().mockResolvedValueOnce({
+          id: 9,
+          contractId: 4,
+          status: 'PENDING',
+          actualCheckoutDate: new Date('2026-08-15'),
+          rentRefundableAmount: new Prisma.Decimal('600.00'),
+          items: [
+            {
+              id: 81,
+              itemType: 'RENT_REFUND',
+              amount: new Prisma.Decimal('600.00'),
             },
-          }),
+          ],
+          contract: {
+            status: 'PENDING_CHECKOUT',
+            room: { id: 7 },
+            bills: [],
+          },
+        }),
         update: checkoutUpdate,
       },
       checkoutRentRefundAllocation: {
@@ -2233,6 +2297,9 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ contractId: 4 }),
+        },
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
@@ -2243,5 +2310,535 @@ describe('CheckoutService', () => {
       service.approve(9, { ...user, role: 'SUPER_ADMIN' }),
     ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
     expect(checkoutUpdate).not.toHaveBeenCalled();
+  });
+
+  it('re-reads settlement state after the contract lock and rejects a stale pending approval without writes', async () => {
+    const identityLookup = jest.fn().mockResolvedValue({
+      contractId: 4,
+      status: 'PENDING',
+    });
+    const pendingSnapshot = {
+      id: 9,
+      contractId: 4,
+      settlementNo: 'TZ202608300009',
+      status: 'PENDING',
+      actualCheckoutDate: new Date('2026-08-15'),
+      rentRefundableAmount: new Prisma.Decimal('0.00'),
+      items: [],
+      contract: {
+        status: 'PENDING_CHECKOUT',
+        room: { id: 7 },
+        bills: [],
+      },
+    };
+    const transactionRead = jest.fn().mockImplementation(() => {
+      if (identityLookup.mock.calls.length)
+        return Promise.resolve({ ...pendingSnapshot, status: 'REJECTED' });
+      if (transactionRead.mock.calls.length === 1)
+        return Promise.resolve({ contractId: 4 });
+      return Promise.resolve(pendingSnapshot);
+    });
+    const legacyStatusWrite = jest.fn().mockResolvedValue({
+      ...pendingSnapshot,
+      status: 'APPROVED',
+    });
+    const statusCas = jest.fn().mockResolvedValue({ count: 1 });
+    const rentBillUpdate = jest.fn();
+    const rentBillUpdateMany = jest.fn();
+    const depositLedgerWrite = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      checkoutSettlement: {
+        findUniqueOrThrow: transactionRead,
+        update: legacyStatusWrite,
+        updateMany: statusCas,
+      },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      rentBill: {
+        update: rentBillUpdate,
+        updateMany: rentBillUpdateMany,
+        create: jest.fn(),
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: depositLedgerWrite,
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: { findUniqueOrThrow: identityLookup },
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(9, { ...user, role: 'SUPER_ADMIN' }),
+    ).rejects.toThrow('只有待确认结算单可以确认');
+
+    expect(identityLookup).toHaveBeenCalledWith({
+      where: { id: 9 },
+      select: { contractId: true },
+    });
+    const contractLock = tx.$queryRaw.mock.calls.find(([sql]) =>
+      (
+        (sql as { strings?: readonly string[] }).strings?.join('?') ?? ''
+      ).includes('FROM contracts'),
+    )?.[0] as { values?: readonly unknown[] } | undefined;
+    expect(contractLock?.values).toEqual([4]);
+    expect(
+      tx.$queryRaw.mock.invocationCallOrder.find((order, index) => {
+        const sql = tx.$queryRaw.mock.calls[index][0] as {
+          strings?: readonly string[];
+        };
+        return sql.strings?.join('?').includes('FROM contracts');
+      }),
+    ).toBeLessThan(transactionRead.mock.invocationCallOrder[0]);
+    expect(rentBillUpdate).not.toHaveBeenCalled();
+    expect(rentBillUpdateMany).not.toHaveBeenCalled();
+    expect(depositLedgerWrite).not.toHaveBeenCalled();
+    expect(legacyStatusWrite).not.toHaveBeenCalled();
+    expect(statusCas).not.toHaveBeenCalled();
+  });
+
+  it('approves a positive locked rent refund with a pending-status CAS and keeps every reservation reserved', async () => {
+    const identityLookup = jest.fn().mockResolvedValue({ contractId: 4 });
+    const settlement = {
+      id: 9,
+      contractId: 4,
+      settlementNo: 'TZ202608300009',
+      status: 'PENDING',
+      actualCheckoutDate: new Date('2026-08-15'),
+      rentRefundableAmount: new Prisma.Decimal('600.00'),
+      items: [
+        {
+          id: 81,
+          itemType: 'RENT_REFUND',
+          amount: new Prisma.Decimal('600.00'),
+        },
+      ],
+      contract: {
+        status: 'PENDING_CHECKOUT',
+        room: { id: 7 },
+        bills: [],
+      },
+    };
+    const reservations = [
+      {
+        id: 501,
+        paymentAllocationId: 101,
+        paymentId: 11,
+        rentBillId: 21,
+        reservedAmount: new Prisma.Decimal('250.00'),
+        item: {
+          checkoutSettlementId: 9,
+          itemType: 'RENT_REFUND',
+          amount: new Prisma.Decimal('600.00'),
+        },
+        paymentAllocation: { paymentId: 11, rentBillId: 21 },
+      },
+      {
+        id: 502,
+        paymentAllocationId: 102,
+        paymentId: 12,
+        rentBillId: 22,
+        reservedAmount: new Prisma.Decimal('350.00'),
+        item: {
+          checkoutSettlementId: 9,
+          itemType: 'RENT_REFUND',
+          amount: new Prisma.Decimal('600.00'),
+        },
+        paymentAllocation: { paymentId: 12, rentBillId: 22 },
+      },
+    ];
+    const reservationStatusWrite = jest.fn();
+    const statusCas = jest.fn().mockResolvedValue({ count: 1 });
+    const legacyStatusWrite = jest.fn().mockResolvedValue({
+      ...settlement,
+      status: 'APPROVED',
+    });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
+        update: legacyStatusWrite,
+        updateMany: statusCas,
+      },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue(reservations),
+        updateMany: reservationStatusWrite,
+      },
+      rentBill: {
+        update: jest.fn(),
+        updateMany: jest.fn(),
+        create: jest.fn(),
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: { findUniqueOrThrow: identityLookup },
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(9, { ...user, role: 'SUPER_ADMIN' }),
+    ).resolves.toBeDefined();
+
+    expect(statusCas).toHaveBeenCalledWith({
+      where: { id: 9, status: 'PENDING' },
+      data: expect.objectContaining({
+        status: 'APPROVED',
+        rentRefundableAmount: new Prisma.Decimal('600.00'),
+      }),
+    });
+    expect(legacyStatusWrite).not.toHaveBeenCalled();
+    expect(reservationStatusWrite).not.toHaveBeenCalled();
+    expect(reservations.map((item) => item.reservedAmount.toFixed(2))).toEqual([
+      '250.00',
+      '350.00',
+    ]);
+  });
+
+  it('rejects approval with a Chinese conflict when the pending-status CAS claims no settlement', async () => {
+    const settlement = {
+      id: 9,
+      contractId: 4,
+      settlementNo: 'TZ202608300009',
+      status: 'PENDING',
+      actualCheckoutDate: new Date('2026-08-15'),
+      rentRefundableAmount: new Prisma.Decimal('0.00'),
+      items: [],
+      contract: {
+        status: 'PENDING_CHECKOUT',
+        room: { id: 7 },
+        bills: [],
+      },
+    };
+    const statusCas = jest.fn().mockResolvedValue({ count: 0 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(settlement),
+        updateMany: statusCas,
+      },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      rentBill: {
+        update: jest.fn(),
+        updateMany: jest.fn(),
+        create: jest.fn(),
+      },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ contractId: 4 }),
+        },
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(9, { ...user, role: 'SUPER_ADMIN' }),
+    ).rejects.toThrow('退租结算单状态已变化，请刷新后重试');
+    expect(statusCas).toHaveBeenCalledWith({
+      where: { id: 9, status: 'PENDING' },
+      data: expect.objectContaining({ status: 'APPROVED' }),
+    });
+  });
+
+  it('removes a rent refund from the current API without zeroing its historical item and releases reservations', async () => {
+    const historicalItem = {
+      id: 81,
+      checkoutSettlementId: 9,
+      itemType: 'RENT_REFUND',
+      amount: new Prisma.Decimal('100.00'),
+      rentBillId: null,
+      inspectionRecordRef: null,
+      description: '历史退还租金',
+      evidenceRequired: false,
+      confirmedByTenant: false,
+      sortOrder: 0,
+    };
+    const itemUpdate = jest.fn();
+    const settlementUpdate = jest.fn().mockResolvedValue({
+      id: 9,
+      status: 'PENDING',
+      rentRefundableAmount: new Prisma.Decimal('0.00'),
+      items: [historicalItem],
+    });
+    const release = jest.fn().mockResolvedValue({ count: 1 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 9,
+          contractId: 4,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          items: [historicalItem],
+          contract: {
+            id: 4,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+        update: settlementUpdate,
+      },
+      checkoutSettlementItem: {
+        deleteMany: jest.fn(),
+        update: itemUpdate,
+      },
+      checkoutRentRefundAllocation: { updateMany: release },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    const result = await service.submit(
+      9,
+      {
+        actualCheckoutDate: '2026-08-15',
+        handoverDate: '2026-08-15',
+        inspectionAt: '2026-08-15T09:00:00.000Z',
+        targetRoomStatus: 'EMPTY',
+        items: [],
+      } as never,
+      user,
+    );
+
+    expect(result.items).toEqual([]);
+    expect(itemUpdate).not.toHaveBeenCalled();
+    expect(historicalItem).toMatchObject({
+      id: 81,
+      amount: new Prisma.Decimal('100.00'),
+    });
+    expect(settlementUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rentRefundableAmount: new Prisma.Decimal('0.00'),
+          items: { create: [] },
+        }),
+      }),
+    );
+    expect(release).toHaveBeenCalledWith({
+      where: {
+        status: 'RESERVED',
+        item: { checkoutSettlementId: 9 },
+      },
+      data: { status: 'RELEASED', releasedAt: expect.any(Date) },
+    });
+  });
+
+  it('reuses the single historical rent-refund item when a changed amount is submitted again', async () => {
+    const historicalItem = {
+      id: 81,
+      checkoutSettlementId: 9,
+      itemType: 'RENT_REFUND',
+      amount: new Prisma.Decimal('100.00'),
+      rentBillId: null,
+      inspectionRecordRef: null,
+      description: '历史退还租金',
+      evidenceRequired: false,
+      confirmedByTenant: false,
+      sortOrder: 0,
+    };
+    const changedItem = {
+      ...historicalItem,
+      amount: new Prisma.Decimal('200.00'),
+      description: '再次申请退还租金',
+    };
+    const itemUpdate = jest.fn().mockResolvedValue(changedItem);
+    const settlementUpdate = jest.fn().mockResolvedValue({
+      id: 9,
+      status: 'PENDING',
+      rentRefundableAmount: new Prisma.Decimal('200.00'),
+      items: [changedItem],
+    });
+    const reserveCreateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 9,
+          contractId: 4,
+          status: 'DRAFT',
+          originContractStatus: 'ACTIVE',
+          items: [historicalItem],
+          contract: {
+            id: 4,
+            status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            bills: [],
+          },
+        }),
+        update: settlementUpdate,
+      },
+      checkoutSettlementItem: {
+        deleteMany: jest.fn(),
+        update: itemUpdate,
+      },
+      paymentAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 101,
+            paymentId: 11,
+            rentBillId: 21,
+            allocatedAmount: new Prisma.Decimal('300.00'),
+            reversedAmount: new Prisma.Decimal('0.00'),
+            payment: {
+              paymentDate: new Date('2026-08-05'),
+              voidRequests: [],
+            },
+            rentBill: {
+              billNo: 'ZJ2026080001',
+              periodStart: new Date('2026-08-01'),
+              periodEnd: new Date('2026-08-31'),
+            },
+            refundAllocations: [],
+            checkoutRentRefundAllocations: [],
+          },
+        ]),
+      },
+      checkoutRentRefundAllocation: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        createMany: reserveCreateMany,
+      },
+    };
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    const result = await service.submit(
+      9,
+      {
+        actualCheckoutDate: '2026-08-15',
+        handoverDate: '2026-08-15',
+        inspectionAt: '2026-08-15T09:00:00.000Z',
+        targetRoomStatus: 'EMPTY',
+        items: [
+          {
+            itemType: 'RENT_REFUND',
+            amount: '200.00',
+            description: '再次申请退还租金',
+          },
+        ],
+      } as never,
+      user,
+    );
+
+    expect(itemUpdate).toHaveBeenCalledWith({
+      where: { id: 81 },
+      data: expect.objectContaining({
+        amount: new Prisma.Decimal('200.00'),
+        description: '再次申请退还租金',
+      }),
+    });
+    expect(settlementUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ items: { create: [] } }),
+      }),
+    );
+    expect(reserveCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          checkoutSettlementItemId: 81,
+          reservedAmount: new Prisma.Decimal('200.00'),
+          status: 'RESERVED',
+        }),
+      ],
+    });
+    expect(result.items).toEqual([changedItem]);
+  });
+
+  it('hides a historical rent-refund item from detail when the locked amount is zero and no active reservation remains', async () => {
+    const findUniqueOrThrow = jest.fn().mockResolvedValue({
+      id: 9,
+      rentReceivable: new Prisma.Decimal('0.00'),
+      rentReceived: new Prisma.Decimal('0.00'),
+      rentOutstanding: new Prisma.Decimal('0.00'),
+      prepaymentBalance: new Prisma.Decimal('0.00'),
+      depositBalance: new Prisma.Decimal('0.00'),
+      depositOffsetAmount: new Prisma.Decimal('0.00'),
+      otherDeductionAmount: new Prisma.Decimal('0.00'),
+      depositRefundableAmount: new Prisma.Decimal('0.00'),
+      prepaymentRefundableAmount: new Prisma.Decimal('0.00'),
+      rentRefundableAmount: new Prisma.Decimal('0.00'),
+      finalReceivable: new Prisma.Decimal('0.00'),
+      supplementalRequired: false,
+      supplementalArrearsAmount: new Prisma.Decimal('0.00'),
+      supplementalInspectionAmount: new Prisma.Decimal('0.00'),
+      supplementalReceivedAmount: new Prisma.Decimal('0.00'),
+      supplementalOutstandingAmount: new Prisma.Decimal('0.00'),
+      supplementalCollectedAt: null,
+      contract: { id: 4, room: { id: 7, roomNo: '301' } },
+      items: [
+        {
+          id: 81,
+          itemType: 'RENT_REFUND',
+          amount: new Prisma.Decimal('100.00'),
+          checkoutRentRefundAllocations: [],
+        },
+      ],
+      depositRefunds: [],
+    });
+    const service = new CheckoutService({
+      db: { checkoutSettlement: { findUniqueOrThrow } },
+    } as never);
+
+    await expect(service.getDetail(9)).resolves.toMatchObject({
+      id: 9,
+      rentRefundableAmount: '0.00',
+      items: [],
+    });
+    expect(findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: 9 },
+      include: expect.objectContaining({
+        items: {
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            checkoutRentRefundAllocations: {
+              where: { status: 'RESERVED' },
+              select: { id: true },
+            },
+          },
+        },
+      }),
+    });
   });
 });

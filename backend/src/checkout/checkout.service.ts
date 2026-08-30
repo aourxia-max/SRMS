@@ -220,7 +220,15 @@ export class CheckoutService {
         where: { id },
         include: {
           contract: { include: { room: true } },
-          items: { orderBy: { sortOrder: 'asc' } },
+          items: {
+            orderBy: { sortOrder: 'asc' },
+            include: {
+              checkoutRentRefundAllocations: {
+                where: { status: 'RESERVED' },
+                select: { id: true },
+              },
+            },
+          },
           depositRefunds: {
             select: {
               id: true,
@@ -265,10 +273,22 @@ export class CheckoutService {
         settlement.supplementalOutstandingAmount,
       ),
       supplementalCollectedAt: settlement.supplementalCollectedAt,
-      items: settlement.items.map((item) => ({
-        ...item,
-        amount: this.money(item.amount),
-      })),
+      items: settlement.items
+        .filter(
+          (item) =>
+            !(
+              item.itemType === 'RENT_REFUND' &&
+              new Prisma.Decimal(settlement.rentRefundableAmount).isZero() &&
+              item.checkoutRentRefundAllocations.length === 0
+            ),
+        )
+        .map(({ checkoutRentRefundAllocations, ...item }) => {
+          void checkoutRentRefundAllocations;
+          return {
+            ...item,
+            amount: this.money(item.amount),
+          };
+        }),
       depositRefunds: settlement.depositRefunds.map((refund) => ({
         ...refund,
         refundAmount: this.money(refund.refundAmount),
@@ -518,28 +538,18 @@ export class CheckoutService {
             : {}),
         },
       });
-      if (existingRentRefundItem) {
+      if (existingRentRefundItem && rentRefundItem) {
         await tx.checkoutSettlementItem.update({
           where: { id: existingRentRefundItem.id },
-          data: rentRefundItem
-            ? {
-                amount: new Prisma.Decimal(rentRefundItem.amount),
-                rentBillId: null,
-                inspectionRecordRef: null,
-                description: rentRefundItem.description,
-                evidenceRequired: rentRefundItem.evidenceRequired ?? false,
-                confirmedByTenant: rentRefundItem.confirmedByTenant ?? false,
-                sortOrder: dto.items.indexOf(rentRefundItem),
-              }
-            : {
-                amount: new Prisma.Decimal(0),
-                rentBillId: null,
-                inspectionRecordRef: null,
-                description: '当前提交未申请退还租金',
-                evidenceRequired: false,
-                confirmedByTenant: false,
-                sortOrder: dto.items.length,
-              },
+          data: {
+            amount: new Prisma.Decimal(rentRefundItem.amount),
+            rentBillId: null,
+            inspectionRecordRef: null,
+            description: rentRefundItem.description,
+            evidenceRequired: rentRefundItem.evidenceRequired ?? false,
+            confirmedByTenant: rentRefundItem.confirmedByTenant ?? false,
+            sortOrder: dto.items.indexOf(rentRefundItem),
+          },
         });
       }
       const itemsToCreate = existingRentRefundItem
@@ -583,15 +593,22 @@ export class CheckoutService {
       } else {
         await releaseCheckoutRentRefund(tx, id, '重新提交未申请退还租金');
       }
-      return updated;
+      return rentRefundItem
+        ? updated
+        : {
+            ...updated,
+            items: updated.items.filter(
+              (item) => item.itemType !== 'RENT_REFUND',
+            ),
+          };
     });
   }
   async approve(id: number, user: AuthUser) {
+    const identity = await this.prisma.db.checkoutSettlement.findUniqueOrThrow({
+      where: { id },
+      select: { contractId: true },
+    });
     return this.prisma.db.$transaction(async (tx) => {
-      const identity = await tx.checkoutSettlement.findUniqueOrThrow({
-        where: { id },
-        select: { contractId: true },
-      });
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
       );
@@ -775,8 +792,8 @@ export class CheckoutService {
         },
         data: { status: 'VOIDED', outstandingAmount: 0 },
       });
-      const updated = await tx.checkoutSettlement.update({
-        where: { id },
+      const claimed = await tx.checkoutSettlement.updateMany({
+        where: { id, status: 'PENDING' },
         data: {
           rentReceivable: eligibleBills.reduce(
             (sum, bill) => sum.plus(bill.payableAmount),
@@ -815,7 +832,9 @@ export class CheckoutService {
           approvedAt: new Date(),
         },
       });
-      return updated;
+      if (claimed.count !== 1)
+        throw new ConflictException('退租结算单状态已变化，请刷新后重试');
+      return tx.checkoutSettlement.findUniqueOrThrow({ where: { id } });
     });
   }
   async completeZeroRefund(id: number, user: AuthUser) {
