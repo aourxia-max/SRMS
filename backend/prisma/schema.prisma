@@ -202,6 +202,7 @@ enum PaymentAllocationType {
   AUTO_OLDEST_FIRST
   MANUAL_SUPER_ADMIN
   PREPAYMENT_AUTO
+  RENT_REFUND
 }
 
 enum RefundAdjustmentDecision {
@@ -224,6 +225,7 @@ enum BillAdjustmentType {
   WAIVER
   INCREASE
   CORRECTION
+  CHECKOUT_RENT_REFUND
 }
 
 enum AdjustmentDirection {
@@ -271,6 +273,12 @@ enum CheckoutSettlementItemType {
   REPAIR
   CLEANING
   OTHER
+}
+
+enum CheckoutRentRefundAllocationStatus {
+  RESERVED
+  RELEASED
+  APPLIED
 }
 
 enum SettingValueType {
@@ -878,8 +886,9 @@ model RentBill {
   adjustments             BillAdjustment[]
   pricingRebates          PricingRebate[]
   depositTransactions     DepositTransaction[]
-  checkoutSettlementItems CheckoutSettlementItem[]
-  checkoutSettlement      CheckoutSettlement?      @relation("CheckoutSupplementalRentBill", fields: [checkoutSettlementId], references: [id], onDelete: Restrict)
+  checkoutSettlementItems       CheckoutSettlementItem[]
+  checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
+  checkoutSettlement            CheckoutSettlement?      @relation("CheckoutSupplementalRentBill", fields: [checkoutSettlementId], references: [id], onDelete: Restrict)
 
   @@unique([contractId, periodSeq])
   @@index([dueDate, status])
@@ -910,7 +919,8 @@ model Payment {
   refunds                PaymentRefund[]
   voidRequests           PaymentVoidRequest[]
   depositTransactions    DepositTransaction[]
-  paymentFiles           PaymentFile[]
+  paymentFiles                 PaymentFile[]
+  checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
 
   @@index([contractId, paymentDate, status])
   @@map("payments")
@@ -997,11 +1007,37 @@ model PaymentAllocation {
   allocatedAt       DateTime                  @default(now()) @map("allocated_at") @db.DateTime(3)
   payment           Payment                   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   rentBill          RentBill                  @relation(fields: [rentBillId], references: [id], onDelete: Restrict)
-  refundAllocations PaymentRefundAllocation[]
+  refundAllocations             PaymentRefundAllocation[]
+  checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
 
   @@index([paymentId])
   @@index([rentBillId])
   @@map("payment_allocations")
+}
+
+
+model CheckoutRentRefundAllocation {
+  id                       Int                                @id @default(autoincrement()) @db.UnsignedInt
+  checkoutSettlementItemId Int                                @map("checkout_settlement_item_id") @db.UnsignedInt
+  paymentAllocationId      Int                                @map("payment_allocation_id") @db.UnsignedInt
+  paymentId                Int                                @map("payment_id") @db.UnsignedInt
+  rentBillId               Int                                @map("rent_bill_id") @db.UnsignedInt
+  reservedAmount           Decimal                            @map("reserved_amount") @db.Decimal(14, 2)
+  status                   CheckoutRentRefundAllocationStatus @default(RESERVED)
+  reservedAt               DateTime                           @default(now()) @map("reserved_at") @db.DateTime(3)
+  releasedAt               DateTime?                          @map("released_at") @db.DateTime(3)
+  appliedAt                DateTime?                          @map("applied_at") @db.DateTime(3)
+  depositRefundId          Int?                               @map("deposit_refund_id") @db.UnsignedInt
+  item                     CheckoutSettlementItem             @relation(fields: [checkoutSettlementItemId], references: [id], onDelete: Restrict)
+  paymentAllocation        PaymentAllocation                  @relation(fields: [paymentAllocationId], references: [id], onDelete: Restrict)
+  payment                  Payment                            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  rentBill                 RentBill                           @relation(fields: [rentBillId], references: [id], onDelete: Restrict)
+  depositRefund            DepositRefund?                     @relation(fields: [depositRefundId], references: [id], onDelete: Restrict)
+
+  @@index([checkoutSettlementItemId, status])
+  @@index([paymentAllocationId, status])
+  @@index([depositRefundId])
+  @@map("checkout_rent_refund_allocations")
 }
 
 model PaymentFile {
@@ -1117,6 +1153,7 @@ model CheckoutSettlement {
   otherDeductionAmount          Decimal                  @default(0) @map("other_deduction_amount") @db.Decimal(14, 2)
   depositRefundableAmount       Decimal                  @default(0) @map("deposit_refundable_amount") @db.Decimal(14, 2)
   prepaymentRefundableAmount    Decimal                  @default(0) @map("prepayment_refundable_amount") @db.Decimal(14, 2)
+  rentRefundableAmount          Decimal                  @default(0) @map("rent_refundable_amount") @db.Decimal(14, 2)
   finalReceivable               Decimal                  @default(0) @map("final_receivable") @db.Decimal(14, 2)
   supplementalRequired          Boolean                  @default(false) @map("supplemental_required")
   supplementalArrearsAmount     Decimal                  @default(0) @map("supplemental_arrears_amount") @db.Decimal(14, 2)
@@ -1155,7 +1192,8 @@ model CheckoutSettlementItem {
   sortOrder            Int                          @default(0) @map("sort_order")
   settlement           CheckoutSettlement           @relation(fields: [checkoutSettlementId], references: [id], onDelete: Restrict)
   rentBill             RentBill?                    @relation(fields: [rentBillId], references: [id], onDelete: Restrict)
-  files                CheckoutSettlementItemFile[]
+  files                        CheckoutSettlementItemFile[]
+  checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
 
   @@index([checkoutSettlementId, sortOrder])
   @@map("checkout_settlement_items")
@@ -1177,7 +1215,10 @@ model DepositRefund {
   refundNo             String               @unique @map("refund_no") @db.VarChar(40)
   contractId           Int                  @map("contract_id") @db.UnsignedInt
   checkoutSettlementId Int                  @map("checkout_settlement_id") @db.UnsignedInt
-  refundAmount         Decimal              @map("refund_amount") @db.Decimal(14, 2)
+  refundAmount           Decimal              @map("refund_amount") @db.Decimal(14, 2)
+  depositRefundAmount    Decimal              @default(0) @map("deposit_refund_amount") @db.Decimal(14, 2)
+  prepaymentRefundAmount Decimal              @default(0) @map("prepayment_refund_amount") @db.Decimal(14, 2)
+  rentRefundAmount       Decimal              @default(0) @map("rent_refund_amount") @db.Decimal(14, 2)
   refundDate           DateTime             @map("refund_date") @db.Date
   refundMethod         PaymentMethod        @map("refund_method")
   remark               String?              @db.VarChar(1000)
@@ -1190,7 +1231,8 @@ model DepositRefund {
   contract             Contract             @relation(fields: [contractId], references: [id], onDelete: Restrict)
   checkoutSettlement   CheckoutSettlement   @relation(fields: [checkoutSettlementId], references: [id], onDelete: Restrict)
   transactions         DepositTransaction[]
-  files                DepositRefundFile[]
+  files                        DepositRefundFile[]
+  checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
 
   @@index([contractId, approvalStatus])
   @@index([checkoutSettlementId, approvalStatus])
