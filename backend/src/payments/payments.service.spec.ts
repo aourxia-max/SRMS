@@ -1,4 +1,9 @@
-import { BillAdjustmentType, PaymentMethod, UserRole } from '@prisma/client';
+import {
+  BillAdjustmentType,
+  PaymentMethod,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
 import { PaymentsService } from './payments.service';
 
 function expectContractMutationOrder(
@@ -689,6 +694,79 @@ describe('PaymentsService payment views', () => {
     expect(result.files[0].sizeBytes).toBe('16');
   });
 
+  it('returns applied checkout rent refunds as a separate completed detail section', async () => {
+    const service = new PaymentsService({
+      db: {
+        payment: {
+          findUnique: jest.fn().mockResolvedValue({
+            ...payment,
+            checkoutRentRefundAllocations: [
+              {
+                id: 701,
+                reservedAmount: new Prisma.Decimal('1000.00'),
+                status: 'APPLIED',
+                appliedAt: new Date('2026-08-30T04:00:00.000Z'),
+                item: {
+                  checkoutSettlementId: 91,
+                  settlement: { settlementNo: 'TZ202608300001' },
+                },
+                depositRefund: {
+                  id: 33,
+                  refundNo: 'YJTK202608300033',
+                  refundDate: new Date('2026-08-30T00:00:00.000Z'),
+                  refundMethod: 'BANK_TRANSFER',
+                  approvalStatus: 'APPROVED',
+                  files: [
+                    {
+                      fileAsset: {
+                        id: 77,
+                        originalName: 'checkout-refund.webp',
+                        mimeType: 'image/webp',
+                        sizeBytes: 32n,
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        },
+        contractVoidReversal: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        user: { findUnique: jest.fn().mockResolvedValue(null) },
+        operationLog: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const result = await service.detail(81, admin);
+
+    expect(result.checkoutRentRefunds).toEqual([
+      {
+        id: 701,
+        checkoutSettlementId: 91,
+        settlementNo: 'TZ202608300001',
+        amount: '1000.00',
+        status: 'APPLIED',
+        statusText: '已完成',
+        appliedAt: new Date('2026-08-30T04:00:00.000Z'),
+        depositRefund: {
+          id: 33,
+          refundNo: 'YJTK202608300033',
+          refundDate: new Date('2026-08-30T00:00:00.000Z'),
+          refundMethod: 'BANK_TRANSFER',
+          proofFiles: [
+            {
+              id: 77,
+              originalName: 'checkout-refund.webp',
+              mimeType: 'image/webp',
+              sizeBytes: '32',
+            },
+          ],
+        },
+      },
+    ]);
+  });
   it('masks tenant identity for a visitor', async () => {
     const service = new PaymentsService({
       db: {

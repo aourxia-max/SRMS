@@ -281,6 +281,70 @@ describe('contract void impact', () => {
     ]);
   });
 
+  it('includes applied checkout rent refunds once in the contract cash impact', () => {
+    const impact = computeContractVoidImpact(
+      inputFixture({
+        refunds: [
+          {
+            id: 41,
+            paymentId: 21,
+            approvalStatus: 'APPROVED',
+            amount: '500.00',
+          },
+        ],
+        checkoutRentRefunds: [
+          {
+            id: 501,
+            checkoutSettlementItemId: 801,
+            paymentAllocationId: 101,
+            paymentId: 21,
+            rentBillId: 11,
+            depositRefundId: 33,
+            status: 'APPLIED',
+            amount: '1000.00',
+            occurredAt: '2026-08-30T04:00:00.000Z',
+          },
+          {
+            id: 502,
+            checkoutSettlementItemId: 802,
+            paymentAllocationId: 102,
+            paymentId: 21,
+            rentBillId: 11,
+            depositRefundId: null,
+            status: 'RELEASED',
+            amount: '300.00',
+          },
+        ],
+      }),
+    );
+
+    expect(impact.summary).toMatchObject({
+      effectivePayment: '1500.00',
+      refundNet: '1500.00',
+      currentNetImpact: '2500.00',
+    });
+    expect(
+      impact.rows.filter(
+        (row) => row.originalEntityType === 'CheckoutRentRefundAllocation',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        category: 'REFUND',
+        originalEntityId: 501,
+        amount: '1000.00',
+        balanceBefore: '-1000.00',
+        originalOccurredAt: '2026-08-30T04:00:00.000Z',
+        metadata: expect.objectContaining({
+          paymentId: 21,
+          paymentAllocationId: 101,
+          rentBillId: 11,
+          checkoutSettlementItemId: 801,
+          depositRefundId: 33,
+        }),
+      }),
+    ]);
+    assertBalancedContractVoidImpact(impact);
+  });
   it('exposes informational workflow, checkout, later-contract, and room-state effects', () => {
     const impact = computeContractVoidImpact(
       inputFixture({

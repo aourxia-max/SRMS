@@ -67,7 +67,6 @@ export class FinanceService {
       ),
     };
   }
-
   async rentCollection(from?: string, to?: string) {
     const bills = await this.prisma.db.rentBill.findMany({
       where: {
@@ -170,43 +169,50 @@ export class FinanceService {
     )
       .map((item) => item.originalEntityId)
       .filter((id): id is number => id !== null);
-    const [payments, refunds, deposits, reversals] = await Promise.all([
-      this.prisma.db.payment.findMany({
-        where: {
-          OR: [
-            { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
-            { id: { in: terminalPaymentIds } },
-          ],
-          ...(date ? { paymentDate: date } : {}),
-        },
-      }),
-      this.prisma.db.paymentRefund.findMany({
-        where: {
-          approvalStatus: 'APPROVED',
-          ...(date ? { refundDate: date } : {}),
-        },
-      }),
-      this.prisma.db.depositTransaction.findMany({
-        where: date ? { occurredAt: date } : {},
-      }),
-      this.prisma.db.contractVoidReversal.findMany({
-        where: {
-          category: { in: financialReversalCategories },
-          balanceBefore: { not: null },
-          balanceAfter: { not: null },
-          ...(date ? { correctionOccurredAt: date } : {}),
-        },
-        include: {
-          request: {
-            select: {
-              requestNo: true,
-              contract: { select: { contractNo: true } },
+    const [payments, refunds, checkoutRefunds, deposits, reversals] =
+      await Promise.all([
+        this.prisma.db.payment.findMany({
+          where: {
+            OR: [
+              { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+              { id: { in: terminalPaymentIds } },
+            ],
+            ...(date ? { paymentDate: date } : {}),
+          },
+        }),
+        this.prisma.db.paymentRefund.findMany({
+          where: {
+            approvalStatus: 'APPROVED',
+            ...(date ? { refundDate: date } : {}),
+          },
+        }),
+        this.prisma.db.depositRefund.findMany({
+          where: {
+            approvalStatus: 'APPROVED',
+            ...(date ? { refundDate: date } : {}),
+          },
+        }),
+        this.prisma.db.depositTransaction.findMany({
+          where: date ? { occurredAt: date } : {},
+        }),
+        this.prisma.db.contractVoidReversal.findMany({
+          where: {
+            category: { in: financialReversalCategories },
+            balanceBefore: { not: null },
+            balanceAfter: { not: null },
+            ...(date ? { correctionOccurredAt: date } : {}),
+          },
+          include: {
+            request: {
+              select: {
+                requestNo: true,
+                contract: { select: { contractNo: true } },
+              },
             },
           },
-        },
-        orderBy: [{ correctionOccurredAt: 'desc' }, { id: 'desc' }],
-      }),
-    ]);
+          orderBy: [{ correctionOccurredAt: 'desc' }, { id: 'desc' }],
+        }),
+      ]);
     const flows: CashFlowRow[] = [
       ...payments.map((item) => ({
         date: item.paymentDate,
@@ -249,6 +255,23 @@ export class FinanceService {
         correctionOccurredAt: null,
         originalOccurredAt: item.refundDate,
         source: source('PaymentRefund', item.id),
+        generatedSource: null,
+      })),
+      ...checkoutRefunds.map((item) => ({
+        date: item.refundDate,
+        flowType: 'CHECKOUT_COMBINED_REFUND',
+        type: `退租合并退款（押金 ¥${new Prisma.Decimal(item.depositRefundAmount).toFixed(2)}、预收款 ¥${new Prisma.Decimal(item.prepaymentRefundAmount).toFixed(2)}、租金 ¥${new Prisma.Decimal(item.rentRefundAmount).toFixed(2)}）`,
+        category: null,
+        amount: item.refundAmount,
+        direction: 'OUT' as const,
+        external: true,
+        countsAsRentReceipt: false,
+        reference: item.refundNo,
+        requestNo: null,
+        contractNo: null,
+        correctionOccurredAt: null,
+        originalOccurredAt: item.refundDate,
+        source: source('DepositRefund', item.id),
         generatedSource: null,
       })),
       ...deposits

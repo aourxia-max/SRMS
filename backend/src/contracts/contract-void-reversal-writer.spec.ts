@@ -433,6 +433,92 @@ describe('ContractVoidReversalWriter', () => {
     );
   });
 
+  it('keeps checkout refund sources immutable and appends correction traces with splits', async () => {
+    const impact = executionImpact({
+      checkoutRentRefunds: [
+        {
+          id: 501,
+          checkoutSettlementItemId: 801,
+          paymentAllocationId: 61,
+          paymentId: 21,
+          rentBillId: 11,
+          depositRefundId: 95,
+          status: 'APPLIED',
+          amount: '100.00',
+          occurredAt: '2026-07-10T01:00:00.000Z',
+        },
+      ],
+    });
+    impact.sourceSnapshot.adjustments.push({
+      id: 73,
+      rentBillId: 11,
+      adjustmentType: 'CHECKOUT_RENT_REFUND',
+      direction: 'DECREASE',
+      amount: '100.00',
+      beforeAmount: '300.00',
+      afterAmount: '200.00',
+      checkoutSettlementItemId: 801,
+      approvalStatus: 'APPROVED',
+      occurredAt: '2026-07-10T01:00:00.000Z',
+      submittedAt: '2026-07-10T01:00:00.000Z',
+      approvedAt: '2026-07-10T01:00:00.000Z',
+    });
+    impact.sourceSnapshot.approvedDepositRefunds.push({
+      id: 95,
+      refundNo: 'YJTK202607000095',
+      amount: '180.00',
+      depositRefundAmount: '50.00',
+      prepaymentRefundAmount: '30.00',
+      rentRefundAmount: '100.00',
+      refundDate: '2026-07-10T00:00:00.000Z',
+      refundMethod: 'BANK_TRANSFER',
+      checkoutSettlementId: 81,
+      approvedAt: '2026-07-10T01:00:00.000Z',
+      depositTransactionIds: [96],
+    });
+    const { tx, inserted } = txFixture();
+
+    await new ContractVoidReversalWriter().write(
+      tx as never,
+      request,
+      impact,
+      now,
+    );
+
+    expect(inserted()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'REFUND',
+          originalEntityType: 'CheckoutRentRefundAllocation',
+          originalEntityId: 501,
+          metadata: expect.objectContaining({
+            depositRefundId: 95,
+            checkoutSettlementItemId: 801,
+          }),
+        }),
+        expect.objectContaining({
+          category: 'ADJUSTMENT',
+          originalEntityType: 'BillAdjustment',
+          originalEntityId: 73,
+          metadata: expect.objectContaining({
+            adjustmentType: 'CHECKOUT_RENT_REFUND',
+            checkoutSettlementItemId: 801,
+          }),
+        }),
+        expect.objectContaining({
+          category: 'DEPOSIT',
+          originalEntityType: 'DepositRefund',
+          originalEntityId: 95,
+          metadata: expect.objectContaining({
+            depositRefundAmount: '50.00',
+            prepaymentRefundAmount: '30.00',
+            rentRefundAmount: '100.00',
+          }),
+        }),
+      ]),
+    );
+    expect((tx as any).checkoutRentRefundAllocation).toBeUndefined();
+  });
   it('throws and writes no reversal trace when a cancellation count mismatches', async () => {
     const impact = executionImpact({
       pending: {

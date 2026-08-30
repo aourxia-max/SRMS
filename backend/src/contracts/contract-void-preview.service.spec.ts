@@ -270,14 +270,14 @@ describe('ContractVoidPreviewService', () => {
             occurredAt: '2026-08-03T02:00:00.000Z',
           },
         ],
-        adjustments: [
+        adjustments: expect.arrayContaining([
           expect.objectContaining({
             id: 31,
             approvalStatus: 'PENDING',
             amount: '100.00',
             occurredAt: '2026-08-02T01:00:00.000Z',
           }),
-        ],
+        ]),
         rebates: [
           expect.objectContaining({
             id: 91,
@@ -332,6 +332,87 @@ describe('ContractVoidPreviewService', () => {
       },
       orderBy: { id: 'asc' },
       select: { id: true },
+    });
+  });
+  it('snapshots checkout rent allocations, generated adjustments, and combined refund splits', async () => {
+    const fixture = contractFixture() as any;
+    fixture.payments[0].checkoutRentRefundAllocations = [
+      {
+        id: 501,
+        checkoutSettlementItemId: 801,
+        paymentAllocationId: 22,
+        paymentId: 21,
+        rentBillId: 11,
+        reservedAmount: new Prisma.Decimal('1000.00'),
+        status: 'APPLIED',
+        reservedAt: new Date('2026-08-20T01:00:00.000Z'),
+        releasedAt: null,
+        appliedAt: new Date('2026-08-30T04:00:00.000Z'),
+        depositRefundId: 104,
+      },
+    ];
+    fixture.bills[0].adjustments.push({
+      id: 32,
+      rentBillId: 11,
+      adjustmentType: 'CHECKOUT_RENT_REFUND',
+      direction: 'DECREASE',
+      amount: new Prisma.Decimal('1000.00'),
+      beforeAmount: new Prisma.Decimal('3000.00'),
+      afterAmount: new Prisma.Decimal('2000.00'),
+      checkoutSettlementItemId: 801,
+      approvalStatus: 'APPROVED',
+      submittedAt: new Date('2026-08-30T04:00:00.000Z'),
+      approvedAt: new Date('2026-08-30T04:00:00.000Z'),
+    });
+    fixture.checkoutSettlements[0].rentRefundableAmount = new Prisma.Decimal(
+      '1000.00',
+    );
+    Object.assign(fixture.depositRefunds[1], {
+      refundAmount: new Prisma.Decimal('2400.00'),
+      depositRefundAmount: new Prisma.Decimal('1000.00'),
+      prepaymentRefundAmount: new Prisma.Decimal('400.00'),
+      rentRefundAmount: new Prisma.Decimal('1000.00'),
+    });
+    const service = new ContractVoidPreviewService({
+      db: buildDb(fixture),
+    } as never);
+
+    await expect(
+      service.loadInput(buildDb(fixture) as never, 7),
+    ).resolves.toMatchObject({
+      checkoutRentRefunds: expect.arrayContaining([
+        expect.objectContaining({
+          id: 501,
+          paymentId: 21,
+          amount: '1000.00',
+          status: 'APPLIED',
+          depositRefundId: 104,
+        }),
+      ]),
+      sourceSnapshot: {
+        checkoutRentRefundAllocations: expect.arrayContaining([
+          expect.objectContaining({ id: 501, reservedAmount: '1000.00' }),
+        ]),
+        adjustments: expect.arrayContaining([
+          expect.objectContaining({
+            id: 32,
+            adjustmentType: 'CHECKOUT_RENT_REFUND',
+            checkoutSettlementItemId: 801,
+          }),
+        ]),
+        checkoutSettlements: expect.arrayContaining([
+          expect.objectContaining({ id: 101, rentRefundableAmount: '1000.00' }),
+        ]),
+        approvedDepositRefunds: expect.arrayContaining([
+          expect.objectContaining({
+            id: 104,
+            amount: '2400.00',
+            depositRefundAmount: '1000.00',
+            prepaymentRefundAmount: '400.00',
+            rentRefundAmount: '1000.00',
+          }),
+        ]),
+      },
     });
   });
   it('changes the preview hash when a new pending deposit refund appears', async () => {
@@ -420,7 +501,7 @@ describe('ContractVoidPreviewService', () => {
             approvedAt: '2026-08-05T03:00:00.000Z',
           }),
         ],
-        approvedDepositRefunds: [
+        approvedDepositRefunds: expect.arrayContaining([
           expect.objectContaining({
             id: 104,
             refundNo: 'YJTK20260826000104',
@@ -431,7 +512,7 @@ describe('ContractVoidPreviewService', () => {
             approvedAt: '2026-08-08T03:00:00.000Z',
             depositTransactionIds: [73],
           }),
-        ],
+        ]),
       },
     });
   });

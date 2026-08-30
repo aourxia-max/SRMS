@@ -129,6 +129,20 @@ export class PaymentsService {
         prepaymentTransactions: { orderBy: { id: 'asc' } },
         paymentFiles: { include: { fileAsset: true } },
         refunds: { include: { allocations: true }, orderBy: { id: 'desc' } },
+        checkoutRentRefundAllocations: {
+          where: { status: 'APPLIED' },
+          include: {
+            item: {
+              include: {
+                settlement: { select: { id: true, settlementNo: true } },
+              },
+            },
+            depositRefund: {
+              include: { files: { include: { fileAsset: true } } },
+            },
+          },
+          orderBy: { id: 'desc' },
+        },
         voidRequests: { orderBy: { id: 'desc' } },
       },
     });
@@ -273,6 +287,31 @@ export class PaymentsService {
           reversedAmount: this.money(allocation.reversedAmount),
         })),
       })),
+      checkoutRentRefunds: (payment.checkoutRentRefundAllocations ?? []).map(
+        (item) => ({
+          id: item.id,
+          checkoutSettlementId: item.item.checkoutSettlementId,
+          settlementNo: item.item.settlement.settlementNo,
+          amount: this.money(item.reservedAmount),
+          status: item.status,
+          statusText: '已完成',
+          appliedAt: item.appliedAt,
+          depositRefund: item.depositRefund
+            ? {
+                id: item.depositRefund.id,
+                refundNo: item.depositRefund.refundNo,
+                refundDate: item.depositRefund.refundDate,
+                refundMethod: item.depositRefund.refundMethod,
+                proofFiles: item.depositRefund.files.map(({ fileAsset }) => ({
+                  id: fileAsset.id,
+                  originalName: fileAsset.originalName,
+                  mimeType: fileAsset.mimeType,
+                  sizeBytes: fileAsset.sizeBytes.toString(),
+                })),
+              }
+            : null,
+        }),
+      ),
       voidRequests: payment.voidRequests,
       operationLogs,
       receipt: {

@@ -35,6 +35,7 @@ describe('FinanceService rent collection category isolation', () => {
           ]),
         },
         paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
       },
@@ -135,6 +136,7 @@ describe('FinanceService rent collection category isolation', () => {
       db: {
         payment: { findMany: paymentFindMany },
         paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: contractVoidReversalFindMany },
       },
@@ -199,6 +201,60 @@ describe('FinanceService rent collection category isolation', () => {
       type: '\u79df\u91d1\u6536\u6b3e',
       reference: 'SK-31',
       countsAsRentReceipt: false,
+    });
+  });
+
+  it('reports one combined checkout refund outflow with all three splits', async () => {
+    const refundDate = new Date('2026-08-30T00:00:00.000Z');
+    const depositRefundFindMany = jest.fn().mockResolvedValue([
+      {
+        id: 33,
+        refundNo: 'YJTK202608300033',
+        refundDate,
+        refundAmount: new Prisma.Decimal('10500.00'),
+        depositRefundAmount: new Prisma.Decimal('7500.00'),
+        prepaymentRefundAmount: new Prisma.Decimal('1000.00'),
+        rentRefundAmount: new Prisma.Decimal('2000.00'),
+      },
+    ]);
+    const service = new FinanceService({
+      db: {
+        payment: { findMany: jest.fn().mockResolvedValue([]) },
+        paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: depositRefundFindMany },
+        depositTransaction: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 401,
+              transactionType: 'REFUND',
+              occurredAt: refundDate,
+              amount: new Prisma.Decimal('7500.00'),
+              transactionNo: 'YJTK202608300033-DEPOSIT',
+            },
+          ]),
+        },
+        contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const report = await service.cashFlows();
+    const combined = report.flows.filter(
+      (item) => item.flowType === 'CHECKOUT_COMBINED_REFUND',
+    );
+
+    expect(combined).toHaveLength(1);
+    expect(combined[0]).toMatchObject({
+      type: '退租合并退款（押金 ¥7500.00、预收款 ¥1000.00、租金 ¥2000.00）',
+      amount: new Prisma.Decimal('10500.00'),
+      direction: 'OUT',
+      external: true,
+      reference: 'YJTK202608300033',
+      source: { entityType: 'DepositRefund', entityId: 33 },
+    });
+    expect(report.outflow.toFixed(2)).toBe('10500.00');
+    expect(report.flows).toHaveLength(1);
+    expect(depositRefundFindMany).toHaveBeenCalledWith({
+      where: { approvalStatus: 'APPROVED' },
     });
   });
 });

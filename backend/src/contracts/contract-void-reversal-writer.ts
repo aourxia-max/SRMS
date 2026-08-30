@@ -305,6 +305,9 @@ export class ContractVoidReversalWriter {
           correctionOccurredAt: now,
           metadata: {
             rentBillId: adjustment.rentBillId,
+            adjustmentType: adjustment.adjustmentType,
+            checkoutSettlementItemId:
+              adjustment.checkoutSettlementItemId ?? null,
             direction: adjustment.direction,
             amount: adjustment.amount,
             beforeAmount: adjustment.beforeAmount,
@@ -392,6 +395,9 @@ export class ContractVoidReversalWriter {
           metadata: {
             refundNo: refund.refundNo,
             amount: refund.amount,
+            depositRefundAmount: refund.depositRefundAmount ?? '0.00',
+            prepaymentRefundAmount: refund.prepaymentRefundAmount ?? '0.00',
+            rentRefundAmount: refund.rentRefundAmount ?? '0.00',
             refundDate: refund.refundDate,
             refundMethod: refund.refundMethod,
             checkoutSettlementId: refund.checkoutSettlementId,

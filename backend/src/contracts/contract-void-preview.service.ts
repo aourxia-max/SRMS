@@ -45,6 +45,17 @@ type ContractVoidSourceSnapshot = {
     allocationType: string;
     occurredAt: string;
   }>;
+  checkoutRentRefundAllocations?: Array<{
+    id: number;
+    checkoutSettlementItemId: number;
+    paymentAllocationId: number;
+    paymentId: number;
+    rentBillId: number;
+    depositRefundId: number | null;
+    status: string;
+    reservedAmount: string;
+    occurredAt: string | null;
+  }>;
   adjustments: Array<{
     id: number;
     rentBillId: number;
@@ -57,6 +68,7 @@ type ContractVoidSourceSnapshot = {
     occurredAt: string;
     submittedAt: string;
     approvedAt: string | null;
+    checkoutSettlementItemId?: number | null;
   }>;
   rebates: Array<{
     id: number;
@@ -92,6 +104,7 @@ type ContractVoidSourceSnapshot = {
     otherDeductionAmount: string;
     depositRefundableAmount: string;
     prepaymentRefundableAmount: string;
+    rentRefundableAmount?: string;
     finalReceivable: string;
     supplementalArrearsAmount: string;
     supplementalInspectionAmount: string;
@@ -123,6 +136,9 @@ type ContractVoidSourceSnapshot = {
     id: number;
     refundNo: string;
     amount: string;
+    depositRefundAmount?: string;
+    prepaymentRefundAmount?: string;
+    rentRefundAmount?: string;
     refundDate: string;
     refundMethod: string;
     checkoutSettlementId: number;
@@ -223,6 +239,7 @@ export class ContractVoidPreviewService {
                 approvalStatus: true,
                 submittedAt: true,
                 approvedAt: true,
+                checkoutSettlementItemId: true,
               },
             },
           },
@@ -242,6 +259,19 @@ export class ContractVoidPreviewService {
                 reversedAmount: true,
                 allocationType: true,
                 allocatedAt: true,
+              },
+            },
+            checkoutRentRefundAllocations: {
+              select: {
+                id: true,
+                checkoutSettlementItemId: true,
+                paymentAllocationId: true,
+                paymentId: true,
+                rentBillId: true,
+                depositRefundId: true,
+                status: true,
+                reservedAmount: true,
+                appliedAt: true,
               },
             },
             prepaymentTransactions: {
@@ -343,6 +373,7 @@ export class ContractVoidPreviewService {
             supplementalOutstandingAmount: true,
             actualCheckoutDate: true,
             approvedAt: true,
+            rentRefundableAmount: true,
           },
         },
         depositRefunds: {
@@ -351,6 +382,9 @@ export class ContractVoidPreviewService {
             refundNo: true,
             checkoutSettlementId: true,
             refundAmount: true,
+            depositRefundAmount: true,
+            prepaymentRefundAmount: true,
+            rentRefundAmount: true,
             refundDate: true,
             refundMethod: true,
             approvalStatus: true,
@@ -387,6 +421,11 @@ export class ContractVoidPreviewService {
     });
     const paymentAllocations = sortById(
       contract.payments.flatMap((payment) => payment.allocations),
+    );
+    const checkoutRentRefunds = sortById(
+      contract.payments.flatMap(
+        (payment) => payment.checkoutRentRefundAllocations ?? [],
+      ),
     );
     const adjustments = sortById(
       contract.bills.flatMap((bill) => bill.adjustments),
@@ -447,6 +486,17 @@ export class ContractVoidPreviewService {
         approvalStatus: refund.approvalStatus,
         amount: money(refund.refundAmount),
         occurredAt: refund.refundDate.toISOString(),
+      })),
+      checkoutRentRefunds: checkoutRentRefunds.map((refund) => ({
+        id: refund.id,
+        checkoutSettlementItemId: refund.checkoutSettlementItemId,
+        paymentAllocationId: refund.paymentAllocationId,
+        paymentId: refund.paymentId,
+        rentBillId: refund.rentBillId,
+        depositRefundId: refund.depositRefundId,
+        status: refund.status,
+        amount: money(refund.reservedAmount),
+        occurredAt: dateText(refund.appliedAt),
       })),
       prepaymentBalance: money(
         contract.prepaymentTransactions[0]?.balanceAfter ?? zero,
@@ -549,6 +599,17 @@ export class ContractVoidPreviewService {
           allocationType: allocation.allocationType,
           occurredAt: allocation.allocatedAt.toISOString(),
         })),
+        checkoutRentRefundAllocations: checkoutRentRefunds.map((refund) => ({
+          id: refund.id,
+          checkoutSettlementItemId: refund.checkoutSettlementItemId,
+          paymentAllocationId: refund.paymentAllocationId,
+          paymentId: refund.paymentId,
+          rentBillId: refund.rentBillId,
+          depositRefundId: refund.depositRefundId,
+          status: refund.status,
+          reservedAmount: money(refund.reservedAmount),
+          occurredAt: dateText(refund.appliedAt),
+        })),
         adjustments: adjustments.map((adjustment) => ({
           id: adjustment.id,
           rentBillId: adjustment.rentBillId,
@@ -563,6 +624,7 @@ export class ContractVoidPreviewService {
           ).toISOString(),
           submittedAt: adjustment.submittedAt.toISOString(),
           approvedAt: dateText(adjustment.approvedAt),
+          checkoutSettlementItemId: adjustment.checkoutSettlementItemId,
         })),
         rebates: sortById(contract.pricingRebates).map((rebate) => ({
           id: rebate.id,
@@ -601,6 +663,7 @@ export class ContractVoidPreviewService {
             prepaymentRefundableAmount: money(
               checkout.prepaymentRefundableAmount,
             ),
+            rentRefundableAmount: money(checkout.rentRefundableAmount ?? zero),
             finalReceivable: money(checkout.finalReceivable),
             supplementalArrearsAmount: money(
               checkout.supplementalArrearsAmount,
@@ -624,6 +687,11 @@ export class ContractVoidPreviewService {
             id: refund.id,
             refundNo: refund.refundNo,
             amount: money(refund.refundAmount),
+            depositRefundAmount: money(refund.depositRefundAmount ?? zero),
+            prepaymentRefundAmount: money(
+              refund.prepaymentRefundAmount ?? zero,
+            ),
+            rentRefundAmount: money(refund.rentRefundAmount ?? zero),
             refundDate: refund.refundDate.toISOString(),
             refundMethod: refund.refundMethod,
             checkoutSettlementId: refund.checkoutSettlementId,

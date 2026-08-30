@@ -40,6 +40,17 @@ export type ContractVoidImpactInput = {
     amount: string;
     occurredAt?: string | null;
   }>;
+  checkoutRentRefunds?: Array<{
+    id: number;
+    checkoutSettlementItemId: number;
+    paymentAllocationId: number;
+    paymentId: number;
+    rentBillId: number;
+    depositRefundId: number | null;
+    status: string;
+    amount: string;
+    occurredAt?: string | null;
+  }>;
   prepaymentBalance: string;
   depositBalance: string;
   pending: ContractVoidPendingWorkflows;
@@ -238,6 +249,10 @@ export function computeContractVoidImpact(
           occurredAt: payment.occurredAt ?? null,
           derived: true,
         }));
+  const approvedCheckoutRentRefunds = (input.checkoutRentRefunds ?? []).filter(
+    (refund) =>
+      refund.status === 'APPLIED' && traceablePaymentIds.has(refund.paymentId),
+  );
   const rentBillPayable = input.bills.reduce(
     (total, bill) => total.plus(decimal(bill.payableAmount)),
     zero,
@@ -246,10 +261,14 @@ export function computeContractVoidImpact(
     (total, payment) => total.plus(decimal(payment.amount)),
     zero,
   );
-  const refundNet = approvedRefunds.reduce(
-    (total, refund) => total.plus(decimal(refund.amount)),
-    zero,
-  );
+  const refundNet = approvedRefunds
+    .reduce((total, refund) => total.plus(decimal(refund.amount)), zero)
+    .plus(
+      approvedCheckoutRentRefunds.reduce(
+        (total, refund) => total.plus(decimal(refund.amount)),
+        zero,
+      ),
+    );
   const depositBalance = decimal(input.depositBalance);
   const prepaymentBalance = decimal(input.prepaymentBalance);
   const effectivePayment = grossPayment.minus(refundNet);
@@ -300,6 +319,23 @@ export function computeContractVoidImpact(
         {
           paymentId: refund.paymentId,
           ...(Object.hasOwn(refund, 'derived') ? { derived: true } : {}),
+        },
+      ),
+    ),
+    ...approvedCheckoutRentRefunds.map((refund) =>
+      monetaryRow(
+        'REFUND',
+        'CheckoutRentRefundAllocation',
+        refund.id,
+        decimal(refund.amount).negated(),
+        refund.occurredAt ?? null,
+        true,
+        {
+          paymentId: refund.paymentId,
+          paymentAllocationId: refund.paymentAllocationId,
+          rentBillId: refund.rentBillId,
+          checkoutSettlementItemId: refund.checkoutSettlementItemId,
+          depositRefundId: refund.depositRefundId,
         },
       ),
     ),
