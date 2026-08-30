@@ -83,15 +83,18 @@ export type CheckoutSettlement = {
   contract?: CheckoutContract;
   items?: CheckoutSettlementItem[];
   depositRefunds?: DepositRefund[];
+  rentRefundAllocations?: CheckoutRentRefundAllocationPreview[];
 };
 
 export type CheckoutRentRefundAllocationPreview = {
   paymentAllocationId: number;
   paymentId: number;
-  receiptNo: string;
+  receiptNo?: string;
   rentBillId: number;
   billNo: string;
   amount: string;
+  periodStart?: string;
+  periodEnd?: string;
 };
 
 export type CheckoutSettlementPreview = {

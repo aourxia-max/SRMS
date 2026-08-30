@@ -46,6 +46,9 @@ let previewRequestVersion = 0;
 const actionError = ref("");
 const previewError = ref("");
 const settlementMutationPending = ref(false);
+const refundUploading = ref(false);
+const refundSubmitting = ref(false);
+const refundApproving = ref(false);
 const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const refundProofPreview = ref<{
@@ -54,6 +57,7 @@ const refundProofPreview = ref<{
   fileName: string;
 }>();
 const isSuper = computed(() => session.user?.role === "SUPER_ADMIN");
+const refundRole = computed<"SUPER_ADMIN" | "ADMIN" | "VISITOR">(() => session.user?.role ?? "VISITOR");
 applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
 
@@ -323,30 +327,42 @@ async function approveSettlement(id: number) {
   }
 }
 async function uploadRefundProof(file: File) {
+  if (refundUploading.value) return;
+  refundUploading.value = true;
   actionError.value = "";
   try {
     const result = await checkoutApi.uploadRefundProof(file);
     refundPanel.value?.addProof(result.id);
   } catch (error) {
     actionError.value = message(error, "退款凭证上传失败，请稍后重试");
+  } finally {
+    refundUploading.value = false;
   }
 }
 async function submitRefund(payload: Record<string, unknown>) {
+  if (refundSubmitting.value) return;
+  refundSubmitting.value = true;
   actionError.value = "";
   try {
     await checkoutApi.submitRefund(payload);
     await loadData();
   } catch (error) {
     actionError.value = message(error, "登记退款失败，请稍后重试");
+  } finally {
+    refundSubmitting.value = false;
   }
 }
 async function approveRefund(id: number) {
+  if (refundApproving.value) return;
+  refundApproving.value = true;
   actionError.value = "";
   try {
     await checkoutApi.approveRefund(id);
     await loadData();
   } catch (error) {
     actionError.value = message(error, "确认退款失败，请稍后重试");
+  } finally {
+    refundApproving.value = false;
   }
 }
 async function collectSupplemental(id: number) {
@@ -419,7 +435,10 @@ onMounted(initialize);
       v-else-if="activeTab === 'refund'"
       ref="refundPanel"
       :settlement="approvedSettlement"
-      :role="isSuper ? 'SUPER_ADMIN' : 'ADMIN'"
+      :role="refundRole"
+      :uploading="refundUploading"
+      :submitting="refundSubmitting"
+      :approving="refundApproving"
       @upload="uploadRefundProof"
       @submit="submitRefund"
       @approve="approveRefund"

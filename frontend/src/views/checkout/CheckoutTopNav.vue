@@ -7,7 +7,7 @@ const emit = defineEmits<{ change: [tab: CheckoutTab] }>()
 const tabs: Array<{ key: CheckoutTab; label: string }> = [
   { key: 'initiate', label: '\u0031 \u53d1\u8d77\u9000\u79df' },
   { key: 'settlement', label: '\u0032 \u9000\u79df\u7ed3\u7b97' },
-  { key: 'refund', label: '\u0033 \u62bc\u91d1\u9000\u8fd8\u786e\u8ba4' },
+  { key: 'refund', label: '\u0033 \u9000\u79df\u9000\u6b3e\u786e\u8ba4' },
   { key: 'completed', label: '\u0034 \u5df2\u9000\u79df\u5408\u540c' },
 ]
 </script>

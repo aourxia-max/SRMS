@@ -5,6 +5,9 @@ import type { CheckoutSettlement } from "./checkout-types";
 const props = defineProps<{
   settlement?: CheckoutSettlement;
   role: "SUPER_ADMIN" | "ADMIN" | "VISITOR";
+  uploading?: boolean;
+  submitting?: boolean;
+  approving?: boolean;
 }>();
 const emit = defineEmits<{
   upload: [file: File];
@@ -25,7 +28,8 @@ const errors = ref<string[]>([]);
 const total = computed(
   () =>
     Number(props.settlement?.depositRefundableAmount || 0) +
-    Number(props.settlement?.prepaymentRefundableAmount || 0),
+    Number(props.settlement?.prepaymentRefundableAmount || 0) +
+    Number(props.settlement?.rentRefundableAmount || 0),
 );
 const isApproved = computed(() => props.settlement?.status === "APPROVED");
 const hasSupplementalReceivable = computed(() => {
@@ -57,6 +61,7 @@ function format(value: number) {
   });
 }
 function selectFile(event: Event) {
+  if (props.uploading || props.role === "VISITOR") return;
   const file = (event.target as HTMLInputElement).files?.[0];
   if (file) emit("upload", file);
 }
@@ -64,6 +69,7 @@ function addProof(id: number) {
   if (!proofFileIds.value.includes(id)) proofFileIds.value.push(id);
 }
 function submit() {
+  if (props.submitting || props.role === "VISITOR") return;
   errors.value = [];
   if (!form.refundDate) errors.value.push("请选择退款日期");
   if (!form.refundMethod) errors.value.push("请选择退款方式");
@@ -85,7 +91,7 @@ defineExpose({ addProof });
   <section class="refund-panel">
     <div class="refund-panel__title">
       <div>
-        <h2>押金退还确认</h2>
+        <h2>退租退款确认</h2>
         <p>
           退款金额由已确认结算单锁定；最终确认后合同结束，并按结算房态释放房源。
         </p>
@@ -127,7 +133,7 @@ defineExpose({ addProof });
       <span class="refund-panel__badge">无需退款确认</span>
       <h3>本次退租无需退款</h3>
       <p>
-        押金应退、预收款应退和待补收金额均为零。最终确认后合同结束，房源更新为结算单指定房态。
+        应退押金、应退预收款、应退租金和待补收金额均为零。最终确认后合同结束，房源更新为结算单指定房态。
       </p>
       <button
         v-if="role === 'SUPER_ADMIN'"
@@ -160,10 +166,22 @@ defineExpose({ addProof });
             }}</strong
           >
         </div>
+        <div>
+          <span>应退租金</span
+          ><strong>¥{{ format(Number(settlement.rentRefundableAmount || 0)) }}</strong>
+        </div>
         <div class="refund-panel__total">
           <span>合计退款金额</span><strong>¥{{ format(total) }}</strong>
         </div>
       </div>
+      <section v-if="settlement.rentRefundAllocations?.length" class="refund-panel__allocations">
+        <h3>系统自动回冲明细</h3>
+        <ul>
+          <li v-for="allocation in settlement.rentRefundAllocations" :key="allocation.paymentAllocationId">
+            {{ allocation.billNo }} · {{ allocation.periodStart }} 至 {{ allocation.periodEnd }} · ¥{{ format(Number(allocation.amount)) }}
+          </li>
+        </ul>
+      </section>
       <section v-if="approvedRefund" class="refund-panel__status">
         <strong>退款已确认</strong
         ><span
@@ -183,6 +201,7 @@ defineExpose({ addProof });
           data-test="refund-approve"
           type="button"
           class="primary-button"
+          :disabled="approving"
           @click="emit('approve', pendingRefund.id)"
         >
           确认退款并完成退租
@@ -190,10 +209,10 @@ defineExpose({ addProof });
         <p v-else>仅超级管理员可以进行最终确认。</p>
       </section>
       <template v-else>
-        <div v-if="errors.length" class="refund-panel__errors" role="alert">
+        <div v-if="role !== 'VISITOR' && errors.length" class="refund-panel__errors" role="alert">
           <p v-for="error in errors" :key="error">{{ error }}</p>
         </div>
-        <div class="refund-panel__grid">
+        <div v-if="role !== 'VISITOR'" class="refund-panel__grid">
           <label
             ><span><i>*</i>退款日期</span
             ><input v-model="form.refundDate" type="date" lang="zh-CN" /></label
@@ -209,6 +228,7 @@ defineExpose({ addProof });
             ><span><i>*</i>上传退款凭证</span
             ><input
               type="file"
+              :disabled="uploading"
               accept="image/png,image/jpeg,image/webp,application/pdf"
               @change="selectFile"
             /><small>已上传 {{ proofFileIds.length }} 份凭证</small></label
@@ -217,17 +237,20 @@ defineExpose({ addProof });
             ><textarea v-model="form.remark" rows="3" maxlength="1000" />
           </label>
         </div>
-        <div class="refund-panel__actions">
+        <div v-if="role !== 'VISITOR'" class="refund-panel__actions">
           <button
             data-test="refund-submit"
             type="button"
             class="primary-button"
-            :disabled="!proofFileIds.length"
+            :disabled="submitting || !proofFileIds.length"
             @click="submit"
           >
             登记合并退款
           </button>
         </div>
+        <p v-if="role === 'VISITOR'" class="refund-panel__hint">
+          访客仅可查看，不能登记退款或上传凭证。
+        </p>
       </template>
     </article>
   </section>
@@ -255,7 +278,7 @@ defineExpose({ addProof });
 }
 .refund-panel__supplemental-breakdown {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin: 16px 0;
 }
@@ -285,6 +308,25 @@ defineExpose({ addProof });
 }
 .refund-panel__amounts span,
 .refund-panel__amounts strong {
+.refund-panel__allocations {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid #dce7f8;
+  border-radius: 8px;
+  background: #f7faff;
+}
+.refund-panel__allocations h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.refund-panel__allocations ul {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: #4a5b72;
+  font-size: 14px;
+}
   display: block;
 }
 .refund-panel__amounts span {

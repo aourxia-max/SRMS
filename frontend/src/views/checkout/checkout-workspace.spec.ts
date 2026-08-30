@@ -110,6 +110,10 @@ vi.mock("../../services/checkout", () => ({
         "content-disposition": "attachment; filename*=UTF-8''refund.webp",
       },
     }),
+    uploadRefundProof: vi.fn(),
+    submitRefund: vi.fn(),
+    approveRefund: vi.fn(),
+    completeZeroRefund: vi.fn(),
     submit: vi.fn(),
     preview: vi.fn(),
     approve: vi.fn(),
@@ -128,7 +132,7 @@ describe("CheckoutTopNav", () => {
 
     expect(wrapper.text()).toContain("1 发起退租");
     expect(wrapper.text()).toContain("2 退租结算");
-    expect(wrapper.text()).toContain("3 押金退还确认");
+    expect(wrapper.text()).toContain("3 退租退款确认");
   });
   it("places checkout workflow navigation at the top without the old page intro block", () => {
     const wrapper = mount(CheckoutWorkspace, {
@@ -185,7 +189,7 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.text()).toContain("未入住退租");
     expect(wrapper.emitted("contractChange")).toEqual([[2]]);
   });
-  it("keeps an approved settlement in the final refund confirmation panel", () => {
+  it("renders the locked combined refund breakdown and reserved rent allocations", () => {
     const wrapper = mount(CheckoutRefundPanel, {
       props: {
         settlement: {
@@ -193,17 +197,35 @@ describe("CheckoutTopNav", () => {
           settlementNo: "TZ202608010001",
           status: "APPROVED",
           contractId: 3,
-          depositRefundableAmount: "800.00",
-          prepaymentRefundableAmount: "500.00",
-          rentRefundableAmount: "0.00",
+          depositRefundableAmount: "7500.00",
+          prepaymentRefundableAmount: "1000.00",
+          rentRefundableAmount: "2000.00",
           finalReceivable: "0.00",
+          rentRefundAllocations: [
+            {
+              paymentAllocationId: 18,
+              paymentId: 12,
+              rentBillId: 8,
+              billNo: "ZJ2026090001",
+              periodStart: "2026-09-01",
+              periodEnd: "2026-09-30",
+              amount: "2000.00",
+            },
+          ],
         },
         role: "ADMIN",
       },
     });
 
-    expect(wrapper.text()).toContain("押金退还确认");
-    expect(wrapper.text()).toContain("1,300.00");
+    expect(wrapper.text()).toContain("退租退款确认");
+    expect(wrapper.text()).toContain("应退押金");
+    expect(wrapper.text()).toContain("应退预收款");
+    expect(wrapper.text()).toContain("应退租金");
+    expect(wrapper.text()).toContain("合计退款");
+    expect(wrapper.text()).toContain("系统自动回冲明细");
+    expect(wrapper.text()).toContain("ZJ2026090001");
+    expect(wrapper.text()).toContain("2026-09-01 至 2026-09-30");
+    expect(wrapper.text()).toContain("10,500.00");
   });
   it("loads settlement records when switching to the settlement tab", async () => {
     const wrapper = mount(CheckoutWorkspace, {
@@ -1376,7 +1398,7 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.emitted("approve")).toEqual([[9]]);
   });
 
-  it("omits a blank optional remark when submitting a deposit refund", async () => {
+  it("submits only the locked combined-refund DTO without client split amounts", async () => {
     const wrapper = mount(CheckoutRefundPanel, {
       props: {
         role: "ADMIN",
@@ -1387,7 +1409,7 @@ describe("CheckoutTopNav", () => {
           contractId: 3,
           depositRefundableAmount: "800.00",
           prepaymentRefundableAmount: "500.00",
-          rentRefundableAmount: "0.00",
+          rentRefundableAmount: "200.00",
           finalReceivable: "0.00",
         },
       },
@@ -1397,6 +1419,15 @@ describe("CheckoutTopNav", () => {
     await wrapper.get('[data-test="refund-submit"]').trigger("click");
 
     expect(wrapper.emitted("submit")?.[0]?.[0]).not.toHaveProperty("remark");
+    const payload = wrapper.emitted("submit")?.[0]?.[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      checkoutSettlementId: 2,
+      refundAmount: "1500.00",
+      proofFileIds: [77],
+    });
+    expect(payload).not.toHaveProperty("depositRefundAmount");
+    expect(payload).not.toHaveProperty("prepaymentRefundAmount");
+    expect(payload).not.toHaveProperty("rentRefundAmount");
   });
 
   it("submits a clean zero-item settlement so a zero-refund checkout can continue", async () => {
@@ -1507,6 +1538,52 @@ describe("CheckoutTopNav", () => {
     );
     expect(wrapper.get('[role="alert"]').text()).not.toContain("remark");
   });
+  it("does not offer refund registration to visitors", () => {
+    const wrapper = mount(CheckoutRefundPanel, {
+      props: {
+        role: "VISITOR",
+        settlement: {
+          id: 2,
+          settlementNo: "TZ202608010002",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "800.00",
+          prepaymentRefundableAmount: "0.00",
+          rentRefundableAmount: "200.00",
+          finalReceivable: "0.00",
+        },
+      },
+    });
+
+    expect(wrapper.find('[data-test="refund-submit"]').exists()).toBe(false);
+    expect(wrapper.find('input[type="file"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("访客仅可查看，不能登记退款或上传凭证。");
+  });
+  it("blocks a duplicate combined refund submission while registration is loading", async () => {
+    const wrapper = mount(CheckoutRefundPanel, {
+      props: {
+        role: "ADMIN",
+        submitting: true,
+        settlement: {
+          id: 2,
+          settlementNo: "TZ202608010002",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "800.00",
+          prepaymentRefundableAmount: "0.00",
+          rentRefundableAmount: "200.00",
+          finalReceivable: "0.00",
+        },
+      },
+    });
+    (wrapper.vm as unknown as { addProof: (id: number) => void }).addProof(77);
+    await wrapper.vm.$nextTick();
+
+    const submit = wrapper.get('[data-test="refund-submit"]');
+    expect(submit.attributes("disabled")).toBeDefined();
+    await submit.trigger("click");
+    expect(wrapper.emitted("submit")).toBeUndefined();
+});
 });
 
 describe("CheckoutTopNav", () => {

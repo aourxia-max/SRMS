@@ -225,7 +225,18 @@ export class CheckoutService {
             include: {
               checkoutRentRefundAllocations: {
                 where: { status: 'RESERVED' },
-                select: { id: true },
+                select: {
+                  id: true,
+                  paymentAllocationId: true,
+                  reservedAmount: true,
+                  rentBill: {
+                    select: {
+                      billNo: true,
+                      periodStart: true,
+                      periodEnd: true,
+                    },
+                  },
+                },
               },
             },
           },
@@ -244,6 +255,16 @@ export class CheckoutService {
           },
         },
       });
+    const rentRefundAllocations = settlement.items.flatMap((item) =>
+      item.checkoutRentRefundAllocations.map((allocation) => ({
+        paymentAllocationId: allocation.paymentAllocationId,
+        billNo: allocation.rentBill.billNo,
+        periodStart: allocation.rentBill.periodStart.toISOString().slice(0, 10),
+        periodEnd: allocation.rentBill.periodEnd.toISOString().slice(0, 10),
+        amount: this.money(allocation.reservedAmount),
+      })),
+    );
+
     return {
       ...settlement,
       rentReceivable: this.money(settlement.rentReceivable),
@@ -258,6 +279,7 @@ export class CheckoutService {
         settlement.prepaymentRefundableAmount,
       ),
       rentRefundableAmount: this.money(settlement.rentRefundableAmount),
+      rentRefundAllocations,
       finalReceivable: this.money(settlement.finalReceivable),
       supplementalRequired: settlement.supplementalRequired,
       supplementalArrearsAmount: this.money(

@@ -1043,7 +1043,23 @@ describe('CheckoutService', () => {
             supplementalOutstandingAmount: new Prisma.Decimal('75.00'),
             supplementalCollectedAt: null,
             contract: { id: 3, room: { id: 7, roomNo: '301' } },
-            items: [{ id: 1, amount: new Prisma.Decimal('120.00') }],
+            items: [
+              {
+                id: 1,
+                amount: new Prisma.Decimal('120.00'),
+                checkoutRentRefundAllocations: [
+                  {
+                    paymentAllocationId: 18,
+                    reservedAmount: new Prisma.Decimal('100.00'),
+                    rentBill: {
+                      billNo: 'ZJ2026090001',
+                      periodStart: new Date('2026-09-01'),
+                      periodEnd: new Date('2026-09-30'),
+                    },
+                  },
+                ],
+              },
+            ],
             depositRefunds: [
               { id: 9, refundAmount: new Prisma.Decimal('1300.00') },
             ],
@@ -1066,6 +1082,15 @@ describe('CheckoutService', () => {
       contract: { room: { roomNo: '301' } },
       items: [{ amount: '120.00' }],
       depositRefunds: [{ refundAmount: '1300.00' }],
+      rentRefundAllocations: [
+        {
+          paymentAllocationId: 18,
+          billNo: 'ZJ2026090001',
+          periodStart: '2026-09-01',
+          periodEnd: '2026-09-30',
+          amount: '100.00',
+        },
+      ],
     });
   });
 
@@ -2839,7 +2864,18 @@ describe('CheckoutService', () => {
           include: {
             checkoutRentRefundAllocations: {
               where: { status: 'RESERVED' },
-              select: { id: true },
+              select: {
+                id: true,
+                paymentAllocationId: true,
+                reservedAmount: true,
+                rentBill: {
+                  select: {
+                    billNo: true,
+                    periodStart: true,
+                    periodEnd: true,
+                  },
+                },
+              },
             },
           },
         },
