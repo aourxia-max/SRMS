@@ -391,6 +391,10 @@ export class CheckoutService {
           (candidate) =>
             candidate.paymentAllocationId === allocation.paymentAllocationId,
         )!.billNo,
+        receiptNo: candidates.find(
+          (candidate) =>
+            candidate.paymentAllocationId === allocation.paymentAllocationId,
+        )!.receiptNo,
       })),
     };
   }

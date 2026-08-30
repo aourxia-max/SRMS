@@ -15,6 +15,7 @@ export const CHECKOUT_RENT_REFUND_RESERVATION_CHANGED_MESSAGE =
 
 export type CheckoutRentRefundCandidate = RentRefundCandidate & {
   billNo: string;
+  receiptNo: string;
 };
 
 type CandidateClient = Pick<Prisma.TransactionClient, 'paymentAllocation'>;
@@ -61,6 +62,7 @@ export async function loadCheckoutRentRefundCandidates(
       payment: {
         select: {
           paymentDate: true,
+          receiptNo: true,
           voidRequests: {
             where: { approvalStatus: 'PENDING' },
             select: { id: true },
@@ -110,6 +112,7 @@ export async function loadCheckoutRentRefundCandidates(
     return {
       paymentAllocationId: allocation.id,
       paymentId: allocation.paymentId,
+      receiptNo: allocation.payment.receiptNo,
       rentBillId: allocation.rentBillId,
       periodStart: allocation.rentBill.periodStart,
       periodEnd: allocation.rentBill.periodEnd,

@@ -72,7 +72,7 @@ export type CheckoutSettlement = {
   rejectedReason?: string;
   depositRefundableAmount: string;
   prepaymentRefundableAmount: string;
-  rentRefundableAmount?: string;
+  rentRefundableAmount: string;
   finalReceivable: string;
   supplementalRequired?: boolean;
   supplementalArrearsAmount?: string;
@@ -88,6 +88,7 @@ export type CheckoutSettlement = {
 export type CheckoutRentRefundAllocationPreview = {
   paymentAllocationId: number;
   paymentId: number;
+  receiptNo: string;
   rentBillId: number;
   billNo: string;
   amount: string;

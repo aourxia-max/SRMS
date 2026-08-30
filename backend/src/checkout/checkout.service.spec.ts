@@ -1594,6 +1594,7 @@ describe('CheckoutService', () => {
             reversedAmount: new Prisma.Decimal('100.00'),
             payment: {
               paymentDate: new Date('2026-08-05'),
+              receiptNo: 'SK20260800011',
               voidRequests: [],
             },
             rentBill: {
@@ -1623,6 +1624,7 @@ describe('CheckoutService', () => {
             reversedAmount: new Prisma.Decimal('50.00'),
             payment: {
               paymentDate: new Date('2026-08-06'),
+              receiptNo: 'SK20260800012',
               voidRequests: [],
             },
             rentBill: {
@@ -1676,6 +1678,7 @@ describe('CheckoutService', () => {
           paymentAllocationId: 102,
           paymentId: 12,
           rentBillId: 22,
+          receiptNo: 'SK20260800012',
           billNo: 'ZJ2026090001',
           amount: '400.00',
         },
@@ -1683,6 +1686,7 @@ describe('CheckoutService', () => {
           paymentAllocationId: 101,
           paymentId: 11,
           rentBillId: 21,
+          receiptNo: 'SK20260800011',
           billNo: 'ZJ2026080001',
           amount: '200.00',
         },
@@ -1706,6 +1710,7 @@ describe('CheckoutService', () => {
         payment: {
           select: {
             paymentDate: true,
+            receiptNo: true,
             voidRequests: {
               where: { approvalStatus: 'PENDING' },
               select: { id: true },

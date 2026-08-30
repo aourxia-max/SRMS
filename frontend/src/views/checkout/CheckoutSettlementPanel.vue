@@ -12,6 +12,8 @@ const props = defineProps<{
   isSuper?: boolean;
   preview?: CheckoutSettlementPreview;
   previewLoading?: boolean;
+  submitting?: boolean;
+  cancelling?: boolean;
 }>();
 const emit = defineEmits<{
   approve: [id: number];
@@ -19,6 +21,7 @@ const emit = defineEmits<{
   returnToDraft: [id: number];
   cancel: [id: number];
   preview: [id: number, payload: CheckoutSettlementPayload];
+  clearPreview: [];
 }>();
 
 const selectedId = ref<number | null>(null);
@@ -31,6 +34,7 @@ const form = reactive({
   remark: "",
 });
 const items = ref<CheckoutSettlementItem[]>([]);
+const rentRefundAmountInput = ref<HTMLInputElement[]>([]);
 const actionableSettlements = computed(() =>
   props.settlements.filter((item) =>
     ["DRAFT", "PENDING", "REJECTED"].includes(item.status),
@@ -79,9 +83,7 @@ async function addRentRefund() {
     });
   }
   await nextTick();
-  document
-    .querySelector<HTMLInputElement>('[data-test="rent-refund-amount"]')
-    ?.focus();
+  rentRefundAmountInput.value[0]?.focus();
 }
 
 function removeItem(index: number) {
@@ -130,6 +132,7 @@ watch(
   [selected, form, items],
   () => {
     if (previewTimer) clearTimeout(previewTimer);
+    emit("clearPreview");
     if (!previewReady() || !selected.value) return;
     previewTimer = setTimeout(
       () => emit("preview", selected.value!.id, payload()),
@@ -157,6 +160,11 @@ function submit() {
       !item.inspectionRecordRef?.trim()
     )
       errors.value.push(`请填写第 ${index + 1} 项验房记录编号`);
+    if (
+      item.itemType === "RENT_REFUND" &&
+      (props.previewLoading || props.preview?.maxRentRefundAmount === undefined)
+    )
+      errors.value.push("正在获取当前可回冲金额，请稍候再提交。");
     if (
       item.itemType === "RENT_REFUND" &&
       props.preview?.maxRentRefundAmount !== undefined &&
@@ -241,6 +249,7 @@ function cancelSelected() {
         <div
           class="settlement-panel__summary"
           data-test="settlement-summary"
+          aria-live="polite"
         >
           <div v-for="card in summaryCards" :key="card.label">
             <span>{{ card.label }}</span>
@@ -253,6 +262,7 @@ function cancelSelected() {
             v-if="errors.length"
             class="settlement-panel__errors"
             role="alert"
+            aria-live="assertive"
           >
             <p v-for="error in errors" :key="error">{{ error }}</p>
           </div>
@@ -324,13 +334,18 @@ function cancelSelected() {
               <span class="settlement-item__type">退还租金</span>
               <input
                 v-model="item.amount"
+                ref="rentRefundAmountInput"
                 data-test="rent-refund-amount"
+                aria-label="退还金额"
+                aria-describedby="rent-refund-limit"
                 inputmode="decimal"
                 placeholder="退还金额"
               />
               <input
                 v-model="item.description"
                 data-test="rent-refund-description"
+                aria-label="退还说明"
+                aria-describedby="rent-refund-limit"
                 class="settlement-item__description"
                 placeholder="退还说明"
                 maxlength="500"
@@ -387,18 +402,18 @@ function cancelSelected() {
             v-if="items.some((item) => item.itemType === 'RENT_REFUND')"
             class="settlement-panel__rent-refund-preview"
           >
-            <p v-if="preview?.maxRentRefundAmount !== undefined">
+            <p id="rent-refund-limit" aria-live="polite" v-if="preview?.maxRentRefundAmount !== undefined">
               当前最多可退租金
               <strong>{{ formatMoney(preview.maxRentRefundAmount) }}</strong>
             </p>
-            <p v-else>正在根据后端账务计算可退租金…</p>
+            <p id="rent-refund-limit" aria-live="polite" v-else>正在根据后端账务计算可退租金…</p>
             <template v-if="preview?.rentRefundAllocations?.length">
               <h4>系统自动回冲预览</h4>
               <p
                 v-for="allocation in preview.rentRefundAllocations"
                 :key="allocation.paymentAllocationId"
               >
-                {{ allocation.billNo }}：{{ formatMoney(allocation.amount) }}
+                账单号 {{ allocation.billNo }} · 收款单号 {{ allocation.receiptNo }}：{{ formatMoney(allocation.amount) }}
               </p>
             </template>
           </section>
@@ -407,12 +422,14 @@ function cancelSelected() {
               type="button"
               class="danger-button"
               data-test="settlement-cancel"
+              :disabled="cancelling"
               @click="cancelSelected"
             >
               取消退租结算
             </button>
             <button
               data-test="settlement-submit"
+              :disabled="submitting"
               type="button"
               class="primary-button"
               @click="submit"
@@ -429,7 +446,8 @@ function cancelSelected() {
             type="button"
             class="danger-button"
             data-test="settlement-cancel"
-            @click="cancelSelected"
+              :disabled="cancelling"
+              @click="cancelSelected"
           >
             取消退租结算
           </button>
@@ -449,7 +467,8 @@ function cancelSelected() {
             type="button"
             class="danger-button"
             data-test="settlement-cancel"
-            @click="cancelSelected"
+              :disabled="cancelling"
+              @click="cancelSelected"
           >
             取消退租结算
           </button>

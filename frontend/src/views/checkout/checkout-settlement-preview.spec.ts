@@ -13,6 +13,7 @@ const settlement = {
   targetRoomStatus: 'EMPTY' as const,
   depositRefundableAmount: '0.00',
   prepaymentRefundableAmount: '0.00',
+  rentRefundableAmount: "0.00",
   finalReceivable: '0.00',
   items: [],
 };
@@ -28,6 +29,7 @@ const rentRefundPreview = {
     {
       paymentAllocationId: 81,
       paymentId: 72,
+      receiptNo: 'SK20260800072',
       rentBillId: 33,
       billNo: 'ZF2026090001',
       amount: '3000.00',
@@ -38,7 +40,7 @@ const rentRefundPreview = {
 describe('退租结算实时预估', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('shows the four amounts returned by the backend preview', () => {
+  it('shows the five labelled backend summary values, including zero amounts', () => {
     const wrapper = mount(CheckoutSettlementPanel, {
       props: {
         settlements: [settlement],
@@ -55,9 +57,15 @@ describe('退租结算实时预估', () => {
     });
 
     const summary = wrapper.get('[data-test="settlement-summary"]');
+    expect(summary.text()).toContain('应退押金');
+    expect(summary.text()).toContain('应退预收款');
     expect(summary.text()).toContain('¥7,000.00');
+    expect(summary.text()).toContain('应退租金');
+    expect(summary.text()).toContain('¥0.00');
     expect(summary.text()).toContain('¥500.00');
+    expect(summary.text()).toContain('合计应退');
     expect(summary.text()).toContain('¥7,500.00');
+    expect(summary.text()).toContain('待补收金额');
     expect(summary.text()).toContain('¥0.00');
     expect(summary.text()).not.toContain('待计算');
   });
@@ -75,6 +83,9 @@ describe('退租结算实时预估', () => {
     expect(wrapper.findAll('[data-test="rent-refund-item"]')).toHaveLength(1);
     expect(wrapper.text()).toContain('当前最多可退租金 ¥3,000.00');
     expect(wrapper.text()).toContain('系统自动回冲预览');
+    expect(wrapper.text()).toContain('收款单号 SK20260800072');
+    expect(wrapper.text()).toContain('¥3,000.00');
+    expect(wrapper.text()).not.toContain('paymentId');
     expect(wrapper.text()).toContain('ZF2026090001');
     expect(wrapper.find('[data-test="rent-refund-item"] [placeholder="验房记录编号"]').exists()).toBe(false);
 
@@ -154,5 +165,15 @@ describe('退租结算实时预估', () => {
       actualCheckoutDate: '2026-08-26',
       items: [],
     });
+  });
+  it('keeps the rent-refund input described while the maximum is still loading', async () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: { settlements: [settlement], previewLoading: true },
+    });
+
+    await wrapper.get('[data-test="add-rent-refund"]').trigger('click');
+
+    expect(wrapper.get('[data-test="rent-refund-amount"]').attributes('aria-describedby')).toBe('rent-refund-limit');
+    expect(wrapper.get('#rent-refund-limit').attributes('aria-live')).toBe('polite');
   });
 });

@@ -297,6 +297,7 @@ describe('收款登记合同切换', () => {
       contractId: 1,
       depositRefundableAmount: '0.00',
       prepaymentRefundableAmount: '0.00',
+      rentRefundableAmount: "0.00",
       finalReceivable: '150.00',
       supplementalRequired: true,
       supplementalArrearsAmount: '50.00',

@@ -42,7 +42,10 @@ const completedDetail = ref<CheckoutSettlement>();
 const loadingCompletedContracts = ref(false);
 const settlementPreview = ref<CheckoutSettlementPreview>();
 const previewLoading = ref(false);
+let previewRequestVersion = 0;
 const actionError = ref("");
+const settlementSubmitting = ref(false);
+const settlementCancelling = ref(false);
 const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const refundProofPreview = ref<{
@@ -134,6 +137,7 @@ async function openCompletedDetail(settlementId: number) {
 }
 function changeTab(tab: CheckoutTab) {
   activeTab.value = tab;
+  clearSettlementPreview();
   completedDetail.value = undefined;
   if (tab === "completed") void loadCompletedContracts();
 }
@@ -240,27 +244,40 @@ async function initiate(contractId: number, payload: Record<string, string>) {
   }
 }
 async function submitSettlement(id: number, payload: CheckoutSettlementPayload) {
+  if (settlementSubmitting.value) return;
+  settlementSubmitting.value = true;
   actionError.value = "";
   try {
     await checkoutApi.submit(id, payload);
     await loadData();
   } catch (error) {
     actionError.value = message(error, "提交结算失败，请检查填写内容后重试");
+  } finally {
+    settlementSubmitting.value = false;
   }
 }
+function clearSettlementPreview() {
+  previewRequestVersion += 1;
+  settlementPreview.value = undefined;
+  previewLoading.value = false;
+}
+
 async function previewSettlement(id: number, payload: CheckoutSettlementPayload) {
+  const requestVersion = ++previewRequestVersion;
   previewLoading.value = true;
   actionError.value = "";
   try {
-    settlementPreview.value = await checkoutApi.preview(id, payload);
+    const preview = await checkoutApi.preview(id, payload);
+    if (requestVersion === previewRequestVersion) settlementPreview.value = preview;
   } catch (error) {
-    settlementPreview.value = undefined;
-    actionError.value = message(error, "结算金额预估失败，请检查填写内容");
+    if (requestVersion === previewRequestVersion) {
+      settlementPreview.value = undefined;
+      actionError.value = message(error, "结算金额预估失败，请检查填写内容");
+    }
   } finally {
-    previewLoading.value = false;
+    if (requestVersion === previewRequestVersion) previewLoading.value = false;
   }
 }
-
 async function returnToDraft(id: number) {
   actionError.value = "";
   try {
@@ -271,12 +288,16 @@ async function returnToDraft(id: number) {
   }
 }
 async function cancelSettlement(id: number) {
+  if (settlementCancelling.value) return;
+  settlementCancelling.value = true;
   actionError.value = "";
   try {
     await checkoutApi.cancel(id);
     await loadData();
   } catch (error) {
     actionError.value = message(error, "取消退租结算失败，请稍后重试");
+  } finally {
+    settlementCancelling.value = false;
   }
 }
 async function approveSettlement(id: number) {
@@ -367,7 +388,10 @@ onMounted(initialize);
       @submit="submitSettlement"
       :preview="settlementPreview"
       :preview-loading="previewLoading"
+      :submitting="settlementSubmitting"
+      :cancelling="settlementCancelling"
       @preview="previewSettlement"
+      @clear-preview="clearSettlementPreview"
       @approve="approveSettlement"
       @return-to-draft="returnToDraft"
       @cancel="cancelSettlement"

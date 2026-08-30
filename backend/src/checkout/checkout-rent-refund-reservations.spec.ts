@@ -147,6 +147,7 @@ describe('checkout rent refund reservations', () => {
           payment: {
             select: {
               paymentDate: true,
+              receiptNo: true,
               voidRequests: {
                 where: { approvalStatus: 'PENDING' },
                 select: { id: true },
