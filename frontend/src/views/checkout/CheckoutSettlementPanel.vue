@@ -89,13 +89,24 @@ async function addRentRefund() {
 function removeItem(index: number) {
   items.value.splice(index, 1);
 }
+const amountPattern = /^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/;
+function parseAmount(value: unknown) {
+  const raw = String(value).trim();
+  if (!amountPattern.test(raw)) return undefined;
+  const amount = Number(raw);
+  return Number.isFinite(amount) ? amount : undefined;
+}
+function formatAmount(value: unknown) {
+  const amount = parseAmount(value);
+  return amount === undefined ? "" : amount.toFixed(2);
+}
 function payload(): CheckoutSettlementPayload {
   const { remark, ...requiredFields } = form;
   return {
     ...requiredFields,
     ...(remark.trim() ? { remark: remark.trim() } : {}),
     items: items.value.map((item) => {
-      const amount = Number(item.amount).toFixed(2);
+      const amount = formatAmount(item.amount);
       const description = item.description.trim();
       if (item.itemType === "RENT_REFUND")
         return { itemType: item.itemType, amount, description };
@@ -115,16 +126,18 @@ function previewReady() {
       form.actualCheckoutDate &&
       form.handoverDate &&
       form.inspectionAt &&
-      items.value.every((item) =>
-        Boolean(
-          Number(item.amount) > 0 &&
+      items.value.every((item) => {
+        const amount = parseAmount(item.amount);
+        return Boolean(
+          amount !== undefined &&
+            amount > 0 &&
             item.description.trim() &&
             (item.itemType === "RENT_REFUND" ||
               (item.itemType === "RENT_ARREARS"
                 ? item.rentBillId
                 : item.inspectionRecordRef?.trim())),
-        ),
-      ),
+        );
+      }),
   );
 }
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
@@ -149,7 +162,10 @@ function submit() {
   if (!form.actualCheckoutDate || !form.handoverDate || !form.inspectionAt)
     errors.value.push("请完整填写实际退房、交接和验房日期");
   items.value.forEach((item, index) => {
-    if (!Number(item.amount) || Number(item.amount) <= 0)
+    const amount = parseAmount(item.amount);
+    if (amount === undefined)
+      errors.value.push(`第 ${index + 1} 项结算金额格式不正确`);
+    else if (amount <= 0)
       errors.value.push(`第 ${index + 1} 项结算金额必须大于 0`);
     if (!item.description.trim())
       errors.value.push(`请填写第 ${index + 1} 项结算说明`);
@@ -160,18 +176,20 @@ function submit() {
       !item.inspectionRecordRef?.trim()
     )
       errors.value.push(`请填写第 ${index + 1} 项验房记录编号`);
+    const maxRentRefundAmount = parseAmount(props.preview?.maxRentRefundAmount);
     if (
       item.itemType === "RENT_REFUND" &&
-      (props.previewLoading || props.preview?.maxRentRefundAmount === undefined)
+      (props.previewLoading || maxRentRefundAmount === undefined)
     )
       errors.value.push("正在获取当前可回冲金额，请稍候再提交。");
     if (
       item.itemType === "RENT_REFUND" &&
-      props.preview?.maxRentRefundAmount !== undefined &&
-      Number(item.amount) > Number(props.preview.maxRentRefundAmount)
+      amount !== undefined &&
+      maxRentRefundAmount !== undefined &&
+      amount > maxRentRefundAmount
     )
       errors.value.push(
-        `退还租金不能超过当前可回冲金额 ${formatMoney(props.preview.maxRentRefundAmount)}。`,
+        `退还租金不能超过当前可回冲金额 ${formatMoney(props.preview!.maxRentRefundAmount)}。`,
       );
   });
   if (errors.value.length) return;
@@ -253,8 +271,16 @@ function cancelSelected() {
         >
           <div v-for="card in summaryCards" :key="card.label">
             <span>{{ card.label }}</span>
-            <strong>{{ card.value ? formatMoney(card.value) : previewLoading ? "计算中…" : "待计算" }}</strong>
-            <small>{{ card.value ? "实时预估，确认后锁定" : "填写完整后自动计算" }}</small>
+            <strong>{{
+              card.value
+                ? formatMoney(card.value)
+                : previewLoading
+                  ? "计算中…"
+                  : "待计算"
+            }}</strong>
+            <small>{{
+              card.value ? "实时预估，确认后锁定" : "填写完整后自动计算"
+            }}</small>
           </div>
         </div>
         <template v-if="selected.status === 'DRAFT'">
@@ -328,7 +354,9 @@ function cancelSelected() {
             v-for="(item, index) in items"
             :key="index"
             class="settlement-item"
-            :data-test="item.itemType === 'RENT_REFUND' ? 'rent-refund-item' : undefined"
+            :data-test="
+              item.itemType === 'RENT_REFUND' ? 'rent-refund-item' : undefined
+            "
           >
             <template v-if="item.itemType === 'RENT_REFUND'">
               <span class="settlement-item__type">退还租金</span>
@@ -402,18 +430,25 @@ function cancelSelected() {
             v-if="items.some((item) => item.itemType === 'RENT_REFUND')"
             class="settlement-panel__rent-refund-preview"
           >
-            <p id="rent-refund-limit" aria-live="polite" v-if="preview?.maxRentRefundAmount !== undefined">
+            <p
+              id="rent-refund-limit"
+              aria-live="polite"
+              v-if="preview?.maxRentRefundAmount !== undefined"
+            >
               当前最多可退租金
               <strong>{{ formatMoney(preview.maxRentRefundAmount) }}</strong>
             </p>
-            <p id="rent-refund-limit" aria-live="polite" v-else>正在根据后端账务计算可退租金…</p>
+            <p id="rent-refund-limit" aria-live="polite" v-else>
+              正在根据后端账务计算可退租金…
+            </p>
             <template v-if="preview?.rentRefundAllocations?.length">
               <h4>系统自动回冲预览</h4>
               <p
                 v-for="allocation in preview.rentRefundAllocations"
                 :key="allocation.paymentAllocationId"
               >
-                账单号 {{ allocation.billNo }} · 收款单号 {{ allocation.receiptNo }}：{{ formatMoney(allocation.amount) }}
+                账单号 {{ allocation.billNo }} · 收款单号
+                {{ allocation.receiptNo }}：{{ formatMoney(allocation.amount) }}
               </p>
             </template>
           </section>
@@ -422,14 +457,14 @@ function cancelSelected() {
               type="button"
               class="danger-button"
               data-test="settlement-cancel"
-              :disabled="cancelling"
+              :disabled="submitting || cancelling"
               @click="cancelSelected"
             >
               取消退租结算
             </button>
             <button
               data-test="settlement-submit"
-              :disabled="submitting"
+              :disabled="submitting || cancelling"
               type="button"
               class="primary-button"
               @click="submit"
@@ -446,8 +481,8 @@ function cancelSelected() {
             type="button"
             class="danger-button"
             data-test="settlement-cancel"
-              :disabled="cancelling"
-              @click="cancelSelected"
+            :disabled="submitting || cancelling"
+            @click="cancelSelected"
           >
             取消退租结算
           </button>
@@ -467,8 +502,8 @@ function cancelSelected() {
             type="button"
             class="danger-button"
             data-test="settlement-cancel"
-              :disabled="cancelling"
-              @click="cancelSelected"
+            :disabled="submitting || cancelling"
+            @click="cancelSelected"
           >
             取消退租结算
           </button>

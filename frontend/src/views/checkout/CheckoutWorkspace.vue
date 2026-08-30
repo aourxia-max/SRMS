@@ -44,8 +44,8 @@ const settlementPreview = ref<CheckoutSettlementPreview>();
 const previewLoading = ref(false);
 let previewRequestVersion = 0;
 const actionError = ref("");
-const settlementSubmitting = ref(false);
-const settlementCancelling = ref(false);
+const previewError = ref("");
+const settlementMutationPending = ref(false);
 const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const refundProofPreview = ref<{
@@ -78,24 +78,28 @@ function positiveQueryId(value: unknown) {
 }
 function applyRouteState() {
   const requestedTab = String(route.query.tab || "");
-  if (["initiate", "settlement", "refund", "completed"].includes(requestedTab)) {
+  if (
+    ["initiate", "settlement", "refund", "completed"].includes(requestedTab)
+  ) {
     activeTab.value = requestedTab as CheckoutTab;
   }
   if (positiveQueryId(route.query.settlementId)) {
     activeTab.value = "completed";
   }
   const contractId = Number(route.query.contractId);
-  selectedInitiateContractId.value = Number.isInteger(contractId) && contractId > 0 ? contractId : null;
+  selectedInitiateContractId.value =
+    Number.isInteger(contractId) && contractId > 0 ? contractId : null;
 }
 
 async function loadData() {
   loadingContracts.value = true;
   try {
-    const [loadedContracts, loadedSettlements, refundPending] = await Promise.all([
-      checkoutApi.contracts(),
-      checkoutApi.settlements(),
-      checkoutApi.refundPendingSettlements(),
-    ]);
+    const [loadedContracts, loadedSettlements, refundPending] =
+      await Promise.all([
+        checkoutApi.contracts(),
+        checkoutApi.settlements(),
+        checkoutApi.refundPendingSettlements(),
+      ]);
     contracts.value = loadedContracts;
     settlements.value = loadedSettlements;
     const approved = refundPending[0];
@@ -243,9 +247,12 @@ async function initiate(contractId: number, payload: Record<string, string>) {
     actionError.value = message(error, "发起退租失败，请稍后重试");
   }
 }
-async function submitSettlement(id: number, payload: CheckoutSettlementPayload) {
-  if (settlementSubmitting.value) return;
-  settlementSubmitting.value = true;
+async function submitSettlement(
+  id: number,
+  payload: CheckoutSettlementPayload,
+) {
+  if (settlementMutationPending.value) return;
+  settlementMutationPending.value = true;
   actionError.value = "";
   try {
     await checkoutApi.submit(id, payload);
@@ -253,26 +260,31 @@ async function submitSettlement(id: number, payload: CheckoutSettlementPayload) 
   } catch (error) {
     actionError.value = message(error, "提交结算失败，请检查填写内容后重试");
   } finally {
-    settlementSubmitting.value = false;
+    settlementMutationPending.value = false;
   }
 }
 function clearSettlementPreview() {
   previewRequestVersion += 1;
   settlementPreview.value = undefined;
+  previewError.value = "";
   previewLoading.value = false;
 }
 
-async function previewSettlement(id: number, payload: CheckoutSettlementPayload) {
+async function previewSettlement(
+  id: number,
+  payload: CheckoutSettlementPayload,
+) {
   const requestVersion = ++previewRequestVersion;
   previewLoading.value = true;
-  actionError.value = "";
+  previewError.value = "";
   try {
     const preview = await checkoutApi.preview(id, payload);
-    if (requestVersion === previewRequestVersion) settlementPreview.value = preview;
+    if (requestVersion === previewRequestVersion)
+      settlementPreview.value = preview;
   } catch (error) {
     if (requestVersion === previewRequestVersion) {
       settlementPreview.value = undefined;
-      actionError.value = message(error, "结算金额预估失败，请检查填写内容");
+      previewError.value = message(error, "结算金额预估失败，请检查填写内容");
     }
   } finally {
     if (requestVersion === previewRequestVersion) previewLoading.value = false;
@@ -288,8 +300,8 @@ async function returnToDraft(id: number) {
   }
 }
 async function cancelSettlement(id: number) {
-  if (settlementCancelling.value) return;
-  settlementCancelling.value = true;
+  if (settlementMutationPending.value) return;
+  settlementMutationPending.value = true;
   actionError.value = "";
   try {
     await checkoutApi.cancel(id);
@@ -297,7 +309,7 @@ async function cancelSettlement(id: number) {
   } catch (error) {
     actionError.value = message(error, "取消退租结算失败，请稍后重试");
   } finally {
-    settlementCancelling.value = false;
+    settlementMutationPending.value = false;
   }
 }
 async function approveSettlement(id: number) {
@@ -361,7 +373,10 @@ async function initialize() {
   await loadData();
   const settlementId = positiveQueryId(route.query.settlementId);
   if (!settlementId) return;
-  await Promise.all([loadCompletedContracts(), openCompletedDetail(settlementId)]);
+  await Promise.all([
+    loadCompletedContracts(),
+    openCompletedDetail(settlementId),
+  ]);
 }
 onMounted(initialize);
 </script>
@@ -369,8 +384,12 @@ onMounted(initialize);
 <template>
   <main class="checkout-workspace">
     <CheckoutTopNav :active-tab="activeTab" @change="changeTab" />
-    <p v-if="actionError" class="checkout-workspace__error" role="alert">
-      {{ actionError }}
+    <p
+      v-if="actionError || previewError"
+      class="checkout-workspace__error"
+      role="alert"
+    >
+      {{ actionError || previewError }}
     </p>
     <CheckoutInitiatePanel
       v-if="activeTab === 'initiate'"
@@ -388,8 +407,8 @@ onMounted(initialize);
       @submit="submitSettlement"
       :preview="settlementPreview"
       :preview-loading="previewLoading"
-      :submitting="settlementSubmitting"
-      :cancelling="settlementCancelling"
+      :submitting="settlementMutationPending"
+      :cancelling="settlementMutationPending"
       @preview="previewSettlement"
       @clear-preview="clearSettlementPreview"
       @approve="approveSettlement"
@@ -478,7 +497,10 @@ onMounted(initialize);
                 </button>
                 <button
                   :data-test="
-                    'refund-proof-download-' + refund.id + '-' + file.fileAssetId
+                    'refund-proof-download-' +
+                    refund.id +
+                    '-' +
+                    file.fileAssetId
                   "
                   type="button"
                   class="checkout-workspace__proof-download"
@@ -503,14 +525,24 @@ onMounted(initialize);
       <div class="checkout-workspace__preview-dialog">
         <header>
           <strong>{{ refundProofPreview.fileName }}</strong>
-          <button data-test="refund-proof-preview-close" type="button" @click="closeRefundProofPreview">关闭</button>
+          <button
+            data-test="refund-proof-preview-close"
+            type="button"
+            @click="closeRefundProofPreview"
+          >
+            关闭
+          </button>
         </header>
         <img
           v-if="refundProofPreview.mimeType.startsWith('image/')"
           :src="refundProofPreview.url"
           :alt="refundProofPreview.fileName"
         />
-        <iframe v-else :src="refundProofPreview.url" :title="refundProofPreview.fileName" />
+        <iframe
+          v-else
+          :src="refundProofPreview.url"
+          :title="refundProofPreview.fileName"
+        />
       </div>
     </div>
   </main>

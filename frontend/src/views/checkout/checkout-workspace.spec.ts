@@ -21,7 +21,14 @@ vi.mock("../../services/checkout", () => ({
         { id: 1, contractNo: "HT202608010001", status: "ACTIVE" },
       ]),
     initiate: vi.fn(),
-    financeSnapshot: vi.fn().mockResolvedValue({ depositBalance: "1000.00", rentOutstanding: "0.00", prepaymentBalance: "0.00", futureBillCount: 0 }),
+    financeSnapshot: vi
+      .fn()
+      .mockResolvedValue({
+        depositBalance: "1000.00",
+        rentOutstanding: "0.00",
+        prepaymentBalance: "0.00",
+        futureBillCount: 0,
+      }),
     settlements: vi.fn().mockResolvedValue([
       {
         id: 8,
@@ -129,7 +136,9 @@ describe("CheckoutTopNav", () => {
     });
 
     expect(wrapper.find(".checkout-workspace__header").exists()).toBe(false);
-    expect(wrapper.find(".checkout-workspace > .checkout-top-nav").exists()).toBe(true);
+    expect(
+      wrapper.find(".checkout-workspace > .checkout-top-nav").exists(),
+    ).toBe(true);
   });
   it("opens the initiate checkout workspace by default", () => {
     const wrapper = mount(CheckoutWorkspace, {
@@ -209,99 +218,261 @@ describe("CheckoutTopNav", () => {
     let resolveFirst!: (value: Record<string, unknown>) => void;
     let resolveSecond!: (value: Record<string, unknown>) => void;
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
-    api.preview.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
-    api.preview.mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
-    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } });
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
-    const payload = { actualCheckoutDate: "2026-08-20", handoverDate: "2026-08-20", inspectionAt: "2026-08-20", targetRoomStatus: "EMPTY", items: [] };
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
     panel.vm.$emit("preview", 8, payload);
-    panel.vm.$emit("preview", 8, { ...payload, actualCheckoutDate: "2026-08-21" });
+    panel.vm.$emit("preview", 8, {
+      ...payload,
+      actualCheckoutDate: "2026-08-21",
+    });
     await flushPromises();
-    resolveSecond({ depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "200.00", maxRentRefundAmount: "200.00", totalRefundAmount: "200.00", finalReceivable: "0.00", rentRefundAllocations: [] });
+    resolveSecond({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "200.00",
+      maxRentRefundAmount: "200.00",
+      totalRefundAmount: "200.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
     await flushPromises();
-    resolveFirst({ depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "100.00", maxRentRefundAmount: "100.00", totalRefundAmount: "100.00", finalReceivable: "0.00", rentRefundAllocations: [] });
+    resolveFirst({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "100.00",
+      maxRentRefundAmount: "100.00",
+      totalRefundAmount: "100.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
     await flushPromises();
-    expect(wrapper.get('[data-test="settlement-summary"]').text()).toContain("200.00");
-    expect(wrapper.get('[data-test="settlement-summary"]').text()).not.toContain("100.00");
+    expect(wrapper.get('[data-test="settlement-summary"]').text()).toContain(
+      "200.00",
+    );
+    expect(
+      wrapper.get('[data-test="settlement-summary"]').text(),
+    ).not.toContain("100.00");
   });
   it("clears an in-flight preview when switching to another settlement", async () => {
     let resolvePreview!: (value: Record<string, unknown>) => void;
-    const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn>; settlements: ReturnType<typeof vi.fn> };
+    const api = checkoutApi as unknown as {
+      preview: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
     api.settlements.mockResolvedValueOnce([
-      { id: 8, settlementNo: "TZ202608010001", status: "DRAFT", contractId: 1, depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "0.00", finalReceivable: "0.00" },
-      { id: 10, settlementNo: "TZ202608010010", status: "DRAFT", contractId: 1, depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "0.00", finalReceivable: "0.00" },
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+      {
+        id: 10,
+        settlementNo: "TZ202608010010",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
     ]);
-    api.preview.mockImplementationOnce(() => new Promise((resolve) => { resolvePreview = resolve; }));
-    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } });
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreview = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
-    const payload = { actualCheckoutDate: "2026-08-20", handoverDate: "2026-08-20", inspectionAt: "2026-08-20", targetRoomStatus: "EMPTY", items: [] };
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
     panel.vm.$emit("preview", 8, payload);
     await flushPromises();
-    await wrapper.get(".settlement-panel__list button:nth-child(2)").trigger("click");
-    resolvePreview({ depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "100.00", maxRentRefundAmount: "100.00", totalRefundAmount: "100.00", finalReceivable: "0.00", rentRefundAllocations: [] });
+    await wrapper
+      .get(".settlement-panel__list button:nth-child(2)")
+      .trigger("click");
+    resolvePreview({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "100.00",
+      maxRentRefundAmount: "100.00",
+      totalRefundAmount: "100.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
     await flushPromises();
 
-    expect(wrapper.get('[data-test="settlement-summary"]').text()).toContain("待计算");
-    expect(wrapper.get('[data-test="settlement-summary"]').text()).not.toContain("100.00");
+    expect(wrapper.get('[data-test="settlement-summary"]').text()).toContain(
+      "待计算",
+    );
+    expect(
+      wrapper.get('[data-test="settlement-summary"]').text(),
+    ).not.toContain("100.00");
   });
 
   it("does not let an older preview rejection overwrite a newer preview", async () => {
     let rejectFirst!: (error: Error) => void;
     let resolveSecond!: (value: Record<string, unknown>) => void;
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
-    api.preview.mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }));
-    api.preview.mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
-    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } });
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
-    const payload = { actualCheckoutDate: "2026-08-20", handoverDate: "2026-08-20", inspectionAt: "2026-08-20", targetRoomStatus: "EMPTY", items: [] };
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
     panel.vm.$emit("preview", 8, payload);
-    panel.vm.$emit("preview", 8, { ...payload, actualCheckoutDate: "2026-08-21" });
+    panel.vm.$emit("preview", 8, {
+      ...payload,
+      actualCheckoutDate: "2026-08-21",
+    });
     await flushPromises();
-    resolveSecond({ depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "200.00", maxRentRefundAmount: "200.00", totalRefundAmount: "200.00", finalReceivable: "0.00", rentRefundAllocations: [] });
+    resolveSecond({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "200.00",
+      maxRentRefundAmount: "200.00",
+      totalRefundAmount: "200.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
     await flushPromises();
     rejectFirst(new Error("old preview failed"));
     await flushPromises();
 
-    expect(wrapper.get('[data-test="settlement-summary"]').text()).toContain("200.00");
+    expect(wrapper.get('[data-test="settlement-summary"]').text()).toContain(
+      "200.00",
+    );
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("recovers from a failed preview with a fresh maximum before showing it to the settlement panel", async () => {
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
     api.preview.mockRejectedValueOnce(new Error("preview failed"));
-    api.preview.mockResolvedValueOnce({ depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "50.00", maxRentRefundAmount: "50.00", totalRefundAmount: "50.00", finalReceivable: "0.00", rentRefundAllocations: [] });
-    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } });
+    api.preview.mockResolvedValueOnce({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "50.00",
+      maxRentRefundAmount: "50.00",
+      totalRefundAmount: "50.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
-    const payload = { actualCheckoutDate: "2026-08-20", handoverDate: "2026-08-20", inspectionAt: "2026-08-20", targetRoomStatus: "EMPTY", items: [] };
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
     panel.vm.$emit("preview", 8, payload);
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain("结算金额预估失败");
-    panel.vm.$emit("preview", 8, { ...payload, actualCheckoutDate: "2026-08-21" });
+    panel.vm.$emit("preview", 8, {
+      ...payload,
+      actualCheckoutDate: "2026-08-21",
+    });
     await flushPromises();
 
-    expect(panel.props("preview")).toMatchObject({ maxRentRefundAmount: "50.00" });
+    expect(panel.props("preview")).toMatchObject({
+      maxRentRefundAmount: "50.00",
+    });
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
   it("sends only one submit and one cancel while their workspace actions are in flight", async () => {
     let resolveSubmit!: () => void;
     let resolveCancel!: () => void;
-    const api = checkoutApi as unknown as { submit: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> };
-    api.submit.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveSubmit = resolve; }));
-    api.cancel.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveCancel = resolve; }));
-    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [createPinia()] } });
+    const api = checkoutApi as unknown as {
+      submit: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+    };
+    api.submit.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    api.cancel.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
-    const payload = { actualCheckoutDate: "2026-08-20", handoverDate: "2026-08-20", inspectionAt: "2026-08-20", targetRoomStatus: "EMPTY", items: [] };
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
     panel.vm.$emit("submit", 8, payload);
     panel.vm.$emit("submit", 8, payload);
     await flushPromises();
@@ -317,6 +488,356 @@ describe("CheckoutTopNav", () => {
     expect(panel.props("cancelling")).toBe(true);
     resolveCancel();
     await flushPromises();
+  });
+  it("keeps the newer preview loading while an older request resolves", async () => {
+    let resolveFirst!: (value: Record<string, unknown>) => void;
+    let resolveSecond!: (value: Record<string, unknown>) => void;
+    const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("preview", 8, payload);
+    panel.vm.$emit("preview", 8, {
+      ...payload,
+      actualCheckoutDate: "2026-08-21",
+    });
+    await flushPromises();
+    resolveFirst({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "100.00",
+      maxRentRefundAmount: "100.00",
+      totalRefundAmount: "100.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
+    await flushPromises();
+    expect(panel.props("previewLoading")).toBe(true);
+    resolveSecond({
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "200.00",
+      maxRentRefundAmount: "200.00",
+      totalRefundAmount: "200.00",
+      finalReceivable: "0.00",
+      rentRefundAllocations: [],
+    });
+    await flushPromises();
+  });
+  it("clears a preview error when the user switches settlements", async () => {
+    const api = checkoutApi as unknown as {
+      preview: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+      {
+        id: 10,
+        settlementNo: "TZ202608010010",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.preview.mockRejectedValueOnce(new Error("preview failed"));
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("preview", 8, payload);
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    await wrapper
+      .get(".settlement-panel__list button:nth-child(2)")
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+  it("clears preview state when an actual form change invalidates it", async () => {
+    let rejectPreview!: (error: Error) => void;
+    const api = checkoutApi as unknown as {
+      preview: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        actualCheckoutDate: "2026-08-20",
+        handoverDate: "2026-08-20",
+        inspectionAt: "2026-08-20",
+        targetRoomStatus: "EMPTY",
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectPreview = reject;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("preview", 8, payload);
+    await flushPromises();
+    expect(panel.props("previewLoading")).toBe(true);
+    await panel.get('input[type="date"]').setValue("");
+    await flushPromises();
+    expect(panel.props("preview")).toBeUndefined();
+    expect(panel.props("previewLoading")).toBe(false);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    rejectPreview(new Error("old preview failed"));
+    await flushPromises();
+    expect(panel.props("preview")).toBeUndefined();
+    expect(panel.props("previewLoading")).toBe(false);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+  it("rejects cancellation while settlement submission is pending", async () => {
+    let resolveSubmit!: () => void;
+    const api = checkoutApi as unknown as {
+      submit: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.submit.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("submit", 8, payload);
+    await flushPromises();
+    panel.vm.$emit("cancel", 8);
+    await flushPromises();
+    expect(api.submit).toHaveBeenCalledTimes(1);
+    expect(api.cancel).not.toHaveBeenCalled();
+    expect(panel.props("submitting")).toBe(true);
+    expect(panel.props("cancelling")).toBe(true);
+    expect(
+      panel.get('[data-test="settlement-submit"]').attributes("disabled"),
+    ).toBeDefined();
+    expect(
+      panel.get('[data-test="settlement-cancel"]').attributes("disabled"),
+    ).toBeDefined();
+    resolveSubmit();
+    await flushPromises();
+  });
+  it("rejects submission while settlement cancellation is pending", async () => {
+    let resolveCancel!: () => void;
+    const api = checkoutApi as unknown as {
+      submit: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.cancel.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("cancel", 8);
+    await flushPromises();
+    panel.vm.$emit("submit", 8, payload);
+    await flushPromises();
+    expect(api.cancel).toHaveBeenCalledTimes(1);
+    expect(api.submit).not.toHaveBeenCalled();
+    expect(panel.props("submitting")).toBe(true);
+    expect(panel.props("cancelling")).toBe(true);
+    resolveCancel();
+    await flushPromises();
+  });
+  it("releases the shared settlement mutation guard after a rejected submission", async () => {
+    const api = checkoutApi as unknown as {
+      submit: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.submit.mockRejectedValueOnce(new Error("submit failed"));
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("submit", 8, payload);
+    await flushPromises();
+    expect(panel.props("submitting")).toBe(false);
+    expect(panel.props("cancelling")).toBe(false);
+    panel.vm.$emit("cancel", 8);
+    await flushPromises();
+    expect(api.cancel).toHaveBeenCalledTimes(1);
+  });
+  it("clears a preview error when an actual form change invalidates it", async () => {
+    const api = checkoutApi as unknown as {
+      preview: ReturnType<typeof vi.fn>;
+      settlements: ReturnType<typeof vi.fn>;
+    };
+    api.settlements.mockResolvedValueOnce([
+      {
+        id: 8,
+        settlementNo: "TZ202608010001",
+        status: "DRAFT",
+        contractId: 1,
+        actualCheckoutDate: "2026-08-20",
+        handoverDate: "2026-08-20",
+        inspectionAt: "2026-08-20",
+        targetRoomStatus: "EMPTY",
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    api.preview.mockRejectedValueOnce(new Error("preview failed"));
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+    panel.vm.$emit("preview", 8, payload);
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    await panel.get('input[type="date"]').setValue("");
+    await flushPromises();
+    expect(panel.props("preview")).toBeUndefined();
+    expect(panel.props("previewLoading")).toBe(false);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
   it("renders the fourth completed-contracts tab and loads only read-only history", async () => {
     const wrapper = mount(CheckoutWorkspace, {
@@ -360,7 +881,9 @@ describe("CheckoutTopNav", () => {
 
     expect(checkoutApi.detail).toHaveBeenCalledWith(17);
     expect(wrapper.text()).toContain("只读详情");
-    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="completed-contract-edit"]').exists()).toBe(
+      false,
+    );
     wrapper.unmount();
   });
   it.each(["0", "-1", "1.5", "abc", " 17 "])(
@@ -500,53 +1023,64 @@ describe("CheckoutTopNav", () => {
   it.each([
     ["image/png", "img"],
     ["application/pdf", "iframe"],
-  ])("previews a refund proof with MIME type %s", async (mimeType, selector) => {
-    const createObjectURL = vi.fn().mockReturnValue("blob:refund-proof-preview");
-    const revokeObjectURL = vi.fn();
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: createObjectURL,
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: revokeObjectURL,
-    });
-    (
-      checkoutApi as unknown as {
-        downloadRefundProof: ReturnType<typeof vi.fn>;
-      }
-    ).downloadRefundProof.mockResolvedValueOnce({
-      data: new Blob(["proof"], { type: mimeType }),
-      headers: {
-        "content-type": mimeType,
-        "content-disposition": "attachment; filename*=UTF-8''refund-file",
-      },
-    });
-    const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [createPinia()] },
-    });
-    await flushPromises();
-    await wrapper.get('[data-test="checkout-tab-completed"]').trigger("click");
-    await flushPromises();
-    await wrapper
-      .get('[data-test="completed-contract-detail-9"]')
-      .trigger("click");
-    await flushPromises();
+  ])(
+    "previews a refund proof with MIME type %s",
+    async (mimeType, selector) => {
+      const createObjectURL = vi
+        .fn()
+        .mockReturnValue("blob:refund-proof-preview");
+      const revokeObjectURL = vi.fn();
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: createObjectURL,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: revokeObjectURL,
+      });
+      (
+        checkoutApi as unknown as {
+          downloadRefundProof: ReturnType<typeof vi.fn>;
+        }
+      ).downloadRefundProof.mockResolvedValueOnce({
+        data: new Blob(["proof"], { type: mimeType }),
+        headers: {
+          "content-type": mimeType,
+          "content-disposition": "attachment; filename*=UTF-8''refund-file",
+        },
+      });
+      const wrapper = mount(CheckoutWorkspace, {
+        global: { plugins: [createPinia()] },
+      });
+      await flushPromises();
+      await wrapper
+        .get('[data-test="checkout-tab-completed"]')
+        .trigger("click");
+      await flushPromises();
+      await wrapper
+        .get('[data-test="completed-contract-detail-9"]')
+        .trigger("click");
+      await flushPromises();
 
-    await wrapper
-      .get('[data-test="refund-proof-preview-6-77"]')
-      .trigger("click");
-    await flushPromises();
+      await wrapper
+        .get('[data-test="refund-proof-preview-6-77"]')
+        .trigger("click");
+      await flushPromises();
 
-    const dialog = wrapper.get('[data-test="refund-proof-preview-dialog"]');
-    expect(dialog.get(selector).attributes("src")).toBe(
-      "blob:refund-proof-preview",
-    );
-    expect(wrapper.find('[data-test="refund-proof-download-6-77"]').exists()).toBe(true);
+      const dialog = wrapper.get('[data-test="refund-proof-preview-dialog"]');
+      expect(dialog.get(selector).attributes("src")).toBe(
+        "blob:refund-proof-preview",
+      );
+      expect(
+        wrapper.find('[data-test="refund-proof-download-6-77"]').exists(),
+      ).toBe(true);
 
-    await dialog.get('[data-test="refund-proof-preview-close"]').trigger("click");
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:refund-proof-preview");
-  });
+      await dialog
+        .get('[data-test="refund-proof-preview-close"]')
+        .trigger("click");
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:refund-proof-preview");
+    },
+  );
 
   it("shows a Chinese error when a refund proof cannot be downloaded", async () => {
     (
@@ -722,7 +1256,9 @@ describe("CheckoutTopNav", () => {
       },
     });
 
-    expect(wrapper.find('[data-test="supplemental-collect"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="supplemental-collect"]').exists()).toBe(
+      false,
+    );
     expect(wrapper.find('[data-test="zero-complete"]').exists()).toBe(true);
   });
   it("shows the approved zero-refund settlement in the final confirmation tab", async () => {
@@ -953,7 +1489,9 @@ describe("CheckoutTopNav", () => {
     ]);
     api.submit.mockRejectedValueOnce({
       response: {
-        data: { message: ["remark must be longer than or equal to 1 characters"] },
+        data: {
+          message: ["remark must be longer than or equal to 1 characters"],
+        },
       },
     });
     const wrapper = mount(CheckoutWorkspace, {
@@ -971,19 +1509,18 @@ describe("CheckoutTopNav", () => {
   });
 });
 
-
-describe('CheckoutTopNav', () => {
-  it('emits tab changes when a workflow tab is clicked', async () => {
+describe("CheckoutTopNav", () => {
+  it("emits tab changes when a workflow tab is clicked", async () => {
     const wrapper = mount(CheckoutInitiatePanel, {
       props: {
-        contracts: [{ id: 1, contractNo: 'HT202608010001', status: 'ACTIVE' }],
+        contracts: [{ id: 1, contractNo: "HT202608010001", status: "ACTIVE" }],
         selectedContractId: 1,
       },
-    })
-    await flushPromises()
+    });
+    await flushPromises();
 
-    const select = wrapper.find('[data-test="checkout-contract-select"]')
-    expect((select.element as HTMLSelectElement).value).toBe('1')
-    expect(wrapper.emitted('contractChange')).toEqual([[1]])
-  })
-})
+    const select = wrapper.find('[data-test="checkout-contract-select"]');
+    expect((select.element as HTMLSelectElement).value).toBe("1");
+    expect(wrapper.emitted("contractChange")).toEqual([[1]]);
+  });
+});
