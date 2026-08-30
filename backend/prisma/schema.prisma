@@ -1028,15 +1028,15 @@ model CheckoutRentRefundAllocation {
   releasedAt               DateTime?                          @map("released_at") @db.DateTime(3)
   appliedAt                DateTime?                          @map("applied_at") @db.DateTime(3)
   depositRefundId          Int?                               @map("deposit_refund_id") @db.UnsignedInt
-  item                     CheckoutSettlementItem             @relation(fields: [checkoutSettlementItemId], references: [id], onDelete: Restrict)
-  paymentAllocation        PaymentAllocation                  @relation(fields: [paymentAllocationId], references: [id], onDelete: Restrict)
-  payment                  Payment                            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  rentBill                 RentBill                           @relation(fields: [rentBillId], references: [id], onDelete: Restrict)
-  depositRefund            DepositRefund?                     @relation(fields: [depositRefundId], references: [id], onDelete: Restrict)
+  item                     CheckoutSettlementItem             @relation(map: "fk_checkout_rent_refund_item", fields: [checkoutSettlementItemId], references: [id], onDelete: Restrict)
+  paymentAllocation        PaymentAllocation                  @relation(map: "fk_checkout_rent_refund_allocation", fields: [paymentAllocationId], references: [id], onDelete: Restrict)
+  payment                  Payment                            @relation(map: "fk_checkout_rent_refund_payment", fields: [paymentId], references: [id], onDelete: Restrict)
+  rentBill                 RentBill                           @relation(map: "fk_checkout_rent_refund_bill", fields: [rentBillId], references: [id], onDelete: Restrict)
+  depositRefund            DepositRefund?                     @relation(map: "fk_checkout_rent_refund_refund", fields: [depositRefundId], references: [id], onDelete: Restrict)
 
-  @@index([checkoutSettlementItemId, status])
-  @@index([paymentAllocationId, status])
-  @@index([depositRefundId])
+  @@index([checkoutSettlementItemId, status], map: "idx_checkout_rent_refund_item_status")
+  @@index([paymentAllocationId, status], map: "idx_checkout_rent_refund_allocation_status")
+  @@index([depositRefundId], map: "idx_checkout_rent_refund_refund")
   @@map("checkout_rent_refund_allocations")
 }
 

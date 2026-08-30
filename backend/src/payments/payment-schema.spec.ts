@@ -160,4 +160,11 @@ describe('payment workflow Prisma model', () => {
       ],
     });
   });
+  it('aborts before backfill when a historic refund total disagrees with its settlement snapshot', () => {
+    const migration = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260830090000_checkout_rent_refund/migration.sql'), 'utf8');
+    const statements = migration.split(';').map((item) => item.trim().replace(/\s+/g, ' '));
+    const guardInserts = statements.filter((item) => item.startsWith('INSERT INTO') && item.includes('checkout_rent_refund_backfill_guard'));
+    expect(guardInserts).toHaveLength(2);
+    expect(guardInserts[1]).toMatch(/refund_amount.*deposit_refundable_amount.*prepayment_refundable_amount/);
+  });
 });

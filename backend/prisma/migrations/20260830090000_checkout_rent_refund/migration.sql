@@ -1,3 +1,11 @@
+CREATE TEMPORARY TABLE `checkout_rent_refund_backfill_guard` (`id` TINYINT NOT NULL PRIMARY KEY);
+INSERT INTO `checkout_rent_refund_backfill_guard` (`id`) VALUES (1);
+INSERT INTO `checkout_rent_refund_backfill_guard` (`id`)
+SELECT 1 FROM `deposit_refunds` AS dr
+INNER JOIN `checkout_settlements` AS cs ON cs.`id` = dr.`checkout_settlement_id`
+WHERE dr.`refund_amount` <> cs.`deposit_refundable_amount` + cs.`prepayment_refundable_amount`
+LIMIT 1;
+DROP TEMPORARY TABLE `checkout_rent_refund_backfill_guard`;
 ALTER TABLE `payment_allocations`
   MODIFY COLUMN `allocation_type` ENUM('AUTO_OLDEST_FIRST', 'MANUAL_SUPER_ADMIN', 'PREPAYMENT_AUTO', 'RENT_REFUND') NOT NULL DEFAULT 'AUTO_OLDEST_FIRST';
 
