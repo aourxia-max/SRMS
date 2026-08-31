@@ -4,15 +4,20 @@ import type { CheckoutSettlement } from "./checkout-types";
 
 const props = defineProps<{
   settlement?: CheckoutSettlement;
+  settlements?: CheckoutSettlement[];
   role: "SUPER_ADMIN" | "ADMIN" | "VISITOR";
   uploading?: boolean;
   submitting?: boolean;
   approving?: boolean;
+  cancelling?: boolean;
 }>();
 const emit = defineEmits<{
+  selectSettlement: [settlementId: number];
   upload: [file: File];
   submit: [payload: Record<string, unknown>];
   approve: [refundId: number];
+  cancelRefund: [refundId: number];
+  cancelCheckout: [settlementId: number];
   previewProof: [refundId: number, fileId: number];
   completeZero: [settlementId: number];
   collectSupplemental: [settlementId: number];
@@ -26,7 +31,25 @@ const form = reactive({
 });
 const proofFileIds = ref<number[]>([]);
 const errors = ref<string[]>([]);
-const total = computed(() => Number(props.settlement?.totalRefundAmount ?? 0));
+const componentTotal = computed(
+  () =>
+    Number(props.settlement?.depositRefundableAmount || 0) +
+    Number(props.settlement?.prepaymentRefundableAmount || 0) +
+    Number(props.settlement?.rentRefundableAmount || 0),
+);
+const total = computed(() => Number(props.settlement?.totalRefundAmount));
+const lockedTotalValid = computed(() => {
+  const raw = props.settlement?.totalRefundAmount;
+  return (
+    raw !== undefined &&
+    raw !== null &&
+    String(raw).trim() !== "" &&
+    Number.isFinite(total.value) &&
+    total.value >= 0 &&
+    Number.isFinite(componentTotal.value) &&
+    Math.abs(total.value - componentTotal.value) < 0.005
+  );
+});
 const isRefundViewable = computed(
   () =>
     props.settlement?.status === "APPROVED" ||
@@ -106,12 +129,51 @@ defineExpose({ addProof });
           退款金额由已确认结算单锁定；最终确认后合同结束，并按结算房态释放房源。
         </p>
       </div>
+      <button
+        v-if="
+          settlement &&
+          settlement.status === 'APPROVED' &&
+          role !== 'VISITOR' &&
+          !approvedRefund
+        "
+        data-test="checkout-cancel-approved"
+        type="button"
+        class="danger-button"
+        :disabled="cancelling"
+        @click="emit('cancelCheckout', settlement.id)"
+      >
+        取消整个退租
+      </button>
     </div>
+    <nav
+      v-if="settlements?.length"
+      class="refund-panel__queue"
+      aria-label="待处理退租结算"
+    >
+      <button
+        v-for="item in settlements"
+        :key="item.id"
+        :data-test="`refund-settlement-${item.id}`"
+        type="button"
+        :class="{ 'is-active': item.id === settlement?.id }"
+        @click="emit('selectSettlement', item.id)"
+      >
+        <strong>{{ item.settlementNo }}</strong>
+        <span>{{ item.contract?.room?.fullHouseNo || "房源待加载" }}</span>
+      </button>
+    </nav>
     <div v-if="!settlement" class="refund-panel__empty">
       请选择已确认的退租结算单。
     </div>
     <div v-else-if="!isRefundViewable" class="refund-panel__empty">
       当前结算单尚未确认，暂不能进行最终退款处理。
+    </div>
+    <div
+      v-else-if="!lockedTotalValid"
+      class="refund-panel__empty refund-panel__error"
+      role="alert"
+    >
+      退款总额数据缺失或与分项不一致，请刷新后重试
     </div>
     <article
       v-else-if="hasSupplementalReceivable"
@@ -264,6 +326,16 @@ defineExpose({ addProof });
         >
           确认退款并完成退租
         </button>
+        <button
+          v-if="role !== 'VISITOR'"
+          data-test="refund-cancel"
+          type="button"
+          class="secondary-button"
+          :disabled="cancelling"
+          @click="emit('cancelRefund', pendingRefund.id)"
+        >
+          取消本次退款申请
+        </button>
         <p v-else>仅超级管理员可以进行最终确认。</p>
       </section>
       <template v-else>
@@ -333,6 +405,42 @@ defineExpose({ addProof });
 .refund-panel__title h2 {
   margin: 0 0 6px;
   font-size: 20px;
+}
+.refund-panel__title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.refund-panel__queue {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.refund-panel__queue button {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  color: #39465a;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.refund-panel__queue button.is-active {
+  border-color: #246bfd;
+  color: #1d5ccf;
+  background: #f2f7ff;
+}
+.refund-panel__queue span {
+  color: #66758b;
+  font-size: 13px;
+}
+.refund-panel__error {
+  border-color: #ffc5c5;
+  color: #b4232c;
+  background: #fff2f0;
 }
 .refund-panel__title p {
   margin: 0;
@@ -447,6 +555,27 @@ defineExpose({ addProof });
   font: inherit;
   cursor: pointer;
 }
+.secondary-button,
+.danger-button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #d9e1ec;
+  border-radius: 6px;
+  color: #39465a;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.danger-button {
+  border-color: #ffc5c5;
+  color: #c9363e;
+  background: #fff7f7;
+}
+.secondary-button:disabled,
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .primary-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -515,8 +644,6 @@ defineExpose({ addProof });
   margin: 0;
   color: #66758b;
 }
-
-
 
 .refund-panel__card .refund-panel__allocations {
   display: grid;

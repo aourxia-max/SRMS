@@ -85,6 +85,7 @@ vi.mock("../../services/checkout", () => ({
       depositRefundableAmount: "0.00",
       prepaymentRefundableAmount: "0.00",
       rentRefundableAmount: "0.00",
+      totalRefundAmount: "0.00",
       finalReceivable: "0.00",
       contract: {
         id: 1,
@@ -120,6 +121,7 @@ vi.mock("../../services/checkout", () => ({
     uploadRefundProof: vi.fn(),
     submitRefund: vi.fn(),
     approveRefund: vi.fn(),
+    cancelRefund: vi.fn(),
     completeZeroRefund: vi.fn(),
     submit: vi.fn(),
     preview: vi.fn(),
@@ -1225,6 +1227,116 @@ describe("CheckoutTopNav", () => {
     expect(api.detail).toHaveBeenCalledWith(9);
     expect(wrapper.text()).toContain("\u65e0\u9700\u9000\u6b3e\u786e\u8ba4");
   });
+  it("keeps every refund-pending settlement visible instead of dropping all but the first", async () => {
+    const api = checkoutApi as unknown as {
+      refundPendingSettlements: ReturnType<typeof vi.fn>;
+    };
+    api.refundPendingSettlements.mockResolvedValueOnce([
+      {
+        id: 9,
+        settlementNo: "TZ-9",
+        status: "APPROVED",
+        contractId: 2,
+        contract: { room: { fullHouseNo: "1栋101" } },
+      },
+      {
+        id: 10,
+        settlementNo: "TZ-10",
+        status: "APPROVED",
+        contractId: 3,
+        contract: { room: { fullHouseNo: "2栋201" } },
+      },
+    ]);
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+
+    await flushPromises();
+    await wrapper.get("button:nth-child(3)").trigger("click");
+
+    expect(wrapper.find('[data-test="refund-settlement-9"]').exists()).toBe(
+      true,
+    );
+    expect(wrapper.find('[data-test="refund-settlement-10"]').exists()).toBe(
+      true,
+    );
+    expect(wrapper.text()).toContain("1栋101");
+    expect(wrapper.text()).toContain("2栋201");
+  });
+  it("confirms and cancels only the pending refund application", async () => {
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const api = checkoutApi as unknown as {
+      detail: ReturnType<typeof vi.fn>;
+      cancelRefund: ReturnType<typeof vi.fn>;
+    };
+    api.detail.mockResolvedValueOnce({
+      id: 9,
+      settlementNo: "TZ-9",
+      status: "APPROVED",
+      contractId: 2,
+      depositRefundableAmount: "100.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "100.00",
+      finalReceivable: "0.00",
+      depositRefunds: [
+        { id: 49, approvalStatus: "PENDING", refundAmount: "100.00" },
+      ],
+    });
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+
+    await flushPromises();
+    await wrapper.get("button:nth-child(3)").trigger("click");
+    await wrapper.get('[data-test="refund-cancel"]').trigger("click");
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalled();
+    expect(api.cancelRefund).toHaveBeenCalledWith(49);
+    confirm.mockRestore();
+  });
+  it("confirms and cancels the entire approved checkout separately", async () => {
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const api = checkoutApi as unknown as {
+      detail: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+    };
+    api.detail.mockResolvedValueOnce({
+      id: 9,
+      settlementNo: "TZ-9",
+      status: "APPROVED",
+      contractId: 2,
+      depositRefundableAmount: "100.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "100.00",
+      finalReceivable: "0.00",
+      depositRefunds: [],
+    });
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+
+    await flushPromises();
+    await wrapper.get("button:nth-child(3)").trigger("click");
+    await wrapper
+      .get('[data-test="checkout-cancel-approved"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalled();
+    expect(api.cancel).toHaveBeenCalledWith(9);
+    confirm.mockRestore();
+  });
   it("shows zero-refund final confirmation without proof upload for a super admin", () => {
     const wrapper = mount(CheckoutRefundPanel, {
       props: {
@@ -1237,6 +1349,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "0.00",
           prepaymentRefundableAmount: "0.00",
           rentRefundableAmount: "0.00",
+          totalRefundAmount: "0.00",
           finalReceivable: "0.00",
         },
       },
@@ -1258,6 +1371,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "0.00",
           prepaymentRefundableAmount: "0.00",
           rentRefundableAmount: "0.00",
+          totalRefundAmount: "0.00",
           finalReceivable: "120.00",
         },
       },
@@ -1278,6 +1392,7 @@ describe("CheckoutTopNav", () => {
           depositRefundableAmount: "0.00",
           prepaymentRefundableAmount: "0.00",
           rentRefundableAmount: "0.00",
+          totalRefundAmount: "0.00",
           finalReceivable: "120.00",
           supplementalRequired: true,
           supplementalOutstandingAmount: "0.00",
@@ -1606,9 +1721,15 @@ describe("CheckoutTopNav", () => {
       props: {
         role: "ADMIN",
         settlement: {
-          id: 2, settlementNo: "TZ-OLD", status: "APPROVED", contractId: 3,
-          depositRefundableAmount: "100.00", prepaymentRefundableAmount: "0.00",
-          rentRefundableAmount: "0.00", totalRefundAmount: "100.00", finalReceivable: "0.00",
+          id: 2,
+          settlementNo: "TZ-OLD",
+          status: "APPROVED",
+          contractId: 3,
+          depositRefundableAmount: "100.00",
+          prepaymentRefundableAmount: "0.00",
+          rentRefundableAmount: "0.00",
+          totalRefundAmount: "100.00",
+          finalReceivable: "0.00",
         },
       },
     });
@@ -1618,9 +1739,15 @@ describe("CheckoutTopNav", () => {
     (wrapper.vm as unknown as { addProof: (id: number) => void }).addProof(77);
     await wrapper.setProps({
       settlement: {
-        id: 3, settlementNo: "TZ-NEW", status: "APPROVED", contractId: 3,
-        depositRefundableAmount: "200.00", prepaymentRefundableAmount: "0.00",
-        rentRefundableAmount: "0.00", totalRefundAmount: "200.00", finalReceivable: "0.00",
+        id: 3,
+        settlementNo: "TZ-NEW",
+        status: "APPROVED",
+        contractId: 3,
+        depositRefundableAmount: "200.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        totalRefundAmount: "200.00",
+        finalReceivable: "0.00",
       },
     });
     (wrapper.vm as unknown as { addProof: (id: number) => void }).addProof(88);
@@ -1642,67 +1769,149 @@ describe("CheckoutTopNav", () => {
       const wrapper = mount(CheckoutSettlementPanel, {
         props: {
           role: "VISITOR",
-          settlements: [{
-            id: 10, settlementNo: "TZ202608010010", status, contractId: 3,
-            depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00",
-            rentRefundableAmount: "0.00", finalReceivable: "0.00",
-          }],
+          settlements: [
+            {
+              id: 10,
+              settlementNo: "TZ202608010010",
+              status,
+              contractId: 3,
+              depositRefundableAmount: "0.00",
+              prepaymentRefundableAmount: "0.00",
+              rentRefundableAmount: "0.00",
+              finalReceivable: "0.00",
+            },
+          ],
         },
       });
 
       expect(wrapper.find(".settlement-panel__form-grid").exists()).toBe(false);
-      expect(wrapper.find('[data-test="settlement-submit"]').exists()).toBe(false);
-      expect(wrapper.find('[data-test="settlement-cancel"]').exists()).toBe(false);
+      expect(wrapper.find('[data-test="settlement-submit"]').exists()).toBe(
+        false,
+      );
+      expect(wrapper.find('[data-test="settlement-cancel"]').exists()).toBe(
+        false,
+      );
       expect(wrapper.text()).not.toContain("退回草稿并编辑");
-      expect(wrapper.findAll("button").some((button) => button.text() === "确认结算")).toBe(false);
+      expect(
+        wrapper
+          .findAll("button")
+          .some((button) => button.text() === "确认结算"),
+      ).toBe(false);
     },
   );
 
   it("allows ADMIN draft operations but reserves pending approval and rejection for SUPER_ADMIN", () => {
     const settlement = {
-      id: 10, settlementNo: "TZ202608010010", contractId: 3,
-      depositRefundableAmount: "0.00", prepaymentRefundableAmount: "0.00",
-      rentRefundableAmount: "0.00", finalReceivable: "0.00",
+      id: 10,
+      settlementNo: "TZ202608010010",
+      contractId: 3,
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      finalReceivable: "0.00",
     };
     const adminDraft = mount(CheckoutSettlementPanel, {
-      props: { role: "ADMIN", settlements: [{ ...settlement, status: "DRAFT" }] },
+      props: {
+        role: "ADMIN",
+        settlements: [{ ...settlement, status: "DRAFT" }],
+      },
     });
     const adminPending = mount(CheckoutSettlementPanel, {
-      props: { role: "ADMIN", settlements: [{ ...settlement, status: "PENDING" }] },
+      props: {
+        role: "ADMIN",
+        settlements: [{ ...settlement, status: "PENDING" }],
+      },
     });
     const adminRejected = mount(CheckoutSettlementPanel, {
-      props: { role: "ADMIN", settlements: [{ ...settlement, status: "REJECTED" }] },
+      props: {
+        role: "ADMIN",
+        settlements: [{ ...settlement, status: "REJECTED" }],
+      },
     });
     const superAdmin = mount(CheckoutSettlementPanel, {
-      props: { role: "SUPER_ADMIN", settlements: [{ ...settlement, status: "PENDING" }] },
+      props: {
+        role: "SUPER_ADMIN",
+        settlements: [{ ...settlement, status: "PENDING" }],
+      },
     });
 
-    expect(adminDraft.find('[data-test="settlement-submit"]').exists()).toBe(true);
-    expect(adminPending.findAll("button").some((button) => button.text() === "确认结算")).toBe(false);
+    expect(adminDraft.find('[data-test="settlement-submit"]').exists()).toBe(
+      true,
+    );
+    expect(
+      adminPending
+        .findAll("button")
+        .some((button) => button.text() === "确认结算"),
+    ).toBe(false);
     expect(adminRejected.text()).not.toContain("退回草稿并编辑");
     expect(superAdmin.text()).toContain("确认结算");
   });
   it("revokes a late refund proof preview after switching tabs", async () => {
-    const api = checkoutApi as unknown as { detail: ReturnType<typeof vi.fn>; downloadRefundProof: ReturnType<typeof vi.fn> };
-    let resolveDownload!: (value: { data: Blob; headers: Record<string, string> }) => void;
+    const api = checkoutApi as unknown as {
+      detail: ReturnType<typeof vi.fn>;
+      downloadRefundProof: ReturnType<typeof vi.fn>;
+    };
+    let resolveDownload!: (value: {
+      data: Blob;
+      headers: Record<string, string>;
+    }) => void;
     api.detail.mockResolvedValueOnce({
-      id: 9, settlementNo: "TZ202608010009", status: "APPROVED", contractId: 1,
-      depositRefundableAmount: "100.00", prepaymentRefundableAmount: "0.00", rentRefundableAmount: "0.00", totalRefundAmount: "100.00", finalReceivable: "0.00",
-      depositRefunds: [{ id: 6, approvalStatus: "PENDING", refundAmount: "100.00", files: [{ fileAssetId: 77, originalName: "真实凭证.png", mimeType: "image/png" }] }],
+      id: 9,
+      settlementNo: "TZ202608010009",
+      status: "APPROVED",
+      contractId: 1,
+      depositRefundableAmount: "100.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      totalRefundAmount: "100.00",
+      finalReceivable: "0.00",
+      depositRefunds: [
+        {
+          id: 6,
+          approvalStatus: "PENDING",
+          refundAmount: "100.00",
+          files: [
+            {
+              fileAssetId: 77,
+              originalName: "真实凭证.png",
+              mimeType: "image/png",
+            },
+          ],
+        },
+      ],
     });
-    api.downloadRefundProof.mockImplementationOnce(() => new Promise((resolve) => { resolveDownload = resolve; }));
-    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:late-proof");
+    api.downloadRefundProof.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:late-proof");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL");
-    const wrapper = mount(CheckoutWorkspace, { global: { plugins: [checkoutTestPinia()] } });
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
     await flushPromises();
     await wrapper.get('[data-test="checkout-tab-refund"]').trigger("click");
     await flushPromises();
-    await wrapper.get('[data-test="refund-proof-preview-6-77"]').trigger("click");
+    await wrapper
+      .get('[data-test="refund-proof-preview-6-77"]')
+      .trigger("click");
     await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
-    resolveDownload({ data: new Blob(["proof"], { type: "image/png" }), headers: { "content-type": "image/png", "content-disposition": "attachment; filename*=UTF-8''真实凭证.png" } });
+    resolveDownload({
+      data: new Blob(["proof"], { type: "image/png" }),
+      headers: {
+        "content-type": "image/png",
+        "content-disposition": "attachment; filename*=UTF-8''真实凭证.png",
+      },
+    });
     await flushPromises();
 
-    expect(wrapper.find('[data-test="refund-proof-preview-dialog"]').exists()).toBe(false);
+    expect(
+      wrapper.find('[data-test="refund-proof-preview-dialog"]').exists(),
+    ).toBe(false);
     expect(createObjectURL).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:late-proof");
   });
@@ -1863,14 +2072,20 @@ describe("Task8 completed detail requests", () => {
 
     completed.vm.$emit("select", 17);
     await flushPromises();
-    const staleProofButton = wrapper.get('[data-test="refund-proof-preview-6-77"]');
+    const staleProofButton = wrapper.get(
+      '[data-test="refund-proof-preview-6-77"]',
+    );
     expect(wrapper.text()).toContain("TZ-DETAIL-A");
 
     completed.vm.$emit("select", 18);
     await flushPromises();
 
-    expect(wrapper.find(".checkout-workspace__readonly-detail").exists()).toBe(false);
-    expect(wrapper.find('[data-test="refund-proof-preview-6-77"]').exists()).toBe(false);
+    expect(wrapper.find(".checkout-workspace__readonly-detail").exists()).toBe(
+      false,
+    );
+    expect(
+      wrapper.find('[data-test="refund-proof-preview-6-77"]').exists(),
+    ).toBe(false);
     api.downloadRefundProof.mockClear();
     await staleProofButton.trigger("click");
     await flushPromises();

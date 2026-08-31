@@ -10,7 +10,7 @@ const settlement = {
   depositRefundableAmount: "800.00",
   prepaymentRefundableAmount: "500.00",
   rentRefundableAmount: "200.00",
-  totalRefundAmount: "1300.00",
+  totalRefundAmount: "1500.00",
   finalReceivable: "0.00",
 };
 
@@ -23,7 +23,7 @@ describe("Task8 refund panel hardening", () => {
     await wrapper.vm.$nextTick();
     await wrapper.get('[data-test="refund-submit"]').trigger("click");
     expect(wrapper.emitted("submit")?.[0]?.[0]).toMatchObject({
-      refundAmount: "1300.00",
+      refundAmount: "1500.00",
       proofFileIds: [77],
     });
   });
@@ -48,7 +48,7 @@ describe("Task8 refund panel hardening", () => {
             {
               id: 9,
               approvalStatus: "PENDING" as const,
-              refundAmount: "1300.00",
+              refundAmount: "1500.00",
               files: [{ fileAssetId: 77, originalName: "proof.png" }],
             },
           ],

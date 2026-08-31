@@ -44,7 +44,7 @@ export type CheckoutSettlementPayload = {
 
 export type DepositRefund = {
   id: number;
-  approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
   refundAmount: string;
   refundNo?: string;
   refundDate?: string;

@@ -23,6 +23,7 @@ const session = useSessionStore();
 const activeTab = ref<CheckoutTab>("initiate");
 const contracts = ref<CheckoutContract[]>([]);
 const settlements = ref<CheckoutSettlement[]>([]);
+const refundSettlements = ref<CheckoutSettlement[]>([]);
 const refundSettlement = ref<CheckoutSettlement>();
 const financeSnapshot = ref<{
   depositBalance: string;
@@ -52,6 +53,7 @@ const settlementMutationPending = ref(false);
 const refundUploading = ref(false);
 const refundSubmitting = ref(false);
 const refundApproving = ref(false);
+const refundCancelling = ref(false);
 const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const refundProofPreview = ref<{
@@ -116,14 +118,39 @@ async function loadData() {
       ]);
     contracts.value = loadedContracts;
     settlements.value = loadedSettlements;
-    const approved = refundPending[0];
-    setRefundSettlement(
-      approved ? await checkoutApi.detail(approved.id) : undefined,
-    );
+    refundSettlements.value = refundPending;
+    const selectedId = refundPending.some(
+      (item) => item.id === refundSettlement.value?.id,
+    )
+      ? refundSettlement.value?.id
+      : refundPending[0]?.id;
+    await selectRefundSettlement(selectedId);
   } catch (error) {
     actionError.value = message(error, "退租数据加载失败，请稍后重试");
   } finally {
     loadingContracts.value = false;
+  }
+}
+async function selectRefundSettlement(settlementId?: number) {
+  if (!settlementId) {
+    setRefundSettlement(undefined);
+    return;
+  }
+  const summary = refundSettlements.value.find(
+    (item) => item.id === settlementId,
+  );
+  setRefundSettlement(summary);
+  const requestVersion = refundRequestVersion;
+  try {
+    const detail = await checkoutApi.detail(settlementId);
+    if (
+      requestVersion === refundRequestVersion &&
+      refundSettlement.value?.id === settlementId
+    )
+      refundSettlement.value = detail;
+  } catch (error) {
+    if (requestVersion === refundRequestVersion)
+      actionError.value = message(error, "退租退款详情加载失败，请稍后重试");
   }
 }
 async function loadCompletedContracts(
@@ -459,6 +486,44 @@ async function approveRefund(id: number) {
     refundApproving.value = false;
   }
 }
+async function cancelRefundApplication(id: number) {
+  if (refundCancelling.value) return;
+  if (
+    !window.confirm(
+      "仅取消本次退款申请，退租结算和租金预留将继续保留。确定继续吗？",
+    )
+  )
+    return;
+  refundCancelling.value = true;
+  actionError.value = "";
+  try {
+    await checkoutApi.cancelRefund(id);
+    await loadData();
+  } catch (error) {
+    actionError.value = message(error, "取消退款申请失败，请稍后重试");
+  } finally {
+    refundCancelling.value = false;
+  }
+}
+async function cancelApprovedCheckout(id: number) {
+  if (refundCancelling.value) return;
+  if (
+    !window.confirm(
+      "将取消整个退租，恢复合同、房态、押金抵扣和相关账单。确定继续吗？",
+    )
+  )
+    return;
+  refundCancelling.value = true;
+  actionError.value = "";
+  try {
+    await checkoutApi.cancel(id);
+    await loadData();
+  } catch (error) {
+    actionError.value = message(error, "取消整个退租失败，请稍后重试");
+  } finally {
+    refundCancelling.value = false;
+  }
+}
 async function collectSupplemental(id: number) {
   const contractId = approvedSettlement.value?.contractId;
   if (!contractId) {
@@ -529,13 +594,18 @@ onMounted(initialize);
       v-else-if="activeTab === 'refund'"
       ref="refundPanel"
       :settlement="approvedSettlement"
+      :settlements="refundSettlements"
       :role="refundRole"
       :uploading="refundUploading"
       :submitting="refundSubmitting"
       :approving="refundApproving"
+      :cancelling="refundCancelling"
+      @select-settlement="selectRefundSettlement"
       @upload="uploadRefundProof"
       @submit="submitRefund"
       @approve="approveRefund"
+      @cancel-refund="cancelRefundApplication"
+      @cancel-checkout="cancelApprovedCheckout"
       @preview-proof="previewRefundProof"
       @collect-supplemental="collectSupplemental"
       @complete-zero="completeZeroRefund"
@@ -624,7 +694,13 @@ onMounted(initialize);
                   "
                   type="button"
                   class="checkout-workspace__proof-download"
-                  @click="previewCompletedRefundProof(completedDetail?.id, refund.id, file.fileAssetId)"
+                  @click="
+                    previewCompletedRefundProof(
+                      completedDetail?.id,
+                      refund.id,
+                      file.fileAssetId,
+                    )
+                  "
                 >
                   在线预览
                 </button>
@@ -637,9 +713,17 @@ onMounted(initialize);
                   "
                   type="button"
                   class="checkout-workspace__proof-download"
-                  @click="downloadCompletedRefundProof(completedDetail?.id, refund.id, file.fileAssetId)"
+                  @click="
+                    downloadCompletedRefundProof(
+                      completedDetail?.id,
+                      refund.id,
+                      file.fileAssetId,
+                    )
+                  "
                 >
-                  下载凭证：{{ file.originalName || "退款凭证-" + file.fileAssetId }}（凭证编号：{{ file.fileAssetId }}）
+                  下载凭证：{{
+                    file.originalName || "退款凭证-" + file.fileAssetId
+                  }}（凭证编号：{{ file.fileAssetId }}）
                 </button>
               </template>
             </div>
