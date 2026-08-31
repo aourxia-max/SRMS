@@ -13,6 +13,7 @@ import {
   reserveCheckoutRentRefund,
 } from './checkout-rent-refund-reservations';
 import { normalizeFutureCheckoutBills } from './checkout-future-bill-normalization';
+import { rollbackApprovedCheckout } from './checkout-approved-cancellation';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
@@ -1002,9 +1003,13 @@ export class CheckoutService {
           where: { id },
           include: { contract: { include: { room: true } } },
         });
-        if (!['DRAFT', 'PENDING', 'REJECTED'].includes(settlement.status))
+        if (
+          !['DRAFT', 'PENDING', 'REJECTED', 'APPROVED'].includes(
+            settlement.status,
+          )
+        )
           throw new BadRequestException(
-            '只有草稿、待确认或已驳回的退租结算工单可以取消',
+            '只有草稿、待确认、已驳回或待退款的退租结算工单可以取消',
           );
         assertContractNotVoided(settlement.contract.status, '取消退租结算');
         if (
@@ -1027,14 +1032,30 @@ export class CheckoutService {
           );
         const restoreStatus = initialHistory.fromStatus;
 
-        if (settlement.supplementalRequired)
-          await assertNoPendingCheckoutSupplementalReversal(
-            tx,
-            settlement.contractId,
-          );
-        await releaseCheckoutRentRefund(tx, id, '取消退租结算');
+        const occurredAt = new Date();
+        if (settlement.status === 'APPROVED') {
+          if (!settlement.actualCheckoutDate)
+            throw new BadRequestException('结算单缺少实际退房日期');
+          await rollbackApprovedCheckout(tx, {
+            settlementId: settlement.id,
+            contractId: settlement.contractId,
+            actualCheckoutDate: settlement.actualCheckoutDate,
+            operatorId: user.id,
+            occurredAt,
+          });
+        } else {
+          if (settlement.supplementalRequired)
+            await assertNoPendingCheckoutSupplementalReversal(
+              tx,
+              settlement.contractId,
+            );
+          await releaseCheckoutRentRefund(tx, id, '取消退租结算');
+        }
         const claimed = await tx.checkoutSettlement.updateMany({
-          where: { id, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
+          where: {
+            id,
+            status: { in: ['DRAFT', 'PENDING', 'REJECTED', 'APPROVED'] },
+          },
           data: { status: 'CANCELLED' },
         });
         if (claimed.count !== 1)
@@ -1054,7 +1075,7 @@ export class CheckoutService {
           },
           data: {
             roomStatus: restoreStatus,
-            statusChangedAt: new Date(),
+            statusChangedAt: occurredAt,
           },
         });
         if (roomRestored.count !== 1)

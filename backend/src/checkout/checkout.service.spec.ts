@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CheckoutService } from './checkout.service';
 import * as futureBillNormalization from './checkout-future-bill-normalization';
+import * as approvedCancellation from './checkout-approved-cancellation';
 
 function transactional<T extends object>(tx: T) {
   const client = {
@@ -414,7 +415,10 @@ describe('CheckoutService', () => {
       status: 'CANCELLED',
     });
     expect(settlementUpdateMany).toHaveBeenCalledWith({
-      where: { id: 1, status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
+      where: {
+        id: 1,
+        status: { in: ['DRAFT', 'PENDING', 'REJECTED', 'APPROVED'] },
+      },
       data: { status: 'CANCELLED' },
     });
     expect(contractUpdateMany).toHaveBeenCalledWith({
@@ -448,9 +452,18 @@ describe('CheckoutService', () => {
     });
   });
 
-  it('rejects cancelling an approved settlement before restoring contract or room', async () => {
-    const contractUpdateMany = jest.fn();
-    const roomUpdateMany = jest.fn();
+  it('safely rolls back an approved settlement before restoring contract and room', async () => {
+    const rollback = jest
+      .spyOn(approvedCancellation, 'rollbackApprovedCheckout')
+      .mockResolvedValue({
+        cancelledRefundCount: 1,
+        releasedReservationCount: 1,
+        restoredDepositAmount: '100.00',
+        restoredLegacyFutureBillIds: [261],
+      });
+    const settlementUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const contractUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const roomUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
@@ -458,14 +471,25 @@ describe('CheckoutService', () => {
           id: 1,
           contractId: 3,
           status: 'APPROVED',
+          originContractStatus: 'ACTIVE',
+          actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
+          supplementalRequired: false,
           contract: {
+            id: 3,
             status: 'PENDING_CHECKOUT',
-            room: { roomStatus: 'PENDING_CHECKOUT' },
+            roomId: 7,
+            room: { id: 7, roomStatus: 'PENDING_CHECKOUT' },
           },
         }),
+        updateMany: settlementUpdateMany,
+        findUnique: jest.fn().mockResolvedValue({ id: 1, status: 'CANCELLED' }),
       },
       contract: { updateMany: contractUpdateMany },
       room: { updateMany: roomUpdateMany },
+      roomStatusHistory: {
+        findFirst: jest.fn().mockResolvedValue({ fromStatus: 'RENTED' }),
+        create: jest.fn(),
+      },
       checkoutRentRefundAllocation: {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
@@ -479,11 +503,32 @@ describe('CheckoutService', () => {
       },
     } as never);
 
-    await expect(service.cancel(1, user)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-    expect(contractUpdateMany).not.toHaveBeenCalled();
-    expect(roomUpdateMany).not.toHaveBeenCalled();
+    try {
+      await expect(service.cancel(1, user)).resolves.toEqual({
+        id: 1,
+        status: 'CANCELLED',
+      });
+      expect(rollback).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          settlementId: 1,
+          contractId: 3,
+          actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
+          operatorId: user.id,
+        }),
+      );
+      expect(settlementUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: 1,
+          status: { in: ['DRAFT', 'PENDING', 'REJECTED', 'APPROVED'] },
+        },
+        data: { status: 'CANCELLED' },
+      });
+      expect(contractUpdateMany).toHaveBeenCalled();
+      expect(roomUpdateMany).toHaveBeenCalled();
+    } finally {
+      rollback.mockRestore();
+    }
   });
 
   it('lists approved settlements separately for final refund confirmation', async () => {
