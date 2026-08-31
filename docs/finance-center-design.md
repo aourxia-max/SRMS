@@ -38,7 +38,7 @@
 收租率 = 有效实收 ÷ 租金净应收 × 100%
 ```
 
-“仍有效的已确认普通优惠／减免”仅指`adjustment_type`为`DISCOUNT`或`WAIVER`、`direction=DECREASE`、`approval_status=APPROVED`且`reversed_by_adjustment_id`为空的账单调整。`INCREASE`、`CORRECTION`、`CHECKOUT_RENT_REFUND`、计价返利、退款及作废／反向调整本身不计入优惠减免；退款选择保留原优惠时原优惠仍可计入，反向调整或收款作废使原优惠的`reversed_by_adjustment_id`非空时不再计入。该统计口径不改变既有账单、退款或作废的冻结业务。
+“仍有效的已确认普通优惠／减免”仅指`adjustment_type`为`DISCOUNT`或`WAIVER`、`direction=DECREASE`、`approval_status=APPROVED`且`reversed_by_adjustment_id`为空的账单调整。`INCREASE`、`CORRECTION`、`CHECKOUT_RENT_REFUND`、人工退差、退款及作废／反向调整本身不计入优惠减免；退款选择保留原优惠时原优惠仍可计入，反向调整或收款作废使原优惠的`reversed_by_adjustment_id`非空时不再计入。该统计口径不改变既有账单、退款或作废的冻结业务。
 
 净应收为0时收租率显示“—”，不参与整体收租率分母。
 

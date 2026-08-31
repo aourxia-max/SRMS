@@ -496,7 +496,7 @@ outstanding_amount = max(0, payable_amount - received_amount)
 | approved_at | DATETIME(3) NULL | 确认时间 |
 | reversed_by_adjustment_id | INT UNSIGNED NULL | 撤销时关联的逆向调整 |
 
-普通管理员可在收款登记时提交优惠／减免，但只有超级管理员确认后才更新`rent_bills.adjustment_amount`：`DECREASE`按负数累计，`INCREASE`按正数累计。待审批和驳回记录不得影响账单应收。财务中心的“优惠减免”不等同于所有调减：仅统计`adjustment_type`为`DISCOUNT`或`WAIVER`、`direction=DECREASE`、`approval_status=APPROVED`且`reversed_by_adjustment_id`为空的普通调整；`INCREASE`、`CORRECTION`、`CHECKOUT_RENT_REFUND`、计价返利、退款及作废／反向调整不统计为优惠减免。
+普通管理员可在收款登记时提交优惠／减免，但只有超级管理员确认后才更新`rent_bills.adjustment_amount`：`DECREASE`按负数累计，`INCREASE`按正数累计。待审批和驳回记录不得影响账单应收。财务中心的“优惠减免”不等同于所有调减：仅统计`adjustment_type`为`DISCOUNT`或`WAIVER`、`direction=DECREASE`、`approval_status=APPROVED`且`reversed_by_adjustment_id`为空的普通调整；`INCREASE`、`CORRECTION`、`CHECKOUT_RENT_REFUND`、人工退差、退款及作废／反向调整不统计为优惠减免。
 
 跨多个账期的减免为每张账单创建一条调整明细，并用同一`adjustment_no`归组；各明细金额合计必须等于申请总额。与收款绑定的一次性优惠在整笔收款作废时生成逆向调整，不删除原记录。部分退款涉及关联优惠时必须显式记录保留或撤销决定。
 
