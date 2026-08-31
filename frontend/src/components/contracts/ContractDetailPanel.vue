@@ -2,7 +2,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
 import { presentContractChange, type ContractChangeRecord } from './contract-change-presentation'
-import { isFixedRentRebateEligible, isPreviewableContractImage } from '../../services/contracts'
+import { isFixedRentRebateEligible, isPreviewableContractImage, updateContractRemark } from '../../services/contracts'
 import { http } from '../../services/http'
 import type { ContractChange, ContractDetail, ContractFile, ContractRole, RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
@@ -18,7 +18,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
 }>(), { contract: null, bills: () => [], files: () => [], changes: () => [], payments: () => [], loading: false })
 
-const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; 'void-correction': [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; upload: [file: File]; commissionChanged: [] }>()
+const emit = defineEmits<{ back: []; rebate: [contractId: number]; checkout: [contractId: number]; payment: [contractId: number]; 'void-correction': [contractId: number]; preview: [file: ContractFile]; download: [file: ContractFile]; upload: [file: File]; commissionChanged: []; remarkChanged: [] }>()
 const activeSection = ref('overview')
 const primaryTenant = computed(() => props.contract?.members?.find((item) => item.memberRole === 'PRIMARY')?.tenant)
 const money = (value?: string | null) => value ? `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}` : '—'
@@ -28,7 +28,11 @@ const canVoidContract = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.r
 const canInitiateCheckout = computed(() => ['PENDING_START', 'ACTIVE'].includes(props.contract?.status || ''))
 const canRegisterPayment = computed(() => props.contract?.status === 'ACTIVE')
 const canUploadContractFile = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.role) && props.contract?.status !== 'VOIDED')
+const canEditRemark = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(props.role) && props.contract?.status !== 'VOIDED')
 const activeCommission = computed(() => props.contract?.commissions?.[0] ?? null)
+const remarkDialog = ref(false)
+const remarkSaving = ref(false)
+const remarkForm = ref('')
 const commissionDialog = ref(false)
 const commissionSaving = ref(false)
 const commissionForm = reactive({ recipientName: '', amount: '' })
@@ -37,6 +41,27 @@ function handleAppendUpload(uploadFile: { raw?: File }) {
 }
 function changePresentation(change: ContractChangeRecord) {
   return presentContractChange(change)
+}
+
+function openRemark() {
+  remarkForm.value = props.contract?.remark ?? ''
+  remarkDialog.value = true
+}
+
+async function saveRemark() {
+  if (!props.contract || remarkSaving.value) return
+  const remark = remarkForm.value.trim() || null
+  remarkSaving.value = true
+  try {
+    await updateContractRemark(props.contract.id, remark)
+    remarkDialog.value = false
+    emit('remarkChanged')
+    ElMessage.success(remark ? '合同备注已保存' : '合同备注已清除')
+  } catch (error) {
+    ElMessage.error(commissionError(error, '合同备注保存失败，请稍后重试'))
+  } finally {
+    remarkSaving.value = false
+  }
 }
 
 function commissionError(error: unknown, fallback: string) {
@@ -154,7 +179,12 @@ async function removeCommission() {
                 <el-descriptions-item label="合同结束日期">{{ date(contract.endDate) }}</el-descriptions-item>
                 <el-descriptions-item label="计划入住日期">{{ date(contract.plannedMoveInDate) }}</el-descriptions-item>
                 <el-descriptions-item label="已收押金">{{ money(contract.depositRequired) }}</el-descriptions-item>
-                <el-descriptions-item label="合同备注" :span="2">{{ contract.remark || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="合同备注" :span="2">
+                  <div class="remark-row">
+                    <span>{{ contract.remark || '—' }}</span>
+                    <el-button v-if="canEditRemark" data-test="edit-contract-remark" type="primary" link @click="openRemark">编辑备注</el-button>
+                  </div>
+                </el-descriptions-item>
               </el-descriptions>
             </el-tab-pane>
             <el-tab-pane label="租金账单" name="bills">
@@ -221,6 +251,15 @@ async function removeCommission() {
       </div>
     </template>
 
+    <el-dialog v-model="remarkDialog" title="编辑合同备注" width="560px" append-to-body>
+      <el-form label-position="top">
+        <el-form-item label="合同备注">
+          <el-input v-model="remarkForm" type="textarea" :rows="5" maxlength="500" show-word-limit placeholder="可补充合同相关说明；清空后保存可删除原备注" />
+        </el-form-item>
+      </el-form>
+      <template #footer><el-button :disabled="remarkSaving" @click="remarkDialog = false">取消</el-button><el-button data-test="save-contract-remark" type="primary" :loading="remarkSaving" @click="saveRemark">保存</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="commissionDialog" :title="activeCommission ? '编辑租房提成' : '登记租房提成'" width="520px" append-to-body>
       <el-form label-position="top">
         <el-form-item label="提成所属对象" required><el-input v-model="commissionForm.recipientName" maxlength="120" placeholder="请输入姓名或单位" /></el-form-item>
@@ -248,6 +287,7 @@ async function removeCommission() {
 .summary-list { display: grid; gap: 12px; padding: 17px; }.summary-list > div { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 1px dashed #e2e7ee; }.summary-list span { color: #748196; }.commission-row > div { display:flex; align-items:flex-end; flex-direction:column; gap:4px; }.commission-dialog-footer { display:grid; grid-template-columns:auto 1fr auto auto; gap:8px; }.summary-list b { text-align: right; }.money-blue { color: #246bfd; }.commission { color: #6848c2; }
 .notice { padding: 12px; margin-top: 15px; color: #46648e; font-size: 12px; background: #eef4ff; border: 1px solid #ccdcfb; border-radius: 8px; }
 .file-actions { display:flex; align-items:center; gap:12px; margin-bottom:14px; }.file-actions span { color:#748196; font-size:12px; }
+.remark-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }
 .change-list { display:grid; gap:12px; }.change-card { padding:15px; background:#f8faff; border:1px solid #e4eaf4; border-radius:10px; }
 .change-card header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:12px; }.change-card header div { display:flex; align-items:baseline; gap:10px; }.change-card header small { color:#8491a5; }
 .change-card dl { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; margin:0; padding:10px 0; border-top:1px dashed #dfe6f0; }.change-card dt { color:#66758b; }.change-card dd { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:10px; margin:0; }.change-card dd b { color:#246bfd; }

@@ -276,6 +276,54 @@ const activeContract = (): ContractDetail => ({
   commissions: [],
 })
 
+describe('合同备注保存后的详情刷新', () => {
+  it('收到备注变更事件后重新加载当前合同详情', async () => {
+    const initial = { ...activeContract(), remark: '原备注' }
+    const refreshed = { ...activeContract(), remark: '新备注' }
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([initial])
+    const getContract = vi
+      .spyOn(contractService, 'getContract')
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(refreshed)
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = { id: 2, username: 'admin', displayName: '管理员', role: 'ADMIN' }
+    session.accessToken = 'access-token'
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=detail&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+
+    wrapper.getComponent(ContractDetailPanel).vm.$emit('remarkChanged')
+    await flushPromises()
+
+    expect(getContract).toHaveBeenCalledTimes(2)
+    expect(wrapper.getComponent(ContractDetailPanel).props('contract')).toMatchObject({
+      id: 12,
+      remark: '新备注',
+    })
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+})
+
 function deferredMessageBoxPrompt() {
   let resolvePrompt!: (value: { value: string; action: 'confirm' }) => void
   let rejectPrompt!: (reason?: unknown) => void

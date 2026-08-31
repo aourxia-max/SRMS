@@ -98,6 +98,14 @@ export async function getContract(id: number) {
   return (await http.get<ApiResponse<ContractDetail>>(`/contracts/${id}`)).data.data
 }
 
+export async function updateContractRemark(id: number, remark: string | null) {
+  return (
+    await http.patch<
+      ApiResponse<{ id: number; remark: string | null; updatedAt: string }>
+    >(`/contracts/${id}/remark`, { remark })
+  ).data.data
+}
+
 export async function getContractBills(id: number) {
   return (await http.get<ApiResponse<RentBill[]>>(`/contracts/${id}/bills`)).data.data
 }
