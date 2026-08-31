@@ -28,6 +28,22 @@ type Fixture = {
   proofFileId: number;
 };
 
+type CleanupScope = {
+  buildingIds: number[];
+  roomIds: number[];
+  tenantIds: number[];
+  contractIds: number[];
+  settlementIds: number[];
+  itemIds: number[];
+  refundIds: number[];
+  paymentRefundIds: number[];
+  paymentRefundAuditIds: number[];
+  voidRequestIds: number[];
+  billIds: number[];
+  paymentIds: number[];
+  fileIds: number[];
+};
+
 const actualCheckoutDate = '2035-01-15';
 const refundDate = '2035-01-20';
 
@@ -113,8 +129,14 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   });
 
   afterAll(async () => {
-    if (prisma) await cleanupSuiteData();
-    if (app) await app.close();
+    try {
+      if (prisma) {
+        const cleanupScope = await cleanupSuiteData();
+        await assertSuiteDataRemoved(cleanupScope);
+      }
+    } finally {
+      if (app) await app.close();
+    }
   });
 
   function asRole(role: UserRole): AuthUser {
@@ -553,6 +575,100 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
       direction: 'DECREASE',
     });
     expect(adjustment.amount.toFixed(2)).toBe('1000.00');
+
+    const [
+      settlement,
+      contract,
+      room,
+      proof,
+      depositRefundLedgers,
+      prepaymentRefundLedgers,
+      roomHistories,
+      auditLogs,
+    ] = await Promise.all([
+      prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id: fixture.settlementId },
+      }),
+      prisma.db.contract.findUniqueOrThrow({
+        where: { id: fixture.contractId },
+      }),
+      prisma.db.room.findUniqueOrThrow({ where: { id: fixture.roomId } }),
+      prisma.db.fileAsset.findUniqueOrThrow({
+        where: { id: fixture.proofFileId },
+      }),
+      prisma.db.depositTransaction.findMany({
+        where: {
+          contractId: fixture.contractId,
+          checkoutSettlementId: fixture.settlementId,
+          depositRefundId: refundId,
+          transactionType: 'REFUND',
+        },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.db.prepaymentTransaction.findMany({
+        where: {
+          contractId: fixture.contractId,
+          transactionType: 'REFUND',
+          reason: '退租结算预收款退款',
+        },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.db.roomStatusHistory.findMany({
+        where: {
+          roomId: fixture.roomId,
+          businessType: 'DEPOSIT_REFUND',
+          businessId: refundId,
+        },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.db.securityAuditLog.findMany({
+        where: {
+          eventType: 'CHECKOUT_REFUND_APPROVED',
+          entityType: 'DEPOSIT_REFUND',
+          entityId: refundId,
+        },
+        orderBy: { id: 'asc' },
+      }),
+    ]);
+    expect(settlement.status).toBe('COMPLETED');
+    expect(contract.status).toBe('ENDED');
+    expect(room.roomStatus).toBe('EMPTY');
+    expect(proof.lockedAt).toEqual(expect.any(Date));
+    expect(depositRefundLedgers).toHaveLength(1);
+    expect(depositRefundLedgers[0]).toMatchObject({
+      contractId: fixture.contractId,
+      checkoutSettlementId: fixture.settlementId,
+      depositRefundId: refundId,
+      transactionType: 'REFUND',
+      reason: '退租结算押金退款',
+    });
+    expect(depositRefundLedgers[0].amount.toFixed(2)).toBe('800.00');
+    expect(depositRefundLedgers[0].balanceAfter.toFixed(2)).toBe('0.00');
+    expect(prepaymentRefundLedgers).toHaveLength(1);
+    expect(prepaymentRefundLedgers[0]).toMatchObject({
+      contractId: fixture.contractId,
+      transactionType: 'REFUND',
+      reason: '退租结算预收款退款',
+    });
+    expect(prepaymentRefundLedgers[0].amount.toFixed(2)).toBe('200.00');
+    expect(prepaymentRefundLedgers[0].balanceAfter.toFixed(2)).toBe('0.00');
+    expect(roomHistories).toEqual([
+      expect.objectContaining({
+        fromStatus: 'PENDING_CHECKOUT',
+        toStatus: 'EMPTY',
+        changeReason: '确认退租合并退款并结束合同',
+        changedBy: operator.id,
+      }),
+    ]);
+    expect(auditLogs).toHaveLength(1);
+    expect(auditLogs[0]).toMatchObject({ operatorId: operator.id });
+    expect(auditLogs[0].eventData).toEqual({
+      checkoutSettlementId: fixture.settlementId,
+      refundAmount: '2000.00',
+      depositRefundAmount: '800.00',
+      prepaymentRefundAmount: '200.00',
+      rentRefundAmount: '1000.00',
+    });
 
     const completedDetail = await request(app.getHttpServer())
       .get(`/api/checkout-settlements/${fixture.settlementId}`)
@@ -1114,6 +1230,17 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         })
       : [];
     const paymentRefundIds = paymentRefunds.map(({ id }) => id);
+    const paymentRefundAudits = paymentRefundIds.length
+      ? await prisma.db.securityAuditLog.findMany({
+          where: {
+            entityType: 'PAYMENT_REFUND',
+            entityId: { in: paymentRefundIds },
+          },
+          select: { id: true },
+        })
+      : [];
+    const paymentRefundAuditIds = paymentRefundAudits.map(({ id }) => id);
+
     const voidRequests = contractIds.length
       ? await prisma.db.contractVoidRequest.findMany({
           where: { contractId: { in: contractIds } },
@@ -1159,6 +1286,22 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     });
     const fileIds = files.map(({ id }) => id);
 
+    const cleanupScope: CleanupScope = {
+      buildingIds,
+      roomIds,
+      tenantIds,
+      contractIds,
+      settlementIds,
+      itemIds,
+      refundIds,
+      paymentRefundIds,
+      paymentRefundAuditIds,
+      voidRequestIds,
+      billIds,
+      paymentIds,
+      fileIds,
+    };
+
     await prisma.db.$transaction(async (tx) => {
       if (refundIds.length) {
         await tx.securityAuditLog.deleteMany({
@@ -1201,6 +1344,12 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         await tx.depositRefund.deleteMany({ where: { id: { in: refundIds } } });
       }
       if (paymentRefundIds.length) {
+        await tx.securityAuditLog.deleteMany({
+          where: {
+            entityType: 'PAYMENT_REFUND',
+            entityId: { in: paymentRefundIds },
+          },
+        });
         await tx.paymentRefundAdjustmentDecision.deleteMany({
           where: { paymentRefundId: { in: paymentRefundIds } },
         });
@@ -1272,5 +1421,261 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         await tx.fileAsset.deleteMany({ where: { id: { in: fileIds } } });
       }
     });
+
+    return cleanupScope;
+  }
+
+  async function assertSuiteDataRemoved(scope: CleanupScope) {
+    const counts = await Promise.all([
+      prisma.db.building.count({
+        where: {
+          OR: [
+            { id: { in: scope.buildingIds } },
+            { buildingNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.room.count({
+        where: {
+          OR: [
+            { id: { in: scope.roomIds } },
+            { fullHouseNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.tenant.count({
+        where: {
+          OR: [
+            { id: { in: scope.tenantIds } },
+            { name: { startsWith: `Task9退租退款租户${suitePrefix}` } },
+          ],
+        },
+      }),
+      prisma.db.contract.count({
+        where: {
+          OR: [
+            { id: { in: scope.contractIds } },
+            { contractNo: { startsWith: suitePrefix } },
+            { externalContractNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.contractMember.count({
+        where: { contractId: { in: scope.contractIds } },
+      }),
+      prisma.db.contractVoidRequest.count({
+        where: {
+          OR: [
+            { id: { in: scope.voidRequestIds } },
+            { contractId: { in: scope.contractIds } },
+          ],
+        },
+      }),
+      prisma.db.contractVoidReversal.count({
+        where: { contractVoidRequestId: { in: scope.voidRequestIds } },
+      }),
+      prisma.db.contractVoidRequestFile.count({
+        where: {
+          OR: [
+            { contractVoidRequestId: { in: scope.voidRequestIds } },
+            { fileAssetId: { in: scope.fileIds } },
+          ],
+        },
+      }),
+      prisma.db.checkoutSettlement.count({
+        where: {
+          OR: [
+            { id: { in: scope.settlementIds } },
+            { contractId: { in: scope.contractIds } },
+            { settlementNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.checkoutSettlementItem.count({
+        where: {
+          OR: [
+            { id: { in: scope.itemIds } },
+            { checkoutSettlementId: { in: scope.settlementIds } },
+          ],
+        },
+      }),
+      prisma.db.checkoutSettlementItemFile.count({
+        where: {
+          OR: [
+            { checkoutSettlementItemId: { in: scope.itemIds } },
+            { fileAssetId: { in: scope.fileIds } },
+          ],
+        },
+      }),
+      prisma.db.checkoutRentRefundAllocation.count({
+        where: {
+          OR: [
+            { checkoutSettlementItemId: { in: scope.itemIds } },
+            { paymentId: { in: scope.paymentIds } },
+            { rentBillId: { in: scope.billIds } },
+            { depositRefundId: { in: scope.refundIds } },
+          ],
+        },
+      }),
+      prisma.db.depositRefund.count({
+        where: {
+          OR: [
+            { id: { in: scope.refundIds } },
+            { contractId: { in: scope.contractIds } },
+            { checkoutSettlementId: { in: scope.settlementIds } },
+            { refundNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.depositRefundFile.count({
+        where: {
+          OR: [
+            { depositRefundId: { in: scope.refundIds } },
+            { fileAssetId: { in: scope.fileIds } },
+          ],
+        },
+      }),
+      prisma.db.securityAuditLog.count({
+        where: {
+          OR: [
+            { id: { in: scope.paymentRefundAuditIds } },
+            {
+              entityType: 'DEPOSIT_REFUND',
+              entityId: { in: scope.refundIds },
+            },
+            {
+              entityType: 'PAYMENT_REFUND',
+              entityId: { in: scope.paymentRefundIds },
+            },
+          ],
+        },
+      }),
+      prisma.db.depositTransaction.count({
+        where: {
+          OR: [
+            { contractId: { in: scope.contractIds } },
+            { checkoutSettlementId: { in: scope.settlementIds } },
+            { depositRefundId: { in: scope.refundIds } },
+            { transactionNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.prepaymentTransaction.count({
+        where: {
+          OR: [
+            { contractId: { in: scope.contractIds } },
+            { paymentId: { in: scope.paymentIds } },
+            { rentBillId: { in: scope.billIds } },
+            { transactionNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.paymentRefund.count({
+        where: {
+          OR: [
+            { id: { in: scope.paymentRefundIds } },
+            { contractId: { in: scope.contractIds } },
+            { paymentId: { in: scope.paymentIds } },
+          ],
+        },
+      }),
+      prisma.db.paymentRefundAdjustmentDecision.count({
+        where: { paymentRefundId: { in: scope.paymentRefundIds } },
+      }),
+      prisma.db.paymentRefundAllocation.count({
+        where: { paymentRefundId: { in: scope.paymentRefundIds } },
+      }),
+      prisma.db.paymentVoidRequest.count({
+        where: { paymentId: { in: scope.paymentIds } },
+      }),
+      prisma.db.billAdjustment.count({
+        where: { rentBillId: { in: scope.billIds } },
+      }),
+      prisma.db.paymentFile.count({
+        where: {
+          OR: [
+            { paymentId: { in: scope.paymentIds } },
+            { fileAssetId: { in: scope.fileIds } },
+          ],
+        },
+      }),
+      prisma.db.paymentAllocation.count({
+        where: {
+          OR: [
+            { paymentId: { in: scope.paymentIds } },
+            { rentBillId: { in: scope.billIds } },
+          ],
+        },
+      }),
+      prisma.db.payment.count({
+        where: {
+          OR: [
+            { id: { in: scope.paymentIds } },
+            { contractId: { in: scope.contractIds } },
+            { receiptNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.rentBill.count({
+        where: {
+          OR: [
+            { id: { in: scope.billIds } },
+            { contractId: { in: scope.contractIds } },
+            { billNo: { startsWith: suitePrefix } },
+          ],
+        },
+      }),
+      prisma.db.roomStatusHistory.count({
+        where: { roomId: { in: scope.roomIds } },
+      }),
+      prisma.db.fileAsset.count({
+        where: {
+          OR: [
+            { id: { in: scope.fileIds } },
+            {
+              storageKey: {
+                startsWith: `task9-checkout-rent-refund/${suitePrefix}/`,
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+    const labels = [
+      'building',
+      'room',
+      'tenant',
+      'contract',
+      'contractMember',
+      'contractVoidRequest',
+      'contractVoidReversal',
+      'contractVoidRequestFile',
+      'checkoutSettlement',
+      'checkoutSettlementItem',
+      'checkoutSettlementItemFile',
+      'checkoutRentRefundAllocation',
+      'depositRefund',
+      'depositRefundFile',
+      'securityAuditLog',
+      'depositTransaction',
+      'prepaymentTransaction',
+      'paymentRefund',
+      'paymentRefundAdjustmentDecision',
+      'paymentRefundAllocation',
+      'paymentVoidRequest',
+      'billAdjustment',
+      'paymentFile',
+      'paymentAllocation',
+      'payment',
+      'rentBill',
+      'roomStatusHistory',
+      'fileAsset',
+    ];
+    const residuals = Object.fromEntries(
+      labels
+        .map((label, index) => [label, counts[index]])
+        .filter(([, count]) => count !== 0),
+    );
+    expect(residuals).toEqual({});
   }
 });
