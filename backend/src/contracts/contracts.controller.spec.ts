@@ -47,6 +47,46 @@ describe('ContractsController', () => {
     });
   });
 
+  it('registers and delegates the administrator-only contract remark route', async () => {
+    const updated = {
+      id: 7,
+      remark: '补充说明',
+      updatedAt: new Date('2026-09-01T01:00:00.000Z'),
+    };
+    const updateRemark = jest.fn().mockResolvedValue(updated);
+    const controller = controllerWith({ updateRemark });
+    const prototype = ContractsController.prototype as unknown as Record<
+      string,
+      object | undefined
+    >;
+    const handler = prototype.updateRemark;
+
+    expect(handler).toBeDefined();
+    if (!handler) return;
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(':id/remark');
+    expect(Reflect.getMetadata(ROLES_KEY, handler)).toEqual([
+      UserRole.SUPER_ADMIN,
+      UserRole.ADMIN,
+    ]);
+
+    await expect(
+      (
+        controller as unknown as {
+          updateRemark: (
+            id: number,
+            dto: { remark: string | null },
+            user: AuthUser,
+          ) => Promise<unknown>;
+        }
+      ).updateRemark(7, { remark: '补充说明' }, admin),
+    ).resolves.toEqual({ code: 200, message: 'success', data: updated });
+    expect(updateRemark).toHaveBeenCalledWith(
+      7,
+      { remark: '补充说明' },
+      admin,
+    );
+  });
+
   it('rejects commission data from an admin before creating a fixed contract', async () => {
     const createFixedContract = jest.fn();
     const controller = controllerWith({ createFixedContract });

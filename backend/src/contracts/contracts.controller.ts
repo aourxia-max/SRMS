@@ -34,6 +34,7 @@ import { PreviewFixedContractDto } from './dto/preview-fixed-contract.dto';
 import { FilesService } from '../files/files.service';
 import type { UploadedFile as ContractUploadedFile } from '../files/files.service';
 import { ContractLifecycleService } from './contract-lifecycle.service';
+import { UpdateContractRemarkDto } from './dto/update-contract-remark.dto';
 
 // Multer needs a synchronous cap before ConfigService/database settings are
 // available. The product allows a dynamic 1–100 MiB system limit, so this
@@ -240,6 +241,20 @@ export class ContractsController {
       code: 200,
       message: 'success',
       data: await this.contracts.changes(id),
+    };
+  }
+
+  @Patch(':id/remark')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async updateRemark(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateContractRemarkDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.contracts.updateRemark(id, dto, user),
     };
   }
 

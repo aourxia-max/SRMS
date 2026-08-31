@@ -64,6 +64,117 @@ describe('ContractsService', () => {
     primaryTenantId: 1,
   };
 
+  describe('updateRemark', () => {
+    function remarkService(
+      contract: {
+        id: number;
+        contractNo: string;
+        status: 'ACTIVE' | 'ENDED' | 'VOIDED';
+        remark: string | null;
+      } = {
+        id: 7,
+        contractNo: 'HT202608050001 | 2栋301 | 李四',
+        status: 'ACTIVE',
+        remark: null,
+      },
+    ) {
+      const updatedAt = new Date('2026-09-01T01:00:00.000Z');
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([{ id: contract.id }]),
+        contract: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue(contract),
+          update: jest.fn().mockImplementation(({ data }: { data: { remark: string | null } }) =>
+            Promise.resolve({ id: contract.id, remark: data.remark, updatedAt }),
+          ),
+        },
+        operationLog: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const prisma = {
+        db: {
+          $transaction: jest.fn((callback: (value: typeof tx) => Promise<unknown>) =>
+            callback(tx),
+          ),
+        },
+      };
+      return { service: new ContractsService(prisma as never), tx, updatedAt };
+    }
+
+    it('trims and updates a remark under a row lock with an audit log', async () => {
+      const { service, tx, updatedAt } = remarkService();
+
+      await expect(
+        service.updateRemark(7, { remark: '  补充说明  ' }, admin),
+      ).resolves.toEqual({ id: 7, remark: '补充说明', updatedAt });
+
+      expect(tx.contract.findUniqueOrThrow).toHaveBeenCalledWith({
+        where: { id: 7 },
+        select: { id: true, contractNo: true, status: true, remark: true },
+      });
+      expect(tx.contract.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { remark: '补充说明' },
+        select: { id: true, remark: true, updatedAt: true },
+      });
+      expect(tx.operationLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          module: 'CONTRACT',
+          action: 'UPDATE_CONTRACT_REMARK',
+          entityType: 'CONTRACT',
+          entityId: 7,
+          entityNo: 'HT202608050001 | 2栋301 | 李四',
+          beforeData: { remark: null },
+          afterData: { remark: '补充说明' },
+          operatorId: admin.id,
+          operatorRole: admin.role,
+        }),
+      });
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+      );
+      expect(tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.contract.update.mock.invocationCallOrder[0],
+      );
+      expect(tx.contract.update.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.operationLog.create.mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each([
+      { input: { remark: '   ' }, expected: null },
+      { input: { remark: null }, expected: null },
+    ])('normalizes a blank or null remark to null', async ({ input, expected }) => {
+      const { service, tx } = remarkService({
+        id: 7,
+        contractNo: 'HT202608050001',
+        status: 'ENDED',
+        remark: '旧备注',
+      });
+
+      await expect(service.updateRemark(7, input, admin)).resolves.toMatchObject({
+        id: 7,
+        remark: expected,
+      });
+      expect(tx.contract.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { remark: expected } }),
+      );
+    });
+
+    it('rejects a voided contract before update and audit writes', async () => {
+      const { service, tx } = remarkService({
+        id: 7,
+        contractNo: 'HT202608050001',
+        status: 'VOIDED',
+        remark: '封存备注',
+      });
+
+      await expect(
+        service.updateRemark(7, { remark: '不应保存' }, admin),
+      ).rejects.toThrow('已作废合同不能修改备注');
+      expect(tx.contract.update).not.toHaveBeenCalled();
+      expect(tx.operationLog.create).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns a stable completed correction summary and ignores cancelled or rejected requests', async () => {
     const completedAt = new Date('2026-08-26T10:00:00.000Z');
     const findUniqueOrThrow = jest.fn().mockResolvedValue({

@@ -21,6 +21,7 @@ import {
 import { PricingTierDto } from './dto/pricing-tier.dto';
 import { ConcessionDto } from './dto/concession.dto';
 import { SubmitContractChangeDto } from './dto/submit-contract-change.dto';
+import { UpdateContractRemarkDto } from './dto/update-contract-remark.dto';
 import type { AuthUser } from '../auth/auth-user.type';
 import {
   assertContractRoomStatus,
@@ -169,6 +170,44 @@ export class ContractsService {
           }
         : {}),
     };
+  }
+
+  async updateRemark(
+    contractId: number,
+    dto: UpdateContractRemarkDto,
+    user: AuthUser,
+  ) {
+    const remark = dto.remark?.trim() || null;
+    return this.prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM contracts WHERE id = ${contractId} FOR UPDATE`,
+      );
+      const contract = await tx.contract.findUniqueOrThrow({
+        where: { id: contractId },
+        select: { id: true, contractNo: true, status: true, remark: true },
+      });
+      assertContractNotVoided(contract.status, '修改备注');
+      const updated = await tx.contract.update({
+        where: { id: contractId },
+        data: { remark },
+        select: { id: true, remark: true, updatedAt: true },
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'CONTRACT',
+          action: 'UPDATE_CONTRACT_REMARK',
+          entityType: 'CONTRACT',
+          entityId: contract.id,
+          entityNo: contract.contractNo,
+          summary: `修改合同备注 ${contract.contractNo}`,
+          beforeData: { remark: contract.remark },
+          afterData: { remark },
+          operatorId: user.id,
+          operatorRole: user.role,
+        },
+      });
+      return updated;
+    });
   }
 
   async changes(contractId: number) {
