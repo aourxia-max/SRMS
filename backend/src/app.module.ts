@@ -17,6 +17,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { SystemModule } from './system/system.module';
 import { RentBillsModule } from './rent-bills/rent-bills.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { ApprovalTasksModule } from './approval-tasks/approval-tasks.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     SystemModule,
     RentBillsModule,
     MaintenanceModule,
+    ApprovalTasksModule,
   ],
   controllers: [AppController],
   providers: [AppService],
