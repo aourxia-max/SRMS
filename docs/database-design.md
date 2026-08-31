@@ -18,7 +18,8 @@
 - 普通管理员只能作废错误收款后重录；超级管理员可以修改已确认收款，但必须留下前后值和原因。
 - 功能上线后新合同填写的押金表示已实际收到，并在合同创建事务内自动生成已确认押金收款和押金收取流水；上线前已有合同不补账。
 - 押金余额独立采用不可覆盖流水管理，退还必须上传凭证，由管理员登记、超级管理员确认。
-- 退租结算完成且押金、欠租、预收款全部处理后，合同才可结束。
+- 退租结算可增加一项“退还租金”，由系统从当前或未来账期的有效租金实收中自动预留和回冲，并与押金、预收款合并为一次退款。
+- 退租结算完成且押金、欠租、预收款和租金退款全部处理后，合同才可结束。
 - `已出售`房源只保留房源状态和业主展示，不提供合同、收款或代管出租功能。
 - `待出售`、`已出售`、`停用`不计入可经营房源。
 - 业务数据统一软删除；安全审计记录不可删除。
@@ -92,9 +93,10 @@
 | 收款 | payment_void_requests | 已确认收款的作废申请与审批 |
 | 预收款 | prepayment_transactions | 预收款余额流水 |
 | 押金 | deposit_transactions | 押金收取、抵扣、退还流水 |
-| 押金 | deposit_refunds | 押金退还登记与确认 |
+| 退租 | deposit_refunds | 退租合并退款登记与确认 |
 | 退租 | checkout_settlements | 退租结算单 |
 | 退租 | checkout_settlement_items | 欠租、维修等结算项目与依据 |
+| 退租 | checkout_rent_refund_allocations | 退还租金对原收款分配的预留与回冲明细 |
 | 文件 | file_assets | 文件元数据 |
 | 文件 | tenant_files | 承租人证件关联 |
 | 文件 | contract_files | 合同扫描件关联 |
@@ -130,7 +132,12 @@ erDiagram
     CONTRACTS ||--o{ PREPAYMENT_TRANSACTIONS : owns
     CONTRACTS ||--o{ DEPOSIT_TRANSACTIONS : owns
     CONTRACTS ||--o| CHECKOUT_SETTLEMENTS : settles
+    CHECKOUT_SETTLEMENTS ||--o{ CHECKOUT_SETTLEMENT_ITEMS : contains
+    CHECKOUT_SETTLEMENT_ITEMS ||--o{ CHECKOUT_RENT_REFUND_ALLOCATIONS : reserves
+    PAYMENT_ALLOCATIONS ||--o{ CHECKOUT_RENT_REFUND_ALLOCATIONS : reversed_by
+    RENT_BILLS ||--o{ CHECKOUT_RENT_REFUND_ALLOCATIONS : traces
     CHECKOUT_SETTLEMENTS ||--o{ DEPOSIT_REFUNDS : contains
+    DEPOSIT_REFUNDS ||--o{ CHECKOUT_RENT_REFUND_ALLOCATIONS : applies
     DEPOSIT_REFUNDS ||--|{ DEPOSIT_REFUND_FILES : proves
     PRICING_REBATES ||--o{ PRICING_REBATE_FILES : proves
     FILE_ASSETS ||--o{ DEPOSIT_REFUND_FILES : stores
@@ -451,9 +458,11 @@ payable_amount = max(0,
   + adjustment_amount
 )
 
-received_amount = 有效 payment_allocations 分配金额 - 已生效退款回退金额
-outstanding_amount = payable_amount - received_amount
+received_amount = 有效 payment_allocations 分配金额 - 已批准普通退款回退金额 - 已生效退租租金回冲金额
+outstanding_amount = max(0, payable_amount - received_amount)
 ```
+
+`CHECKOUT_RENT_REFUND`会同额减少账单净应收和有效实收，因此不会新增未收或欠租。
 
 到期日当天不逾期；到期日次日仍有未收金额才进入`OVERDUE`。
 
@@ -472,7 +481,7 @@ outstanding_amount = payable_amount - received_amount
 |---|---|---|
 | adjustment_no | VARCHAR(40) | 唯一调整编号；跨账单同批申请使用同一批次号 |
 | rent_bill_id | INT UNSIGNED | 归属租金账单 |
-| adjustment_type | ENUM | `DISCOUNT`一次性优惠、`WAIVER`减免、`INCREASE`补收、`CORRECTION`更正 |
+| adjustment_type | ENUM | `DISCOUNT`一次性优惠、`WAIVER`减免、`INCREASE`补收、`CORRECTION`更正、`CHECKOUT_RENT_REFUND`退租租金退还 |
 | direction | ENUM | `DECREASE`减少应收、`INCREASE`增加应收 |
 | amount | DECIMAL(14,2) | 正数金额 |
 | before_amount | DECIMAL(14,2) | 调整前账单应收快照 |
@@ -480,6 +489,7 @@ outstanding_amount = payable_amount - received_amount
 | reason | VARCHAR(500) | 调整原因，必填 |
 | source_payment_id | INT UNSIGNED NULL | 在收款登记页发起时关联该笔收款 |
 | contract_change_id | INT UNSIGNED NULL | 来源合同变更 |
+| checkout_settlement_item_id | INT UNSIGNED NULL | 来源退租结算“退还租金”项目 |
 | approval_status | ENUM | `PENDING`、`APPROVED`、`REJECTED`、`CANCELLED`、`REVERSED` |
 | submitted_by | INT UNSIGNED | 登记管理员 |
 | approved_by | INT UNSIGNED NULL | 确认的超级管理员 |
@@ -534,10 +544,12 @@ outstanding_amount = payable_amount - received_amount
 | allocated_amount | DECIMAL(14,2) | 分配金额 |
 | allocation_order | INT | 分配顺序 |
 | allocation_type | ENUM | `AUTO_OLDEST_FIRST`、`MANUAL_SUPER_ADMIN`、`PREPAYMENT_AUTO` |
-| reversed_amount | DECIMAL(14,2) | 因退款或作废回退金额 |
+| reversed_amount | DECIMAL(14,2) | 因普通退款、收款作废或已生效退租租金回冲而回退的累计金额 |
 | allocated_at | DATETIME(3) | 分配时间 |
 
 默认按最早到期账单优先。超级管理员调整分配时不覆盖原记录，而是写逆转和新分配记录，并填写原因。
+
+有效普通退款占用、收款作废流程和状态为`RESERVED`的退租租金预留必须共同扣减可用分配余额；任何流程不得重复占用同一金额。
 
 合同约定租缴周期与实际收款覆盖月数相互独立。例如`payment_cycle_months = 1`时，第二个月一次收取5个月租金，创建一条`payments`记录和五条`payment_allocations`，分别分配至第2至第6个月账单；合同周期仍为1个月。分配完成后按连续结清账单更新`paid_through_date`和`next_due_date`。金额超过所选账单应收的部分写入预收款，不虚构第六条账单分配。
 
@@ -559,6 +571,7 @@ outstanding_amount = payable_amount - received_amount
 | rejected_reason | VARCHAR(500) NULL | 驳回原因 |
 
 管理员登记、超级管理员确认。确认后以负向流水回退原分配，并重新计算账单状态；不得删除或覆盖原收款。
+提交普通退款和最终确认时必须检查有效退租租金预留；已被退租结算预留的分配余额不能重复退款。
 
 ### 10.4 payment_void_requests
 
@@ -633,13 +646,24 @@ outstanding_amount = payable_amount - received_amount
 | other_deduction_amount | DECIMAL(14,2) | 维修等已确认的其他押金扣款 |
 | deposit_refundable_amount | DECIMAL(14,2) | 应退押金 |
 | prepayment_refundable_amount | DECIMAL(14,2) | 应退预收款 |
+| rent_refundable_amount | DECIMAL(14,2) | 已锁定的应退租金 |
 | final_receivable | DECIMAL(14,2) | 最终应补收 |
-| target_room_status | ENUM | 退款结束合同后房源进入`VACANT`、`MAINTENANCE`或`DISABLED` |
+| target_room_status | ENUM | 退款结束合同后房源进入`EMPTY`、`MAINTENANCE`或`DISABLED` |
 | status | ENUM | `DRAFT`、`PENDING`、`APPROVED`、`REJECTED`、`COMPLETED`、`CANCELLED` |
 | submitted_by | INT UNSIGNED | 管理员登记 |
 | approved_by | INT UNSIGNED NULL | 超级管理员确认 |
 | approved_at | DATETIME(3) NULL | 确认时间 |
 | remark | VARCHAR(1000) NULL | 备注 |
+
+结算金额口径：
+
+```text
+应退押金 = max(0, 押金余额 - 欠租抵扣 - 其他已确认扣款)
+应退租金 = 管理员填写且经后端重新校验、预留的可回冲租金
+合计应退 = 应退押金 + 应退预收款 + 应退租金
+```
+
+`rent_refundable_amount`在提交结算时由后端锁定。草稿预览不写数据库；最终确认不信任前端金额。
 
 提前退租时，确认结算后作废退租日之后的未来账单；已经付款的历史账单不删除。
 
@@ -648,7 +672,7 @@ outstanding_amount = payable_amount - received_amount
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | checkout_settlement_id | INT UNSIGNED | 所属结算单 |
-| item_type | ENUM | `RENT_ARREARS`欠租、`DAMAGE`损坏、`REPAIR`维修、`CLEANING`清洁、`OTHER`其他 |
+| item_type | ENUM | `RENT_ARREARS`欠租、`DAMAGE`损坏、`REPAIR`维修、`CLEANING`清洁、`OTHER`其他、`RENT_REFUND`退还租金 |
 | amount | DECIMAL(14,2) | 正数金额 |
 | rent_bill_id | INT UNSIGNED NULL | 欠租项目必须关联账单 |
 | inspection_record_ref | VARCHAR(100) NULL | 验收记录引用 |
@@ -659,14 +683,43 @@ outstanding_amount = payable_amount - received_amount
 
 欠租必须关联有效租金账单；维修、损坏等扣款必须关联验收记录或证明文件。项目不能直接修改押金余额，只有超级管理员确认结算后才写`deposit_transactions`抵扣流水。
 
-### 12.4 deposit_refunds
+`RENT_REFUND`不关联管理员手工选择的账单或收款，只要求大于0的金额和1至500字说明；每张结算单最多一项。系统只从实际退房日之后的未来账期和包含实际退房日的当前账期读取有效租金分配，先按未来账期从晚到早，再按同账单收款日期和分配ID从大到小，最后处理当前账期。
+
+### 12.4 checkout_rent_refund_allocations
+
+该表保存提交退租结算时对原租金收款分配的预留，以及最终合并退款后的实际回冲轨迹；历史记录不物理删除。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| checkout_settlement_item_id | INT UNSIGNED | 退租结算中的`RENT_REFUND`项目 |
+| payment_allocation_id | INT UNSIGNED | 原租金收款分配 |
+| payment_id | INT UNSIGNED | 原收款，便于锁定与审计 |
+| rent_bill_id | INT UNSIGNED | 原租金账单 |
+| reserved_amount | DECIMAL(14,2) | 本明细预留或实际回冲金额 |
+| status | ENUM | `RESERVED`已预留、`RELEASED`已释放、`APPLIED`已回冲 |
+| reserved_at | DATETIME(3) | 预留时间 |
+| released_at | DATETIME(3) NULL | 释放时间 |
+| applied_at | DATETIME(3) NULL | 实际回冲时间 |
+| deposit_refund_id | INT UNSIGNED NULL | 最终退租合并退款记录 |
+
+关键约束：
+
+- 草稿预览不创建记录；提交结算在事务中重新计算并生成`RESERVED`明细。
+- 驳回、退回草稿、取消结算或合同纠错取消尚未退款的结算时，将有效预留转为`RELEASED`。
+- 最终合并退款确认后转为`APPLIED`，并关联最终退款记录。
+- 原分配的已回退金额、普通待审批退款占用和有效退租预留合计不得超过`allocated_amount`。
+
+### 12.5 deposit_refunds
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | refund_no | VARCHAR(40) | 唯一押金退款编号 |
 | contract_id | INT UNSIGNED | 所属合同 |
 | checkout_settlement_id | INT UNSIGNED | 退租结算单 |
-| refund_amount | DECIMAL(14,2) | 退还金额 |
+| refund_amount | DECIMAL(14,2) | 对外实际退款总额 |
+| deposit_refund_amount | DECIMAL(14,2) | 押金退款拆分 |
+| prepayment_refund_amount | DECIMAL(14,2) | 预收款退款拆分 |
+| rent_refund_amount | DECIMAL(14,2) | 租金退款拆分 |
 | refund_date | DATE | 退还日期 |
 | refund_method | ENUM | `WECHAT`、`ALIPAY`、`BANK_TRANSFER`、`CASH`、`OTHER` |
 | remark | VARCHAR(1000) NULL | 备注，不要求收款人、账户后四位、交易流水号 |
@@ -679,9 +732,13 @@ outstanding_amount = payable_amount - received_amount
 
 关键约束：
 
-- 提交押金退还时至少关联一张有效凭证图片。
+- 非零退租合并退款提交时至少关联一张有效凭证图片或PDF。
 - 现金退还上传承租人签字凭证照片。
 - 确认后凭证不可替换或删除；错误只能撤销并重新登记。
+- `refund_amount = deposit_refund_amount + prepayment_refund_amount + rent_refund_amount`，三项使用结算锁定值，客户端不能提交拆分金额。
+- 同一结算同一时刻只能有一笔有效待确认合并退款。
+- 押金、预收款和租金虽分别记账，财务中心只把`refund_amount`统计为一笔外部资金流出。
+- 最终确认必须在同一事务中完成租金回冲、押金/预收款流水、凭证锁定、结算完成、合同结束和房态释放；任一步失败全部回滚。
 - 押金全部处理完成后才允许退租结算变为`COMPLETED`。
 - 退款完成即结束合同；如没有押金或押金全部抵扣，则结算确认后直接结束合同。
 - 结束合同的同一事务将房源更新为结算单锁定的`target_room_status`；不得默认覆盖为其他状态。
@@ -855,9 +912,11 @@ outstanding_amount = payable_amount - received_amount
 
 ```text
 外部资金流入 = 有效租金收款 + 押金收取 + 预收款收取 + 其他实际收款
-外部资金流出 = 已确认收款退款 + 人工退差实际退款 + 押金退款 + 预收款退款
+外部资金流出 = 已确认普通收款退款 + 人工退差实际退款 + 已确认退租合并退款
 净资金流 = 外部资金流入 - 外部资金流出
 ```
+
+退租合并退款内部的押金、预收款和租金拆分只用于分类与追溯，不得重复形成三笔外部资金流。
 
 押金抵扣欠租属于内部余额转换，同时减少押金负债并结清租金账单，但不计入外部资金流入或流出。优惠减免减少应收，不属于现金流出。
 
@@ -871,8 +930,8 @@ outstanding_amount = payable_amount - received_amount
 2. 登记收款：创建收款 → 按最早账单分配 → 多余金额进入预收款 → 可同时创建待审批优惠／减免 → 更新账单状态和合同快照；待审批减免不得计入本事务的有效应收调整。
 3. 收款作废确认：锁定待审批申请和原收款 → 校验超级管理员权限 → 逆转分配/余额流水 → 更新收款、收据和账单 → 写安全审计。
 4. 退款确认：锁定原收款和账单 → 写退款 → 回退分配 → 重算账单 → 写安全审计。
-5. 押金退还确认：锁定合同和结算单 → 校验退款金额与凭证 → 写押金负向流水 → 锁定文件 → 清零余额 → 完成结算 → 结束合同 → 更新房源目标状态 → 写安全审计。
-6. 退租结算确认：锁定合同与账单 → 校验扣款依据 → 作废实际退房日后的未来账单 → 写押金抵扣流水 → 锁定结算金额；存在应退押金时合同继续保持待退房。
+5. 退租合并退款确认：以`READ COMMITTED`事务锁定合同、房源、结算单、合并退款、押金/预收款流水、账单、收款、分配和回冲预留 → 校验三类拆分与总额 → 同额减少租金净应收和有效实收 → 写押金/预收款退款流水 → 锁定凭证 → 完成结算、结束合同、释放房源 → 写一笔外部资金流与安全审计；任一步失败全部回滚。
+6. 退租结算提交与确认：提交时锁定合同、账单、收款、分配及冲突流程并生成租金回冲预留；确认时校验扣款依据、锁定金额并作废实际退房日后的未来未收账单；存在应退款时合同继续保持待退房。
 7. 超级管理员修改财务：乐观锁校验 → 写前后快照 → 修改 → 重算关联余额 → 写安全审计。
 8. 人工退差确认：校验超级管理员权限、原因、金额和有效账单 → 实际退款时校验凭证，或写入预收款流水 → 写安全审计。
 9. 优惠／减免确认：锁定调整记录和目标账单 → 校验超级管理员权限及金额 → 更新账单应收 → 重算状态、已缴至和下次应缴日期 → 写安全审计。
@@ -893,6 +952,13 @@ outstanding_amount = payable_amount - received_amount
 - 结算扣款项目没有欠租账单、验收记录或证明材料时不能确认。
 - 系统自动初始押金来源键必须唯一；重复或并发提交不得生成第二笔押金收款或流水。
 - 押金结构 migration 不得插入、更新或删除历史合同、收款及押金流水。
+- 每张退租结算单最多一项`RENT_REFUND`，金额必须大于0且说明为1至500字。
+- 退还租金不得超过符合账期范围且未回冲、未被普通退款/作废/其他退租预留占用的租金分配余额。
+- 退租回冲顺序必须固定且可追溯：未来账期从晚到早，最后处理当前账期；同账单按收款日期和分配ID倒序。
+- 驳回、退回草稿、取消结算和合同纠错必须释放有效退租租金预留；最终退款确认后只能转为已回冲。
+- 退租合并退款三类拆分金额之和必须等于对外退款总额，且不得形成重复资金流。
+- 普通退款、收款作废和另一退租结算不得重复占用同一收款分配余额。
+- 退租合并退款确认必须覆盖失败全回滚和并发只有一个请求成功的测试。
 - 普通管理员不能直接修改已确认收款。
 - 普通管理员不能直接作废已确认收款；未经超级管理员确认的作废申请不得影响原收款和账单。
 - 待审批或被驳回的优惠／减免不得改变账单应收、欠租或驾驶舱统计。
