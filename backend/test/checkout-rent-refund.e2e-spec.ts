@@ -700,6 +700,122 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     );
   }, 30000);
 
+  it('完成退款时把未来部分已收账单归一为实收金额并保留已收部分', async () => {
+    const fixture = await createFixture('partial-future');
+    const futureBill = await prisma.db.rentBill.create({
+      data: {
+        billNo: `${suitePrefix}-PF-B-${fixture.contractId}`.slice(0, 140),
+        contractId: fixture.contractId,
+        periodSeq: 2,
+        periodStart: new Date('2035-03-01T00:00:00.000Z'),
+        periodEnd: new Date('2035-03-31T00:00:00.000Z'),
+        dueDate: new Date('2035-02-25T00:00:00.000Z'),
+        unitMonthlyRent: new Prisma.Decimal('800.00'),
+        baseRentAmount: new Prisma.Decimal('800.00'),
+        payableAmount: new Prisma.Decimal('800.00'),
+        receivedAmount: new Prisma.Decimal('300.00'),
+        outstandingAmount: new Prisma.Decimal('500.00'),
+        status: 'PARTIAL',
+      },
+    });
+    const futurePayment = await prisma.db.payment.create({
+      data: {
+        receiptNo: `${suitePrefix}-PF-P-${fixture.contractId}`.slice(0, 40),
+        contractId: fixture.contractId,
+        paymentCategory: 'RENT',
+        paymentDate: new Date('2035-01-06T00:00:00.000Z'),
+        amount: new Prisma.Decimal('300.00'),
+        method: 'BANK_TRANSFER',
+        operatorId: operator.id,
+        status: 'CONFIRMED',
+        remark: 'Task 9 未来部分已收账单',
+      },
+    });
+    await prisma.db.paymentAllocation.create({
+      data: {
+        paymentId: futurePayment.id,
+        rentBillId: futureBill.id,
+        allocatedAmount: new Prisma.Decimal('300.00'),
+      },
+    });
+
+    await prepareApprovedSettlement(fixture, '100.00');
+    const refundId = await createPendingCombinedRefund(fixture, '1100.00');
+    currentUser = operator;
+    await request(app.getHttpServer())
+      .post(`/api/deposit-refunds/${refundId}/approve`)
+      .expect(201);
+
+    const [normalizedBill, adjustment] = await Promise.all([
+      prisma.db.rentBill.findUniqueOrThrow({ where: { id: futureBill.id } }),
+      prisma.db.billAdjustment.findFirstOrThrow({
+        where: {
+          rentBillId: futureBill.id,
+          adjustmentType: 'CORRECTION',
+          direction: 'DECREASE',
+          approvalStatus: 'APPROVED',
+          reason: `退租结算 ${fixture.settlementId} 核销未来未收租金`,
+        },
+      }),
+    ]);
+    expect({
+      payable: normalizedBill.payableAmount.toFixed(2),
+      received: normalizedBill.receivedAmount.toFixed(2),
+      outstanding: normalizedBill.outstandingAmount.toFixed(2),
+      status: normalizedBill.status,
+      adjustment: adjustment.amount.toFixed(2),
+    }).toEqual({
+      payable: '200.00',
+      received: '200.00',
+      outstanding: '0.00',
+      status: 'PAID',
+      adjustment: '500.00',
+    });
+  }, 30000);
+
+  it('可以分别取消待确认退款和整个已确认退租并恢复合同房态与预留', async () => {
+    const fixture = await createFixture('approved-cancel');
+    await prepareApprovedSettlement(fixture, '1000.00');
+    const refundId = await createPendingCombinedRefund(fixture, '2000.00');
+
+    currentUser = asRole(UserRole.ADMIN);
+    await request(app.getHttpServer())
+      .post(`/api/deposit-refunds/${refundId}/cancel`)
+      .expect(201);
+    const afterRefundCancel = await Promise.all([
+      prisma.db.depositRefund.findUniqueOrThrow({ where: { id: refundId } }),
+      prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id: fixture.settlementId },
+      }),
+      prisma.db.checkoutRentRefundAllocation.findFirstOrThrow({
+        where: { item: { checkoutSettlementId: fixture.settlementId } },
+      }),
+    ]);
+    expect(afterRefundCancel[0].approvalStatus).toBe('CANCELLED');
+    expect(afterRefundCancel[1].status).toBe('APPROVED');
+    expect(afterRefundCancel[2].status).toBe('RESERVED');
+
+    await request(app.getHttpServer())
+      .post(`/api/checkout-settlements/${fixture.settlementId}/cancel`)
+      .expect(201);
+    const [settlement, contract, room, reservation] = await Promise.all([
+      prisma.db.checkoutSettlement.findUniqueOrThrow({
+        where: { id: fixture.settlementId },
+      }),
+      prisma.db.contract.findUniqueOrThrow({
+        where: { id: fixture.contractId },
+      }),
+      prisma.db.room.findUniqueOrThrow({ where: { id: fixture.roomId } }),
+      prisma.db.checkoutRentRefundAllocation.findFirstOrThrow({
+        where: { item: { checkoutSettlementId: fixture.settlementId } },
+      }),
+    ]);
+    expect(settlement.status).toBe('CANCELLED');
+    expect(contract.status).toBe('ACTIVE');
+    expect(room.roomStatus).toBe('RENTED');
+    expect(reservation.status).toBe('RELEASED');
+  }, 30000);
+
   it('在末端审计写入失败时回滚凭证、账单、收款、预留、合同和房态', async () => {
     const fixture = await createFixture('rollback');
     await prepareApprovedSettlement(fixture, '1000.00');
@@ -1323,6 +1439,12 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         });
       }
       if (settlementIds.length) {
+        await tx.securityAuditLog.deleteMany({
+          where: {
+            entityType: 'CHECKOUT_SETTLEMENT',
+            entityId: { in: settlementIds },
+          },
+        });
         await tx.checkoutRentRefundAllocation.deleteMany({
           where: { item: { checkoutSettlementId: { in: settlementIds } } },
         });
@@ -1546,6 +1668,10 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
             {
               entityType: 'PAYMENT_REFUND',
               entityId: { in: scope.paymentRefundIds },
+            },
+            {
+              entityType: 'CHECKOUT_SETTLEMENT',
+              entityId: { in: scope.settlementIds },
             },
           ],
         },

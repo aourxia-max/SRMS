@@ -42,9 +42,11 @@ function harness(bills = [futureBill()]) {
       },
       billAdjustment: {
         findMany: jest.fn().mockResolvedValue([]),
-        create: jest.fn().mockImplementation(({ data }) =>
-          Promise.resolve({ id: adjustmentId++, ...data }),
-        ),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: adjustmentId++, ...data }),
+          ),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     },

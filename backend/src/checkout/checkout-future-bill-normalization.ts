@@ -53,7 +53,9 @@ export async function normalizeFutureCheckoutBills(
 
     const beforeAmount = money(bill.payableAmount);
     const receivedAmount = money(bill.receivedAmount);
-    const afterAmount = beforeAmount.minus(outstandingAmount).toDecimalPlaces(2);
+    const afterAmount = beforeAmount
+      .minus(outstandingAmount)
+      .toDecimalPlaces(2);
     if (afterAmount.lt(0) || !afterAmount.equals(receivedAmount))
       throw new ConflictException(
         `未来账单 ${bill.billNo} 的应收、实收和未收金额不一致，请刷新后重试`,
@@ -88,9 +90,8 @@ export async function normalizeFutureCheckoutBills(
       },
     });
     normalizedBillIds.push(bill.id);
-    cancelledOutstandingAmount = cancelledOutstandingAmount.plus(
-      outstandingAmount,
-    );
+    cancelledOutstandingAmount =
+      cancelledOutstandingAmount.plus(outstandingAmount);
   }
 
   return {
@@ -129,7 +130,9 @@ export async function reverseFutureCheckoutBillNormalization(
     const beforeAmount = money(bill.payableAmount);
     const afterAmount = beforeAmount.plus(amount).toDecimalPlaces(2);
     const receivedAmount = money(bill.receivedAmount);
-    const outstandingAmount = afterAmount.minus(receivedAmount).toDecimalPlaces(2);
+    const outstandingAmount = afterAmount
+      .minus(receivedAmount)
+      .toDecimalPlaces(2);
     const reversal = await tx.billAdjustment.create({
       data: {
         adjustmentNo: `TZWQREV${input.occurredAt.getTime().toString(36)}${adjustment.id}`,

@@ -173,9 +173,7 @@ export class DepositRefundsService {
           },
         });
         if (refund.approvalStatus !== 'PENDING')
-          throw new BadRequestException(
-            '只有待确认的退租退款申请可以取消',
-          );
+          throw new BadRequestException('只有待确认的退租退款申请可以取消');
         if (
           refund.checkoutSettlement.status !== 'APPROVED' ||
           refund.checkoutSettlement.contract.status !== 'PENDING_CHECKOUT'
