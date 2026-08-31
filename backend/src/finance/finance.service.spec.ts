@@ -21,6 +21,50 @@ describe('FinanceService rent collection category isolation', () => {
     );
   });
 
+  it('includes only active approved discount and waiver adjustments in rent concessions', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        billNo: 'BILL-001',
+        periodStart: new Date('2026-08-01'),
+        baseRentAmount: new Prisma.Decimal('1000.00'),
+        rentFreeAmount: new Prisma.Decimal('100.00'),
+        discountAmount: new Prisma.Decimal('50.00'),
+        payableAmount: new Prisma.Decimal('800.00'),
+        status: 'PENDING',
+        contract: {
+          contractNo: 'HT-001',
+          room: { fullHouseNo: '1-101' },
+          members: [{ tenant: { name: '测试租户' } }],
+        },
+        allocations: [],
+        adjustments: [
+          { amount: new Prisma.Decimal('30.00') },
+          { amount: new Prisma.Decimal('20.00') },
+        ],
+      },
+    ]);
+    const service = new FinanceService({
+      db: { rentBill: { findMany } },
+    } as never);
+
+    const report = await service.rentCollection();
+
+    expect(findMany.mock.calls[0][0].include.adjustments).toEqual({
+      where: {
+        adjustmentType: { in: ['DISCOUNT', 'WAIVER'] },
+        direction: 'DECREASE',
+        approvalStatus: 'APPROVED',
+        reversedByAdjustmentId: null,
+      },
+      select: { amount: true },
+    });
+    expect(report.rows[0].concessionAmount).toEqual(
+      new Prisma.Decimal('200.00'),
+    );
+    expect(report.rows[0].netReceivable).toEqual(new Prisma.Decimal('800.00'));
+    expect(report.total.concessionAmount).toEqual(new Prisma.Decimal('200.00'));
+  });
+
   it('labels checkout supplemental receipts without counting them as rental receipts', async () => {
     const service = new FinanceService({
       db: {

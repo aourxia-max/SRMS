@@ -29,18 +29,18 @@ function mockFinanceResponses() {
               houseNo: '1栋10' + index,
               tenantName: '测试租户',
               originalReceivable: '1000.00',
-              concessionAmount: '0.00',
-              netReceivable: '1000.00',
+              concessionAmount: index === 0 ? '200.00' : '0.00',
+              netReceivable: index === 0 ? '800.00' : '1000.00',
               validReceived: '0.00',
-              outstanding: '1000.00',
+              outstanding: index === 0 ? '800.00' : '1000.00',
               status,
             })),
             total: {
               originalReceivable: '6000.00',
-              concessionAmount: '0.00',
-              netReceivable: '6000.00',
+              concessionAmount: '200.00',
+              netReceivable: '5800.00',
               validReceived: '0.00',
-              outstanding: '6000.00',
+              outstanding: '5800.00',
             },
             collectionRate: '0.00',
           },
@@ -88,6 +88,17 @@ describe('财务报表账单状态中文显示', () => {
     expect(wrapper.text()).toContain('押金余额总额')
     expect(wrapper.text()).toContain('￥10,000.00')
     expect(wrapper.text()).toContain('当前实际保管押金')
+    wrapper.unmount()
+  })
+
+  it('displays the rent concession returned by the finance API in the KPI and bill row', async () => {
+    const wrapper = mount(FinanceView, {
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.metrics').text()).toContain('优惠减免￥200.00')
+    expect(wrapper.find('.el-table').text()).toContain('￥200.00')
     wrapper.unmount()
   })
 

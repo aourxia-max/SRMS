@@ -93,6 +93,15 @@ export class FinanceService {
           },
         },
         allocations: { include: { payment: true } },
+        adjustments: {
+          where: {
+            adjustmentType: { in: ['DISCOUNT', 'WAIVER'] },
+            direction: 'DECREASE',
+            approvalStatus: 'APPROVED',
+            reversedByAdjustmentId: null,
+          },
+          select: { amount: true },
+        },
       },
       orderBy: { periodStart: 'asc' },
     });
@@ -111,6 +120,10 @@ export class FinanceService {
           new Prisma.Decimal(0),
         );
       const netReceivable = new Prisma.Decimal(bill.payableAmount);
+      const concessionAmount = bill.adjustments.reduce(
+        (sum, adjustment) => sum.plus(adjustment.amount),
+        new Prisma.Decimal(bill.rentFreeAmount).plus(bill.discountAmount),
+      );
       return {
         billNo: bill.billNo,
         contractNo: bill.contract.contractNo,
@@ -118,9 +131,7 @@ export class FinanceService {
         tenantName: bill.contract.members[0]?.tenant.name ?? '',
         periodStart: bill.periodStart,
         originalReceivable: bill.baseRentAmount,
-        concessionAmount: new Prisma.Decimal(bill.rentFreeAmount).plus(
-          bill.discountAmount,
-        ),
+        concessionAmount,
         netReceivable,
         validReceived,
         outstanding: Prisma.Decimal.max(0, netReceivable.minus(validReceived)),
