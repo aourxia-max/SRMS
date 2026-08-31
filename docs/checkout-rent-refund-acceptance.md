@@ -31,7 +31,7 @@
 | 验证项 | 命令/范围 | 结果 |
 |---|---|---|
 | 后端全量单元测试 | `npm --prefix backend test -- --runInBand` | 84 个测试套件、615 项测试通过 |
-| 前端全量单元测试 | `npm --prefix frontend run test:unit` | 40 个测试文件、286 项测试通过 |
+| 前端全量单元测试 | `npm --prefix frontend run test:unit` | 40 个测试文件、289 项测试通过 |
 | 真实 MySQL E2E | 收款、财务、退租租金退款 3 个套件 | 3 个套件、16 项测试通过 |
 | Lint | `npm run lint` | 通过 |
 | Prisma schema | `npm run db:validate` | 通过 |
@@ -50,18 +50,19 @@
 - 收款状态按实际累计回冲金额从“部分退款”更新为“全部退款”。
 - E2E 结束后按本轮唯一 ID 和前缀检查测试数据残留，结果为零。
 
-## 测试环境状态与更新准备
+## 测试环境状态与更新结果
 
 - 测试环境地址：http://localhost:15173/
 - API 健康检查：http://localhost:13000/api/health
 - 当前 Docker context：`desktop-linux`。
-- `srms_test` 当前运行服务：`mysql`、`api`、`web`；更新前首页和健康检查均返回 HTTP 200。
-- 本验收提交阶段没有重建或更新测试环境，也没有操作生产环境。合并分支后由主控使用主工作区 `deploy/.env.test` 和基础 `deploy/docker-compose.yml` 重建 `api`、`web`，不得重建或删除 MySQL volume。
+- 功能分支已 fast-forward 合并到本地 `main`；使用主工作区 `deploy/.env.test` 和基础 `deploy/docker-compose.yml` 执行 `up -d --build --no-deps api web`，仅重建 `api`、`web`。
+- 更新前后 MySQL 容器 ID 和创建时间保持不变，仍为运行且健康；API 运行且健康，Web 正常运行，首页和健康检查均返回 HTTP 200。
+- 本次未操作生产环境或 GitHub，未推送远程，也未执行 `down`、`DROP`、清库、删除 volume 或重建 MySQL。
 
 安全更新命令：
 
 ```powershell
-docker compose -p srms_test --env-file deploy/.env.test -f deploy/docker-compose.yml up -d --build api web
+docker compose -p srms_test --env-file deploy/.env.test -f deploy/docker-compose.yml up -d --build --no-deps api web
 docker compose -p srms_test --env-file deploy/.env.test -f deploy/docker-compose.yml ps
 ```
 
@@ -87,5 +88,5 @@ docker compose -p srms_test --env-file deploy/.env.test -f deploy/docker-compose
 ## 风险与未解决问题
 
 - Vite 构建保留既有的单个产物大于 500 kB 提示；构建成功，不影响本次业务验收，后续可单独安排代码分包优化。
-- 本验收阶段尚未把隔离分支镜像重建到 `srms_test`；需要主控在合并后执行上述安全更新命令并完成浏览器手工验收。
+- 本机 `srms_test` 已更新为合并后的 `main` 功能版本，尚待用户按照上述步骤完成浏览器手工业务验收。
 - 没有发现未解决的退租租金退款业务逻辑问题。
