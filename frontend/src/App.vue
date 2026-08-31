@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import PendingCountBadge from './components/PendingCountBadge.vue'
 import { useAppStore } from './stores/app'
+import { useApprovalTasksStore } from './stores/approval-tasks'
 import { useSessionStore } from './stores/session'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const app = useAppStore()
+const approvalTasks = useApprovalTasksStore()
 const collapsed = ref(false)
 const isPublicPage = computed(() => route.name === 'login' || route.name === 'task001-preview')
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
@@ -27,6 +30,26 @@ async function logout() {
   await router.push({ name: 'login' })
 }
 onMounted(() => void app.loadProjectName())
+watch(
+  () => session.user?.id,
+  (userId, previousUserId) => {
+    if (!userId) {
+      approvalTasks.reset()
+      return
+    }
+    if (previousUserId && previousUserId !== userId) approvalTasks.reset()
+    void approvalTasks.refresh()
+    approvalTasks.startPolling()
+  },
+  { immediate: true },
+)
+watch(
+  () => route.fullPath,
+  () => {
+    if (session.user?.id) void approvalTasks.refresh()
+  },
+)
+onBeforeUnmount(() => approvalTasks.stopPolling())
 </script>
 
 <template>
@@ -39,12 +62,12 @@ onMounted(() => void app.loadProjectName())
         <router-link to="/" class="srms-nav-item"><span>▦</span><b v-show="!collapsed">经营驾驶舱</b></router-link>
         <router-link to="/properties" class="srms-nav-item"><span>⌂</span><b v-show="!collapsed">房源管理</b></router-link>
         <router-link to="/tenants" class="srms-nav-item"><span>♙</span><b v-show="!collapsed">承租人管理</b></router-link>
-        <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b></router-link>
-        <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b></router-link>
+        <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b><PendingCountBadge v-if="isAdmin" class="srms-nav-badge" :count="approvalTasks.counts.contractsTotal" /></router-link>
+        <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b><PendingCountBadge class="srms-nav-badge" :count="approvalTasks.counts.contractChanges" /></router-link>
         <p v-show="!collapsed">租赁财务</p>
         <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
-        <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b></router-link>
-        <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b></router-link>
+        <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b><PendingCountBadge v-if="isAdmin" class="srms-nav-badge" :count="approvalTasks.counts.paymentsTotal" /></router-link>
+        <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b><PendingCountBadge class="srms-nav-badge" :count="approvalTasks.counts.checkoutsTotal" /></router-link>
         <router-link v-if="isSuperAdmin" to="/finance" class="srms-nav-item"><span>¥</span><b v-show="!collapsed">财务中心</b></router-link>
         <p v-if="isSuperAdmin" v-show="!collapsed">系统</p>
         <router-link v-if="isSuperAdmin" to="/admin/users" class="srms-nav-item"><span>♧</span><b v-show="!collapsed">用户管理</b></router-link>
@@ -63,7 +86,7 @@ onMounted(() => void app.loadProjectName())
 .srms-brand { display:flex; align-items:center; gap:10px; min-height:56px; padding:0 8px 18px; border-bottom:1px solid rgba(255,255,255,.09); }
 .srms-logo { display:grid; width:36px; height:36px; place-items:center; flex:none; border-radius:10px; background:#347af6; color:white; font-size:18px; font-weight:800; }
 .srms-brand b { display:block; color:white; font-size:16px; }.srms-brand small { display:block; max-width:130px; overflow:hidden; color:#8296b4; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-.srms-nav { padding-top:12px; }.srms-nav p { margin:15px 12px 7px; color:#7085a5; font-size:11px; }.srms-nav-item { display:flex; align-items:center; gap:11px; min-height:42px; margin:4px 0; padding:0 13px; border-radius:9px; color:#b9c7db; text-decoration:none; }.srms-nav-item span { width:18px; text-align:center; font-size:16px; }.srms-nav-item b { font-size:14px; font-weight:500; }.srms-nav-item:hover { background:rgba(255,255,255,.08); color:#fff; }.srms-nav-item.router-link-exact-active { background:#246bfd; color:#fff; box-shadow:0 7px 16px rgba(36,107,253,.25); }.srms-subnav { margin-left:8px; }
+.srms-nav { padding-top:12px; }.srms-nav p { margin:15px 12px 7px; color:#7085a5; font-size:11px; }.srms-nav-item { position:relative; display:flex; align-items:center; gap:11px; min-height:42px; margin:4px 0; padding:0 13px; border-radius:9px; color:#b9c7db; text-decoration:none; }.srms-nav-item span { width:18px; text-align:center; font-size:16px; }.srms-nav-item b { font-size:14px; font-weight:500; }.srms-nav-item:hover { background:rgba(255,255,255,.08); color:#fff; }.srms-nav-item.router-link-exact-active { background:#246bfd; color:#fff; box-shadow:0 7px 16px rgba(36,107,253,.25); }.srms-subnav { margin-left:8px; }.srms-nav-item .srms-nav-badge { position:absolute; top:2px; right:4px; width:auto; }
 .srms-main { width:calc(100% - 222px); min-height:100vh; margin-left:222px; transition:margin .2s ease,width .2s ease; }.srms-topbar { position:sticky; top:0; z-index:40; display:flex; height:68px; align-items:center; gap:14px; padding:0 28px; border-bottom:1px solid #e5eaf1; background:#fff; }.collapse-button { border:0; background:transparent; color:#526075; cursor:pointer; font-size:20px; }.srms-crumb { color:#8390a2; }.srms-crumb b { color:#344257; }.srms-user { display:flex; align-items:center; gap:9px; margin-left:auto; color:#526075; }.srms-avatar { display:grid; width:32px; height:32px; place-items:center; border-radius:50%; background:#e2ecff; color:#246bfd; font-weight:700; }.srms-content { max-width:1500px; margin:auto; padding:24px 28px 40px; }.srms-content .users-page { width:100%; margin:0; padding:0 0 32px; }
 .is-collapsed .srms-sidebar { width:64px; padding-inline:10px; }.is-collapsed .srms-brand { padding-inline:4px; }.is-collapsed .srms-nav-item { justify-content:center; padding-inline:0; }.is-collapsed .srms-subnav { margin-left:0; }.is-collapsed .srms-main { width:calc(100% - 64px); margin-left:64px; }
 @media (max-width:1100px) { .srms-content { padding:20px 18px 34px; } }

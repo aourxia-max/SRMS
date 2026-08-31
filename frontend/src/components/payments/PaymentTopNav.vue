@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import PendingCountBadge from '../PendingCountBadge.vue'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
+const approvalTasks = useApprovalTasksStore()
 
 const items = [
   { label: '\u6536\u6b3e\u767b\u8bb0', path: '/payments/collect', match: '/payments/collect' },
@@ -19,6 +22,13 @@ const items = [
       :class="{ active: route.path.startsWith(item.match) }"
     >
       {{ item.label }}
+      <span
+        v-if="item.match === '/payments/reviews' && approvalTasks.counts.paymentRefunds + approvalTasks.counts.paymentVoidRequests"
+        data-test="badge-payment-reviews"
+        class="top-nav-badge"
+      >
+        <PendingCountBadge :count="approvalTasks.counts.paymentRefunds + approvalTasks.counts.paymentVoidRequests" />
+      </span>
     </router-link>
   </nav>
 </template>
@@ -40,6 +50,7 @@ const items = [
 }
 
 .contract-top-nav a {
+  position: relative;
   flex: none;
   padding: 8px 20px;
   color: #566478;
@@ -47,6 +58,12 @@ const items = [
   white-space: nowrap;
   background: transparent;
   border-radius: 7px;
+}
+
+.top-nav-badge {
+  position: absolute;
+  top: 1px;
+  right: 2px;
 }
 
 .contract-top-nav a:hover { color: #246bfd; }

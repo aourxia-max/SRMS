@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
 import { checkoutApi } from "../../services/checkout";
+import { useApprovalTasksStore } from "../../stores/approval-tasks";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
 import CheckoutWorkspace from "./CheckoutWorkspace.vue";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
@@ -137,11 +138,28 @@ describe("CheckoutTopNav", () => {
   });
 
   it("renders the three checkout workflow tabs in Chinese", () => {
-    const wrapper = mount(CheckoutTopNav, { props: { activeTab: "initiate" } });
+    const wrapper = mount(CheckoutTopNav, {
+      props: { activeTab: "initiate" },
+      global: { plugins: [createPinia()] },
+    });
 
     expect(wrapper.text()).toContain("1 发起退租");
     expect(wrapper.text()).toContain("2 退租结算");
     expect(wrapper.text()).toContain("3 退租退款确认");
+  });
+
+  it("shows settlement and deposit-refund pending counts on their exact tabs", () => {
+    const pinia = createPinia();
+    const approvals = useApprovalTasksStore(pinia);
+    approvals.counts.checkoutSettlements = 8;
+    approvals.counts.depositRefunds = 9;
+    const wrapper = mount(CheckoutTopNav, {
+      props: { activeTab: "initiate" },
+      global: { plugins: [pinia] },
+    });
+
+    expect(wrapper.get('[data-test="badge-checkout-settlement"]').text()).toBe("8");
+    expect(wrapper.get('[data-test="badge-checkout-refund"]').text()).toBe("9");
   });
   it("places checkout workflow navigation at the top without the old page intro block", () => {
     const wrapper = mount(CheckoutWorkspace, {

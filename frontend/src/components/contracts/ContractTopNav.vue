@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import PendingCountBadge from '../PendingCountBadge.vue'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import type { ContractRole, ContractWorkspaceTab } from '../../types/contracts'
 
 const props = withDefaults(defineProps<{
@@ -9,6 +11,7 @@ const props = withDefaults(defineProps<{
 }>(), { selectedContractId: null, role: 'VISITOR' })
 
 const emit = defineEmits<{ 'update:modelValue': [value: ContractWorkspaceTab] }>()
+const approvalTasks = useApprovalTasksStore()
 
 const items: Array<{ value: ContractWorkspaceTab; label: string }> = [
   { value: 'list', label: '合同列表' },
@@ -23,6 +26,13 @@ const visibleItems = computed(() => items.filter((item) => (
 )))
 
 const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.modelValue) && !props.selectedContractId)
+
+function badgeCount(tab: ContractWorkspaceTab) {
+  if (props.role === 'VISITOR') return 0
+  if (tab === 'fixed-rebate') return approvalTasks.counts.fixedRentRebates
+  if (tab === 'void-correction') return approvalTasks.counts.contractVoidRequests
+  return 0
+}
 </script>
 
 <template>
@@ -36,6 +46,9 @@ const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.
         @click="emit('update:modelValue', item.value)"
       >
         {{ item.label }}
+        <span v-if="badgeCount(item.value)" :data-test="`badge-${item.value}`" class="top-nav-badge">
+          <PendingCountBadge :count="badgeCount(item.value)" />
+        </span>
       </button>
     </nav>
     <p v-if="needsSelection" class="selection-hint">请先从合同列表选择合同</p>
@@ -59,6 +72,7 @@ const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.
 }
 
 .contract-top-nav button {
+  position: relative;
   flex: none;
   padding: 8px 20px;
   color: #566478;
@@ -66,6 +80,12 @@ const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.
   background: transparent;
   border: 0;
   border-radius: 7px;
+}
+
+.top-nav-badge {
+  position: absolute;
+  top: 1px;
+  right: 2px;
 }
 
 .contract-top-nav button.active {

@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import PendingCountBadge from '../../components/PendingCountBadge.vue'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import type { CheckoutTab } from './checkout-types'
 
 defineProps<{ activeTab: CheckoutTab }>()
 const emit = defineEmits<{ change: [tab: CheckoutTab] }>()
+const approvalTasks = useApprovalTasksStore()
 
 const tabs: Array<{ key: CheckoutTab; label: string }> = [
   { key: 'initiate', label: '\u0031 \u53d1\u8d77\u9000\u79df' },
@@ -10,6 +13,12 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
   { key: 'refund', label: '\u0033 \u9000\u79df\u9000\u6b3e\u786e\u8ba4' },
   { key: 'completed', label: '\u0034 \u5df2\u9000\u79df\u5408\u540c' },
 ]
+
+function badgeCount(tab: CheckoutTab) {
+  if (tab === 'settlement') return approvalTasks.counts.checkoutSettlements
+  if (tab === 'refund') return approvalTasks.counts.depositRefunds
+  return 0
+}
 </script>
 
 <template>
@@ -25,6 +34,9 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
       @click="emit('change', tab.key)"
     >
       {{ tab.label }}
+      <span v-if="badgeCount(tab.key)" :data-test="`badge-checkout-${tab.key}`" class="top-nav-badge">
+        <PendingCountBadge :count="badgeCount(tab.key)" />
+      </span>
     </button>
   </nav>
 </template>
@@ -46,6 +58,7 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
 }
 
 .contract-top-nav button {
+  position: relative;
   flex: none;
   padding: 8px 20px;
   color: #566478;
@@ -55,6 +68,12 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
   border-radius: 7px;
   font: inherit;
   white-space: nowrap;
+}
+
+.top-nav-badge {
+  position: absolute;
+  top: 1px;
+  right: 2px;
 }
 
 .contract-top-nav button.active {
