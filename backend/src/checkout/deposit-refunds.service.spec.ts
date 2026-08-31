@@ -1062,4 +1062,90 @@ describe('DepositRefundsService', () => {
     expect(harness.auditWrite).not.toHaveBeenCalled();
     writer.mockRestore();
   });
+
+  it('cancels only a pending refund and keeps checkout rent reservations', async () => {
+    const refund = {
+      id: 49,
+      contractId: 75,
+      checkoutSettlementId: 107,
+      approvalStatus: 'PENDING',
+      checkoutSettlement: {
+        id: 107,
+        status: 'APPROVED',
+        contract: { status: 'PENDING_CHECKOUT' },
+      },
+    };
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const reservationWrite = jest.fn();
+    const auditWrite = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      depositRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(refund),
+        updateMany,
+      },
+      checkoutRentRefundAllocation: { updateMany: reservationWrite },
+      securityAuditLog: { create: auditWrite },
+    };
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.cancel(49, { id: 2, username: 'admin', role: 'ADMIN' }),
+    ).resolves.toMatchObject({ id: 49, approvalStatus: 'CANCELLED' });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 49, approvalStatus: 'PENDING' },
+      data: {
+        approvalStatus: 'CANCELLED',
+        cancelledReason: '取消本次退款申请',
+      },
+    });
+    expect(reservationWrite).not.toHaveBeenCalled();
+    expect(auditWrite).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        eventType: 'CHECKOUT_REFUND_CANCELLED',
+        entityType: 'DEPOSIT_REFUND',
+        entityId: 49,
+        operatorId: 2,
+      }),
+    });
+  });
+
+  it('does not cancel an approved checkout refund', async () => {
+    const updateMany = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      depositRefund: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 49,
+          contractId: 75,
+          checkoutSettlementId: 107,
+          approvalStatus: 'APPROVED',
+          checkoutSettlement: {
+            status: 'COMPLETED',
+            contract: { status: 'ENDED' },
+          },
+        }),
+        updateMany,
+      },
+    };
+    const service = new DepositRefundsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.cancel(49, { id: 2, username: 'admin', role: 'ADMIN' }),
+    ).rejects.toThrow('只有待确认的退租退款申请可以取消');
+    expect(updateMany).not.toHaveBeenCalled();
+  });
 });

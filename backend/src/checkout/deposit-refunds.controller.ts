@@ -93,4 +93,16 @@ export class DepositRefundsController {
       data: await this.refunds.approve(id, user),
     };
   }
+  @Post(':id/cancel')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  async cancel(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.refunds.cancel(id, user),
+    };
+  }
 }

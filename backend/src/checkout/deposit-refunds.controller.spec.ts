@@ -62,4 +62,23 @@ describe('DepositRefundsController refund proof downloads', () => {
     );
     expect(response.send).toHaveBeenCalledWith(Buffer.from('proof'));
   });
+
+  it('exposes a guarded cancellation action for a pending refund', async () => {
+    const cancel = jest.fn().mockResolvedValue({
+      id: 49,
+      approvalStatus: 'CANCELLED',
+    });
+    const controller = new DepositRefundsController(
+      { cancel } as never,
+      {} as never,
+    );
+    const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
+
+    await expect(controller.cancel(49, user)).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: { id: 49, approvalStatus: 'CANCELLED' },
+    });
+    expect(cancel).toHaveBeenCalledWith(49, user);
+  });
 });

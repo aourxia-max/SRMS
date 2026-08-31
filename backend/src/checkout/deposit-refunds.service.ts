@@ -148,6 +148,71 @@ export class DepositRefundsService {
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
   }
+  async cancel(id: number, user: AuthUser) {
+    return this.prisma.db.$transaction(
+      async (tx) => {
+        const identity = await tx.depositRefund.findUniqueOrThrow({
+          where: { id },
+          select: { contractId: true, checkoutSettlementId: true },
+        });
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM contracts WHERE id = ${identity.contractId} FOR UPDATE`,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM checkout_settlements WHERE id = ${identity.checkoutSettlementId} FOR UPDATE`,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM deposit_refunds WHERE id = ${id} FOR UPDATE`,
+        );
+        const refund = await tx.depositRefund.findUniqueOrThrow({
+          where: { id },
+          include: {
+            checkoutSettlement: {
+              include: { contract: { select: { status: true } } },
+            },
+          },
+        });
+        if (refund.approvalStatus !== 'PENDING')
+          throw new BadRequestException(
+            '只有待确认的退租退款申请可以取消',
+          );
+        if (
+          refund.checkoutSettlement.status !== 'APPROVED' ||
+          refund.checkoutSettlement.contract.status !== 'PENDING_CHECKOUT'
+        )
+          throw new BadRequestException('当前退租状态不允许取消退款申请');
+
+        const changed = await tx.depositRefund.updateMany({
+          where: { id, approvalStatus: 'PENDING' },
+          data: {
+            approvalStatus: 'CANCELLED',
+            cancelledReason: '取消本次退款申请',
+          },
+        });
+        if (changed.count !== 1)
+          throw new ConflictException('退款申请状态已变化，请刷新后重试');
+        await tx.securityAuditLog.create({
+          data: {
+            eventType: 'CHECKOUT_REFUND_CANCELLED',
+            entityType: 'DEPOSIT_REFUND',
+            entityId: id,
+            operatorId: user.id,
+            reason: '取消本次退款申请',
+            eventData: {
+              checkoutSettlementId: refund.checkoutSettlementId,
+              contractId: refund.contractId,
+            },
+          },
+        });
+        return {
+          ...refund,
+          approvalStatus: 'CANCELLED' as const,
+          cancelledReason: '取消本次退款申请',
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
+  }
   async approve(id: number, user: AuthUser) {
     return this.prisma.db.$transaction(
       async (tx) => {

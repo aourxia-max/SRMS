@@ -126,4 +126,10 @@ export const checkoutApi = {
         `/deposit-refunds/${id}/approve`,
       ),
     ),
+  cancelRefund: async (id: number) =>
+    data(
+      await http.post<Envelope<Record<string, unknown>>>(
+        `/deposit-refunds/${id}/cancel`,
+      ),
+    ),
 };
