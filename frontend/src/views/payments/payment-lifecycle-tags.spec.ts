@@ -286,7 +286,7 @@ describe("收款详情退租租金退款", () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
-  it("closing the preview invalidates a newer pending checkout refund proof", async () => {
+  it("invalidates a pending proof when closing starts and keeps closed cleanup idempotent", async () => {
     const pendingDownload = deferred<{ data: Blob }>();
     const createObjectURL = vi
       .fn()
@@ -334,7 +334,7 @@ describe("收款详情退租租金退款", () => {
       .find((dialog) => dialog.props("title") === "退租合并退款凭证.webp");
     expect(previewDialog).toBeDefined();
     previewDialog?.vm.$emit("update:modelValue", false);
-    previewDialog?.vm.$emit("closed");
+    previewDialog?.vm.$emit("close");
     await flushPromises();
 
     pendingDownload.resolve({
@@ -342,10 +342,86 @@ describe("收款详情退租租金退款", () => {
     });
     await flushPromises();
 
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    const createCountBeforeClosed = createObjectURL.mock.calls.length;
+    const revokeCountBeforeClosed = revokeObjectURL.mock.calls.length;
+    const previewBeforeClosed = document.body.querySelector(
+      '[data-test="checkout-refund-proof-preview"]',
+    );
+    previewDialog?.vm.$emit("closed");
+    await flushPromises();
+    const revokeCountAfterClosed = revokeObjectURL.mock.calls.length;
+    wrapper.unmount();
+    const revokeCountAfterUnmount = revokeObjectURL.mock.calls.length;
+
+    expect(createCountBeforeClosed).toBe(1);
+    expect(revokeCountBeforeClosed).toBe(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:checkout-refund-43");
+    expect(previewBeforeClosed).toBeNull();
+    expect(revokeCountAfterClosed).toBe(1);
+    expect(revokeCountAfterUnmount).toBe(1);
+  });
+
+  it("keeps only the latest of two concurrent proof downloads", async () => {
+    const firstDownload = deferred<{ data: Blob }>();
+    const secondDownload = deferred<{ data: Blob }>();
+    const createObjectURL = vi.fn().mockReturnValue("blob:latest-proof");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    vi.mocked(checkoutApi.downloadRefundProof)
+      .mockReturnValueOnce(firstDownload.promise as never)
+      .mockReturnValueOnce(secondDownload.promise as never);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/payments/detail/:id?", component: PaymentDetailView },
+        { path: "/payments/collect", component: { template: "<div />" } },
+        { path: "/payments/reviews", component: { template: "<div />" } },
+      ],
+    });
+    await router.push("/payments/detail/81");
+    await router.isReady();
+    const wrapper = mount(PaymentDetailView, {
+      global: { plugins: [createPinia(), router, ElementPlus] },
+    });
+    await flushPromises();
+
+    const previewButton = wrapper.get(
+      '[data-test="preview-checkout-refund-proof-43"]',
+    );
+    await previewButton.trigger("click");
+    await previewButton.trigger("click");
+    secondDownload.resolve({
+      data: new Blob(["latest checkout refund proof"], { type: "image/webp" }),
+    });
+    await flushPromises();
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(
+      document.body
+        .querySelector('[data-test="checkout-refund-proof-preview"]')
+        ?.getAttribute("src"),
+    ).toBe("blob:latest-proof");
+
+    firstDownload.resolve({
+      data: new Blob(["stale checkout refund proof"], { type: "image/webp" }),
+    });
+    await flushPromises();
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    expect(
+      document.body
+        .querySelector('[data-test="checkout-refund-proof-preview"]')
+        ?.getAttribute("src"),
+    ).toBe("blob:latest-proof");
     wrapper.unmount();
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:latest-proof");
   });
 });

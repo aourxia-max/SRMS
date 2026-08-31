@@ -454,7 +454,7 @@ onMounted(() => void initialize());
           :title="checkoutRefundProofPreview?.originalName || '退款凭证预览'"
           append-to-body
           width="820px"
-          @closed="closeCheckoutRefundProofPreview"
+          @close="closeCheckoutRefundProofPreview"
           ><img
             v-if="checkoutRefundProofPreview?.mimeType.startsWith('image/')"
             data-test="checkout-refund-proof-preview"
