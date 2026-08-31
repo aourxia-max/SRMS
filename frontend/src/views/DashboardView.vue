@@ -368,13 +368,15 @@ onMounted(init)
             </span>
           </div>
           <el-empty v-if="!rooms.length" description="当前筛选下暂无房源" />
-          <div v-else class="building-map">
+          <div v-else class="building-map" data-test="building-map" style="max-height: 645px">
             <div v-for="[floor, floorRooms] in floorGroups" :key="floor" class="floor-row">
-              <div class="floor-name">{{ floor }}</div>
+              <div class="floor-name" data-test="floor-name" style="min-height: 76px">{{ floor }}</div>
               <button
                 v-for="room in floorRooms"
                 :key="room.id"
                 class="room-cell"
+                data-test="room-cell"
+                style="min-height: 76px"
                 :class="statusClass(room.roomStatus)"
                 @click="router.push({ name: 'room-detail', params: { id: room.id } })"
               >
@@ -544,7 +546,7 @@ onMounted(init)
 .legend { display:flex; flex-wrap:wrap; gap:13px; margin-bottom:14px; color:#647085; font-size:12px; }
 .legend i { display:inline-block; width:9px; height:9px; margin-right:5px; border-radius:3px; }
 .legend strong { margin-left:3px; color:#334155; }
-.building-map { display:grid; gap:8px; max-height:430px; overflow:auto; }
+.building-map { display:grid; gap:8px; max-height:645px; overflow:auto; }
 .floor-row { display:grid; grid-template-columns:58px repeat(auto-fill,minmax(112px,1fr)); gap:8px; align-items:stretch; }
 .floor-name { display:grid; place-items:center; min-height:76px; border-radius:8px; background:#f2f5f9; color:#6a778a; font-weight:700; }
 .room-cell { min-height:76px; padding:9px 10px; border:1px solid transparent; border-radius:9px; cursor:pointer; text-align:left; transition:.18s; }
