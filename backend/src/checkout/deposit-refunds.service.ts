@@ -12,6 +12,7 @@ import { assertContractNotVoided } from '../contracts/contract-operability';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { assertCheckoutRentRefundReservationMatches } from './checkout-rent-refund-reservations';
 import { applyCheckoutRentRefund } from './checkout-rent-refund-writer';
+import { normalizeFutureCheckoutBills } from './checkout-future-bill-normalization';
 
 @Injectable()
 export class DepositRefundsService {
@@ -308,6 +309,15 @@ export class DepositRefundsService {
         });
         if (claimedRefund.count !== 1)
           throw new ConflictException('退款申请已被处理，请刷新后重试');
+        if (!settlement.actualCheckoutDate)
+          throw new BadRequestException('结算单缺少实际退房日期');
+        await normalizeFutureCheckoutBills(tx, {
+          settlementId: settlement.id,
+          contractId: settlement.contractId,
+          actualCheckoutDate: settlement.actualCheckoutDate,
+          operatorId: user.id,
+          occurredAt,
+        });
         if (rentRefundableAmount.gt(0))
           await applyCheckoutRentRefund(tx, {
             settlementId: settlement.id,

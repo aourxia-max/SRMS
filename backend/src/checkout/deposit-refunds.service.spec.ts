@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { DepositRefundsService } from './deposit-refunds.service';
 import * as checkoutRentRefundWriter from './checkout-rent-refund-writer';
+import * as futureBillNormalization from './checkout-future-bill-normalization';
 
 function transactional<T extends object>(tx: T) {
   const client = {
@@ -74,7 +75,12 @@ function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
   expect(roomLock?.callOrder).toBeLessThan(contractLock?.callOrder ?? 0);
 }
 function mockRoomContractLocks(
-  tx: { $queryRaw: jest.Mock; contract?: Record<string, unknown> },
+  tx: {
+    $queryRaw: jest.Mock;
+    contract?: Record<string, unknown>;
+    rentBill?: Record<string, unknown>;
+    billAdjustment?: Record<string, unknown>;
+  },
   contractId: number,
   roomId: number,
 ) {
@@ -82,6 +88,13 @@ function mockRoomContractLocks(
   tx.contract.findUnique = jest
     .fn()
     .mockResolvedValue({ id: contractId, roomId });
+  tx.rentBill ??= {};
+  tx.rentBill.findMany ??= jest.fn().mockResolvedValue([]);
+  tx.rentBill.update ??= jest.fn();
+  tx.billAdjustment ??= {};
+  tx.billAdjustment.findMany ??= jest.fn().mockResolvedValue([]);
+  tx.billAdjustment.create ??= jest.fn();
+  tx.billAdjustment.updateMany ??= jest.fn();
   tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
     const statement = query.strings?.join('?') ?? '';
     if (statement.includes('FROM rooms')) return [{ id: roomId }];
@@ -257,6 +270,7 @@ describe('DepositRefundsService', () => {
             id: 8,
             contractId: 3,
             status: 'APPROVED',
+            actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
             handoverDate: new Date('2026-08-01'),
             finalReceivable: '0.00',
             depositRefundableAmount: '800.00',
@@ -324,7 +338,7 @@ describe('DepositRefundsService', () => {
     expect(
       depositTransactionCreate.mock.calls[0][0].data.amount.toString(),
     ).toBe('800');
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(6);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(7);
     expect(prepaymentTransactionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ transactionType: 'REFUND' }),
@@ -644,6 +658,7 @@ describe('DepositRefundsService', () => {
             id: 9,
             contractId: 4,
             status: 'APPROVED',
+            actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
             handoverDate: new Date('2026-08-01'),
             finalReceivable: new Prisma.Decimal('0.00'),
             supplementalRequired: false,
@@ -678,6 +693,15 @@ describe('DepositRefundsService', () => {
             paymentAllocation: { paymentId: 11, rentBillId: 20 },
           },
         ]),
+      },
+      rentBill: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
+      billAdjustment: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        updateMany: jest.fn(),
       },
       depositTransaction: {
         findFirst: jest.fn().mockResolvedValue({ balanceAfter: '800.00' }),
@@ -898,6 +922,12 @@ describe('DepositRefundsService', () => {
 
   it('approves one external refund and atomically applies all three locked components', async () => {
     const harness = combinedApprovalTx();
+    const normalizer = jest
+      .spyOn(futureBillNormalization, 'normalizeFutureCheckoutBills')
+      .mockResolvedValue({
+        normalizedBillIds: [260],
+        cancelledOutstandingAmount: '500.00',
+      });
     const writer = jest
       .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
       .mockResolvedValue({
@@ -914,47 +944,58 @@ describe('DepositRefundsService', () => {
       },
     } as never);
 
-    await service.approve(33, {
-      id: 1,
-      username: 'root',
-      role: 'SUPER_ADMIN',
-    });
+    try {
+      await service.approve(33, {
+        id: 1,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      });
 
-    expect(writer).toHaveBeenCalledWith(harness.tx, {
-      settlementId: 9,
-      depositRefundId: 33,
-      approvedBy: 1,
-      occurredAt: expect.any(Date),
-    });
-    expect(harness.depositLedgerWrite).toHaveBeenCalledTimes(1);
-    expect(harness.prepaymentLedgerWrite).toHaveBeenCalledTimes(1);
-    expect(harness.proofWrite).toHaveBeenCalledTimes(1);
-    expect(harness.settlementWrite).toHaveBeenCalledWith({
-      where: { id: 9, status: 'APPROVED' },
-      data: { status: 'COMPLETED' },
-    });
-    expect(harness.contractWrite).toHaveBeenCalledWith({
-      where: { id: 4 },
-      data: { status: 'ENDED' },
-    });
-    expect(harness.roomWrite).toHaveBeenCalledTimes(1);
-    expect(harness.historyWrite).toHaveBeenCalledTimes(1);
-    expect(harness.auditWrite).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        eventType: 'CHECKOUT_REFUND_APPROVED',
-        entityType: 'DEPOSIT_REFUND',
-        entityId: 33,
+      expect(normalizer).toHaveBeenCalledWith(harness.tx, {
+        settlementId: 9,
+        contractId: 4,
+        actualCheckoutDate: expect.any(Date),
         operatorId: 1,
-        eventData: {
-          checkoutSettlementId: 9,
-          refundAmount: '1400.00',
-          depositRefundAmount: '800.00',
-          prepaymentRefundAmount: '500.00',
-          rentRefundAmount: '100.00',
-        },
-      }),
-    });
-    writer.mockRestore();
+        occurredAt: expect.any(Date),
+      });
+      expect(writer).toHaveBeenCalledWith(harness.tx, {
+        settlementId: 9,
+        depositRefundId: 33,
+        approvedBy: 1,
+        occurredAt: expect.any(Date),
+      });
+      expect(harness.depositLedgerWrite).toHaveBeenCalledTimes(1);
+      expect(harness.prepaymentLedgerWrite).toHaveBeenCalledTimes(1);
+      expect(harness.proofWrite).toHaveBeenCalledTimes(1);
+      expect(harness.settlementWrite).toHaveBeenCalledWith({
+        where: { id: 9, status: 'APPROVED' },
+        data: { status: 'COMPLETED' },
+      });
+      expect(harness.contractWrite).toHaveBeenCalledWith({
+        where: { id: 4 },
+        data: { status: 'ENDED' },
+      });
+      expect(harness.roomWrite).toHaveBeenCalledTimes(1);
+      expect(harness.historyWrite).toHaveBeenCalledTimes(1);
+      expect(harness.auditWrite).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          eventType: 'CHECKOUT_REFUND_APPROVED',
+          entityType: 'DEPOSIT_REFUND',
+          entityId: 33,
+          operatorId: 1,
+          eventData: {
+            checkoutSettlementId: 9,
+            refundAmount: '1400.00',
+            depositRefundAmount: '800.00',
+            prepaymentRefundAmount: '500.00',
+            rentRefundAmount: '100.00',
+          },
+        }),
+      });
+    } finally {
+      normalizer.mockRestore();
+      writer.mockRestore();
+    }
   });
 
   it('rejects a tampered stored split before claiming or applying the refund', async () => {

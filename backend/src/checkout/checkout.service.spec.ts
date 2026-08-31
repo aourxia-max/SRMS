@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CheckoutService } from './checkout.service';
+import * as futureBillNormalization from './checkout-future-bill-normalization';
 
 function transactional<T extends object>(tx: T) {
   const client = {
@@ -80,7 +81,12 @@ function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
   expect(roomLock?.callOrder).toBeLessThan(contractLock?.callOrder ?? 0);
 }
 function mockRoomContractLocks(
-  tx: { $queryRaw: jest.Mock; contract?: Record<string, unknown> },
+  tx: {
+    $queryRaw: jest.Mock;
+    contract?: Record<string, unknown>;
+    rentBill?: Record<string, unknown>;
+    billAdjustment?: Record<string, unknown>;
+  },
   contractId: number,
   roomId: number,
 ) {
@@ -88,6 +94,13 @@ function mockRoomContractLocks(
   tx.contract.findUnique = jest
     .fn()
     .mockResolvedValue({ id: contractId, roomId });
+  tx.rentBill ??= {};
+  tx.rentBill.findMany ??= jest.fn().mockResolvedValue([]);
+  tx.rentBill.update ??= jest.fn();
+  tx.billAdjustment ??= {};
+  tx.billAdjustment.findMany ??= jest.fn().mockResolvedValue([]);
+  tx.billAdjustment.create ??= jest.fn();
+  tx.billAdjustment.updateMany ??= jest.fn();
   tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
     const statement = query.strings?.join('?') ?? '';
     if (statement.includes('FROM rooms')) return [{ id: roomId }];
@@ -750,7 +763,7 @@ describe('CheckoutService', () => {
       'checkout.approve',
       tx.$queryRaw,
       tx.checkoutSettlement.findUniqueOrThrow,
-      tx.rentBill.updateMany,
+      tx.checkoutSettlement.updateMany,
       0,
     );
   });
@@ -846,6 +859,12 @@ describe('CheckoutService', () => {
     ).toBe('100');
   });
   it('completes an approved zero-refund settlement only after final confirmation', async () => {
+    const normalizer = jest
+      .spyOn(futureBillNormalization, 'normalizeFutureCheckoutBills')
+      .mockResolvedValue({
+        normalizedBillIds: [260],
+        cancelledOutstandingAmount: '500.00',
+      });
     const settlementUpdate = jest.fn().mockResolvedValue({
       id: 1,
       status: 'COMPLETED',
@@ -860,6 +879,7 @@ describe('CheckoutService', () => {
           contractId: 3,
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
+          actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '0.00',
@@ -875,6 +895,15 @@ describe('CheckoutService', () => {
       },
       room: { update: roomUpdate },
       roomStatusHistory: { create: jest.fn() },
+      rentBill: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
+      billAdjustment: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        updateMany: jest.fn(),
+      },
     };
     mockRoomContractLocks(tx, 3, 7);
     const transaction = jest.fn(
@@ -886,10 +915,22 @@ describe('CheckoutService', () => {
       },
     } as never);
 
-    await service.completeZeroRefund(1, {
-      ...user,
-      role: 'SUPER_ADMIN',
-    });
+    try {
+      await service.completeZeroRefund(1, {
+        ...user,
+        role: 'SUPER_ADMIN',
+      });
+
+      expect(normalizer).toHaveBeenCalledWith(tx, {
+        settlementId: 1,
+        contractId: 3,
+        actualCheckoutDate: expect.any(Date),
+        operatorId: user.id,
+        occurredAt: expect.any(Date),
+      });
+    } finally {
+      normalizer.mockRestore();
+    }
 
     expect(settlementUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'COMPLETED' } }),
@@ -923,6 +964,7 @@ describe('CheckoutService', () => {
           contractId: 3,
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
+          actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '150.00',
@@ -964,6 +1006,7 @@ describe('CheckoutService', () => {
           contractId: 3,
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
+          actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '150.00',
@@ -1119,6 +1162,7 @@ describe('CheckoutService', () => {
           contractId: 3,
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
+          actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '0.00',

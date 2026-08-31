@@ -12,6 +12,7 @@ import {
   releaseCheckoutRentRefund,
   reserveCheckoutRentRefund,
 } from './checkout-rent-refund-reservations';
+import { normalizeFutureCheckoutBills } from './checkout-future-bill-normalization';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkout-supplemental-balance';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
@@ -850,15 +851,7 @@ export class CheckoutService {
         });
       }
       const finalReceivable = supplementalOutstandingAmount;
-      await tx.rentBill.updateMany({
-        where: {
-          contractId: settlement.contractId,
-          periodStart: { gt: settlement.actualCheckoutDate },
-          receivedAmount: 0,
-          status: { notIn: ['VOIDED', 'REFUNDED'] },
-        },
-        data: { status: 'VOIDED', outstandingAmount: 0 },
-      });
+      const occurredAt = new Date();
       const claimed = await tx.checkoutSettlement.updateMany({
         where: { id, status: 'PENDING' },
         data: {
@@ -896,7 +889,7 @@ export class CheckoutService {
           supplementalCollectedAt: null,
           status: 'APPROVED',
           approvedBy: user.id,
-          approvedAt: new Date(),
+          approvedAt: occurredAt,
         },
       });
       if (claimed.count !== 1)
@@ -938,12 +931,22 @@ export class CheckoutService {
           !isZero
         )
           throw new BadRequestException('零额最终确认条件不满足');
+        if (!settlement.actualCheckoutDate)
+          throw new BadRequestException('结算单缺少实际退房日期');
 
         if (settlement.supplementalRequired)
           await assertNoPendingCheckoutSupplementalReversal(
             tx,
             settlement.contractId,
           );
+        const occurredAt = new Date();
+        await normalizeFutureCheckoutBills(tx, {
+          settlementId: settlement.id,
+          contractId: settlement.contractId,
+          actualCheckoutDate: settlement.actualCheckoutDate,
+          operatorId: user.id,
+          occurredAt,
+        });
         const claimed = await tx.checkoutSettlement.updateMany({
           where: { id, status: 'APPROVED' },
           data: { status: 'COMPLETED' },
