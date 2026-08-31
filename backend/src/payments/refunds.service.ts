@@ -16,7 +16,10 @@ import {
   reopenCheckoutSupplementalBalance,
 } from './checkout-supplemental-balance';
 import { assertContractNotVoided } from '../contracts/contract-operability';
-import { assertNoCheckoutRentRefundReservation } from '../checkout/checkout-rent-refund-reservations';
+import {
+  assertNoCheckoutRentRefundReservation,
+  assertNoCheckoutRentRefundReservationForAllocations,
+} from '../checkout/checkout-rent-refund-reservations';
 import { calculatePaymentRefundStatus } from './payment-refund-status';
 
 @Injectable()
@@ -152,12 +155,16 @@ export class RefundsService {
         throw new BadRequestException('只有待审批退款可以确认');
       if (!['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(refund.payment.status))
         throw new BadRequestException('原收款当前不能退款');
+      assertContractNotVoided(refund.contract.status, '确认退款');
+      await assertNoCheckoutRentRefundReservationForAllocations(
+        tx,
+        refund.allocations.map((item) => item.paymentAllocation.id),
+      );
       if (refund.payment.paymentCategory !== 'CHECKOUT_SUPPLEMENTAL')
         await assertPaymentDoesNotTouchProtectedCheckoutArrears(
           tx,
           refund.paymentId,
         );
-      assertContractNotVoided(refund.contract.status, '确认退款');
 
       const affectedBillIds = new Set(
         refund.allocations.map((item) => item.paymentAllocation.rentBill.id),

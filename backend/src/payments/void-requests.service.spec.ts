@@ -89,6 +89,9 @@ describe('VoidRequestsService adjustment reversal', () => {
         }),
       },
       paymentAllocation: { update: jest.fn().mockResolvedValue({}) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       rentBill: {
         update: jest.fn().mockResolvedValue({}),
         findMany: jest.fn().mockResolvedValue([bill]),
@@ -307,6 +310,65 @@ describe('VoidRequestsService adjustment reversal', () => {
         role: UserRole.ADMIN,
       }),
     ).rejects.toThrow('只有超级管理员可以确认作废');
+  });
+
+  it('rechecks rent-refund reservations when approving a payment void', async () => {
+    const request = {
+      id: 301,
+      paymentId: 81,
+      approvalStatus: 'PENDING',
+      payment: {
+        id: 81,
+        receiptNo: 'SK-TEST-81',
+        contractId: 7,
+        status: 'CONFIRMED',
+        paymentCategory: 'RENT',
+        contract: { status: 'ACTIVE' },
+        allocations: [],
+        prepaymentTransactions: [],
+        adjustments: [],
+      },
+    };
+    const update = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 301 }]),
+      paymentVoidRequest: {
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValueOnce({
+            paymentId: 81,
+            payment: { contractId: 7 },
+          })
+          .mockResolvedValueOnce(request),
+        update,
+      },
+      paymentAllocation: { findFirst: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue({ id: 701 }),
+      },
+    };
+    const service = new VoidRequestsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await expect(
+      service.approve(301, {
+        id: 1,
+        username: 'admin',
+        displayName: '超级管理员',
+        role: UserRole.SUPER_ADMIN,
+      }),
+    ).rejects.toThrow('相关租金已被退租退款流程占用，不能重复退款或作废。');
+
+    expect(tx.checkoutRentRefundAllocation.findFirst).toHaveBeenCalledWith({
+      where: { paymentId: 81, status: 'RESERVED' },
+      select: { id: true },
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('rejects voiding a normal payment allocated to protected checkout arrears', async () => {

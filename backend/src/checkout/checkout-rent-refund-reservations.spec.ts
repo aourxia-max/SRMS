@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import {
   assertCheckoutRentRefundReservationMatches,
   assertNoCheckoutRentRefundReservation,
+  assertNoCheckoutRentRefundReservationForAllocations,
   releaseCheckoutRentRefund,
   reserveCheckoutRentRefund,
 } from './checkout-rent-refund-reservations';
@@ -269,6 +270,43 @@ describe('checkout rent refund reservations', () => {
     await expect(
       assertNoCheckoutRentRefundReservation(tx as never, 11),
     ).resolves.toBeUndefined();
+  });
+
+  it('rejects an ordinary refund when one affected allocation is reserved', async () => {
+    const tx = reservationTx();
+    tx.checkoutRentRefundAllocation.findFirst.mockResolvedValue({ id: 502 });
+
+    await expect(
+      assertNoCheckoutRentRefundReservationForAllocations(
+        tx as never,
+        [101, 102],
+      ),
+    ).rejects.toThrow('相关租金已被退租退款流程占用，不能重复退款或作废。');
+    expect(tx.checkoutRentRefundAllocation.findFirst).toHaveBeenCalledWith({
+      where: {
+        paymentAllocationId: { in: [101, 102] },
+        status: 'RESERVED',
+      },
+      select: { id: true },
+    });
+    const guardSql = tx.$queryRaw.mock.calls[0][0] as {
+      strings?: readonly string[];
+      values?: readonly unknown[];
+    };
+    expect(guardSql.strings?.join('?')).toContain(
+      'crra.payment_allocation_id IN',
+    );
+    expect(guardSql.values).toEqual([101, 102]);
+  });
+
+  it('skips the allocation reservation query when a refund has no allocations', async () => {
+    const tx = reservationTx();
+
+    await expect(
+      assertNoCheckoutRentRefundReservationForAllocations(tx as never, []),
+    ).resolves.toBeUndefined();
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.checkoutRentRefundAllocation.findFirst).not.toHaveBeenCalled();
   });
 
   it('rejects approval when reserved detail has been tampered with', async () => {

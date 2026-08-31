@@ -128,6 +128,9 @@ describe('RefundsService adjustment decisions', () => {
         }),
       },
       paymentAllocation: { update: jest.fn().mockResolvedValue({}) },
+      checkoutRentRefundAllocation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       rentBill: {
         update: jest.fn().mockResolvedValue({}),
         findMany: jest.fn().mockResolvedValue([bill]),
@@ -383,6 +386,25 @@ describe('RefundsService adjustment decisions', () => {
         },
       ),
     ).rejects.toThrow('只有超级管理员可以确认退款');
+  });
+
+  it('rechecks rent-refund reservations when approving an ordinary refund', async () => {
+    const { tx, service } = fixture(502);
+    tx.checkoutRentRefundAllocation.findFirst.mockResolvedValue({ id: 701 });
+
+    await expect(
+      service.approve(201, { adjustmentDecisions: [] }, user),
+    ).rejects.toThrow('相关租金已被退租退款流程占用，不能重复退款或作废。');
+
+    expect(tx.checkoutRentRefundAllocation.findFirst).toHaveBeenCalledWith({
+      where: {
+        paymentAllocationId: { in: [101] },
+        status: 'RESERVED',
+      },
+      select: { id: true },
+    });
+    expect(tx.paymentRefund.update).not.toHaveBeenCalled();
+    expect(tx.paymentAllocation.update).not.toHaveBeenCalled();
   });
 
   it('does not reverse the same approved discount twice', async () => {

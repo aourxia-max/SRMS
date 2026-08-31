@@ -104,12 +104,13 @@ export class VoidRequestsService {
         throw new BadRequestException('只有待审批作废申请可以确认');
       if (request.payment.status !== 'CONFIRMED')
         throw new BadRequestException('原收款当前不能作废');
+      assertContractNotVoided(request.payment.contract.status, '确认收款作废');
+      await assertNoCheckoutRentRefundReservation(tx, request.paymentId);
       if (request.payment.paymentCategory !== 'CHECKOUT_SUPPLEMENTAL')
         await assertPaymentDoesNotTouchProtectedCheckoutArrears(
           tx,
           request.paymentId,
         );
-      assertContractNotVoided(request.payment.contract.status, '确认收款作废');
 
       const billStates = new Map(
         request.payment.allocations.map((allocation) => {

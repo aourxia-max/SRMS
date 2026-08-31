@@ -266,6 +266,30 @@ export async function assertNoCheckoutRentRefundReservation(
     );
 }
 
+export async function assertNoCheckoutRentRefundReservationForAllocations(
+  tx: Prisma.TransactionClient,
+  paymentAllocationIds: number[],
+) {
+  const ids = [...new Set(paymentAllocationIds)].sort(
+    (left, right) => left - right,
+  );
+  if (!ids.length) return;
+  await tx.$queryRaw(
+    Prisma.sql`SELECT crra.id FROM checkout_rent_refund_allocations crra WHERE crra.payment_allocation_id IN (${Prisma.join(ids)}) AND crra.status = 'RESERVED' ORDER BY crra.id FOR UPDATE`,
+  );
+  const reservation = await tx.checkoutRentRefundAllocation.findFirst({
+    where: {
+      paymentAllocationId: { in: ids },
+      status: 'RESERVED',
+    },
+    select: { id: true },
+  });
+  if (reservation)
+    throw new BadRequestException(
+      CHECKOUT_RENT_REFUND_RESERVATION_CONFLICT_MESSAGE,
+    );
+}
+
 export async function assertCheckoutRentRefundReservationMatches(
   tx: Prisma.TransactionClient,
   settlementId: number,
