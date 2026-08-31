@@ -2,8 +2,10 @@
 
 import ElementPlus, { ElMessage, ElMessageBox, ElSelect, ElUpload } from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as contractService from '../../../services/contracts'
+import { useApprovalTasksStore } from '../../../stores/approval-tasks'
 import type { ContractListItem, ContractRole, ContractVoidImpact, ContractVoidRequest, ContractVoidRequestStatus } from '../../../types/contracts'
 import ContractVoidPanel from './ContractVoidPanel.vue'
 
@@ -23,6 +25,7 @@ vi.mock('../../../services/contracts', () => ({
 
 const hashA = 'a'.repeat(64)
 const hashB = 'b'.repeat(64)
+const approvalRefresh = vi.fn().mockResolvedValue(undefined)
 
 const contracts: ContractListItem[] = [
   {
@@ -163,9 +166,11 @@ function request(status: ContractVoidRequestStatus = 'PENDING', overrides: Parti
 }
 
 function mountPanel(role: ContractRole = 'ADMIN', selectedContractId: number | null = 86, currentUserId: number | null = 7) {
+  const pinia = createPinia()
+  vi.spyOn(useApprovalTasksStore(pinia), 'refresh').mockImplementation(approvalRefresh)
   return mount(ContractVoidPanel, {
     props: { contracts, role, selectedContractId, currentUserId },
-    global: { plugins: [ElementPlus] },
+    global: { plugins: [pinia, ElementPlus] },
   })
 }
 
@@ -265,6 +270,7 @@ describe('合同作废纠错面板', () => {
       idempotencyKey: expect.stringMatching(/^contract-void-submit-/),
     })
     expect(contractService.approveContractVoidRequest).not.toHaveBeenCalled()
+    expect(approvalRefresh).toHaveBeenCalledTimes(1)
   })
 
   it('超级管理员可普通提交，也可用精确口令直接执行', async () => {
@@ -294,6 +300,7 @@ describe('合同作废纠错面板', () => {
       confirmation: '确认作废合同',
       idempotencyKey: expect.stringMatching(/^contract-void-execute-/),
     })
+    expect(approvalRefresh).toHaveBeenCalledTimes(1)
     const options = prompt.mock.calls.at(-1)![2]!
     const validator = options.inputValidator as (value: string) => boolean | string
     expect(validator('确认作废合同')).toBe(true)
@@ -365,6 +372,7 @@ describe('合同作废纠错面板', () => {
     await flushPromises()
 
     expect(contractService.rejectContractVoidRequest).toHaveBeenCalledWith(901, '证明材料与合同不一致')
+    expect(approvalRefresh).toHaveBeenCalledTimes(1)
   })
 
   it('管理员只能取消本人提交的待确认申请', async () => {
@@ -376,6 +384,7 @@ describe('合同作废纠错面板', () => {
     await own.get('[data-test="cancel-void-request"]').trigger('click')
     await flushPromises()
     expect(contractService.cancelContractVoidRequest).toHaveBeenCalledWith(901)
+    expect(approvalRefresh).toHaveBeenCalledTimes(1)
 
     const others = mountPanel('ADMIN', null, 99)
     await flushPromises()

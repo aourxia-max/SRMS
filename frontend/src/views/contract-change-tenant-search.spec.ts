@@ -5,6 +5,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http } from '../services/http'
+import { useApprovalTasksStore } from '../stores/approval-tasks'
 import ContractChangesView from './ContractChangesView.vue'
 
 vi.mock('../services/http', () => ({
@@ -16,6 +17,8 @@ const contract = {
   contractNo: 'HT202608250001｜1栋101｜张三01',
   concessions: [],
 }
+
+const approvalRefresh = vi.fn().mockResolvedValue(undefined)
 
 function mockApi() {
   vi.mocked(http.get).mockImplementation(async (url, config) => {
@@ -44,8 +47,10 @@ function mockApi() {
 }
 
 async function mountPrimaryTenantChange() {
+  const pinia = createPinia()
+  vi.spyOn(useApprovalTasksStore(pinia), 'refresh').mockImplementation(approvalRefresh)
   const wrapper = mount(ContractChangesView, {
-    global: { plugins: [createPinia(), ElementPlus] },
+    global: { plugins: [pinia, ElementPlus] },
   })
   await flushPromises()
   const selects = wrapper.findAllComponents(ElSelect)
@@ -60,6 +65,7 @@ describe('合同变更承租人搜索选择', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubGlobal('alert', vi.fn())
+    approvalRefresh.mockClear()
     mockApi()
   })
 
@@ -97,6 +103,24 @@ describe('合同变更承租人搜索选择', () => {
       afterSnapshot: { primaryTenantId: 9 },
       reason: '更换主承租人',
     })
+    expect(approvalRefresh).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('提交失败时不会刷新待审批数量', async () => {
+    vi.mocked(http.post).mockRejectedValueOnce(new Error('提交失败'))
+    const wrapper = await mountPrimaryTenantChange()
+    const tenantSelect = wrapper.findAllComponents(ElSelect)[2]
+    await (tenantSelect.props('remoteMethod') as (query: string) => Promise<void>)('张')
+    tenantSelect.vm.$emit('update:modelValue', 9)
+    ;(wrapper.vm as any).form.effectiveDate = '2026-09-01'
+    ;(wrapper.vm as any).form.reason = '更换主承租人'
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '提交变更')!.trigger('click')
+    await flushPromises()
+
+    expect(approvalRefresh).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

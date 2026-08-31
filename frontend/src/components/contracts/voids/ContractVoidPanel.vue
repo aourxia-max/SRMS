@@ -8,6 +8,7 @@ import { contractVoidConfirmationText } from '../../../types/contracts'
 import { contractVoidCategoryLabel, contractVoidSourceHref, contractVoidSourceLabel, contractVoidStatusLabel } from './contract-void-presentation'
 import { createContractVoidActionSession } from './contract-void-action-session'
 import ContractVoidImpactCards from './ContractVoidImpactCards.vue'
+import { useApprovalTasksStore } from '../../../stores/approval-tasks'
 
 const props = withDefaults(
   defineProps<{
@@ -22,6 +23,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   completed: [contractId: number]
 }>()
+const approvalTasks = useApprovalTasksStore()
 
 type UploadedProof = ContractVoidProofFile & { previewUrl: string }
 type PreviewFile = {
@@ -467,6 +469,7 @@ async function submit(direct: boolean) {
       ElMessage.success('合同作废纠错申请已提交')
     }
     await loadRequests(undefined, generation)
+    if (isCurrentAuthContext(generation)) await approvalTasks.refresh()
   } catch (error) {
     if (!isCurrentAuthContext(generation)) return
     if (isPromptCancelled(error)) return
@@ -474,6 +477,7 @@ async function submit(direct: boolean) {
       const recovered = await loadRequests(idempotencyKey, generation)
       if (!isCurrentAuthContext(generation)) return
       if (recovered) {
+        await approvalTasks.refresh()
         ElMessage.warning('提交响应未确认，已找回服务端待确认申请')
         return
       }
@@ -486,6 +490,7 @@ async function submit(direct: boolean) {
       const detail = errorDetails(error, direct ? '合同作废直接执行失败' : '合同作废纠错申请提交失败')
       ElMessage.error(createdRequest && direct ? `申请已提交，可在当前详情继续确认；${detail.message}` : detail.message)
     }
+    if (createdRequest) await approvalTasks.refresh()
   } finally {
     if (isCurrentAuthContext(generation)) saving.value = false
   }
@@ -517,6 +522,7 @@ async function approveRequest() {
     if (!isCurrentAuthContext(generation)) return
     await loadRequests(undefined, generation)
     if (!isCurrentAuthContext(generation)) return
+    await approvalTasks.refresh()
     ElMessage.success('合同作废申请已确认并完成冲销')
   } catch (error) {
     if (!isCurrentAuthContext(generation)) return
@@ -550,6 +556,7 @@ async function rejectRequest() {
     session.markTerminal(current.id, current.submissionIdempotencyKey)
     await loadRequests(undefined, generation)
     if (!isCurrentAuthContext(generation)) return
+    await approvalTasks.refresh()
     ElMessage.success('合同作废申请已驳回')
   } catch (error) {
     if (isCurrentAuthContext(generation) && !isPromptCancelled(error)) ElMessage.error(errorDetails(error, '合同作废申请驳回失败').message)
@@ -571,6 +578,7 @@ async function cancelRequest() {
     session.markTerminal(current.id, current.submissionIdempotencyKey)
     await loadRequests(undefined, generation)
     if (!isCurrentAuthContext(generation)) return
+    await approvalTasks.refresh()
     ElMessage.success('合同作废申请已取消')
   } catch (error) {
     if (isCurrentAuthContext(generation)) ElMessage.error(errorDetails(error, '合同作废申请取消失败').message)

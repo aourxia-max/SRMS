@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSessionStore } from '../stores/session'
+import { useApprovalTasksStore } from '../stores/approval-tasks'
 import { http } from '../services/http'
 import { contractChangeSubmitErrorMessage } from './contract-change-submit'
 import { contractChangeStatusLabel, contractChangeTypeLabel } from './contract-change-presentation'
@@ -24,6 +25,7 @@ type TenantOption = {
 }
 
 const session = useSessionStore()
+const approvalTasks = useApprovalTasksStore()
 const contracts = ref<any[]>([])
 const changes = ref<any[]>([])
 const selectedContractId = ref<number>()
@@ -100,6 +102,7 @@ async function submit() {
   try {
     await http.post(`/contracts/${selectedContractId.value}/changes`, { changeType: form.changeType, effectiveDate: form.effectiveDate, afterSnapshot: afterSnapshot(), reason: form.reason })
     await loadChanges()
+    await approvalTasks.refresh()
     ElMessage.success('变更已提交，等待超级管理员确认')
   } catch (error) {
     ElMessage.error(contractChangeSubmitErrorMessage(error))
@@ -109,6 +112,7 @@ async function approve(id: number) {
   try {
     await http.post(`/contracts/changes/${id}/approve`)
     await loadChanges()
+    await approvalTasks.refresh()
     ElMessage.success('合同变更已确认')
   } catch (error) {
     ElMessage.error(
@@ -119,7 +123,7 @@ async function approve(id: number) {
     )
   }
 }
-async function reject(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/contracts/changes/${id}/reject`, { reason }); await loadChanges() } }
+async function reject(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/contracts/changes/${id}/reject`, { reason }); await loadChanges(); await approvalTasks.refresh() } }
 onMounted(loadContracts)
 </script>
 

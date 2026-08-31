@@ -10,6 +10,7 @@ import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
 import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
 const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+const approvalRefresh = vi.fn().mockResolvedValue(undefined);
 function checkoutTestPinia() {
   const pinia = createPinia();
   pinia.state.value.session = {
@@ -17,6 +18,9 @@ function checkoutTestPinia() {
     initialized: true,
     user: { id: 1, username: "admin", displayName: "管理员", role: "ADMIN" },
   };
+  vi.spyOn(useApprovalTasksStore(pinia), "refresh").mockImplementation(
+    approvalRefresh,
+  );
   return pinia;
 }
 vi.mock("vue-router", () => ({
@@ -529,6 +533,7 @@ describe("CheckoutTopNav", () => {
     expect(panel.props("submitting")).toBe(true);
     resolveSubmit();
     await flushPromises();
+    expect(approvalRefresh).toHaveBeenCalledTimes(1);
 
     panel.vm.$emit("cancel", 8);
     panel.vm.$emit("cancel", 8);
@@ -1316,6 +1321,7 @@ describe("CheckoutTopNav", () => {
 
     expect(confirm).toHaveBeenCalled();
     expect(api.cancelRefund).toHaveBeenCalledWith(49);
+    expect(approvalRefresh).toHaveBeenCalledTimes(1);
     confirm.mockRestore();
   });
   it("confirms and cancels the entire approved checkout separately", async () => {
@@ -1684,6 +1690,7 @@ describe("CheckoutTopNav", () => {
       "提交结算失败，请检查填写内容后重试",
     );
     expect(wrapper.get('[role="alert"]').text()).not.toContain("remark");
+    expect(approvalRefresh).not.toHaveBeenCalled();
   });
   it("does not offer refund registration to visitors", () => {
     const wrapper = mount(CheckoutRefundPanel, {

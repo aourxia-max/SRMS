@@ -5,10 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import PaymentRecordList from '../../components/payments/PaymentRecordList.vue'
 import PaymentDetailView from './PaymentDetailView.vue'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
+import { useSessionStore } from '../../stores/session'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   detail: vi.fn(),
+  submitRefund: vi.fn(),
+  submitVoid: vi.fn(),
 }))
 
 vi.mock('../../services/payments', () => ({
@@ -17,8 +21,8 @@ vi.mock('../../services/payments', () => ({
     detail: mocks.detail,
     downloadProof: vi.fn(),
     edit: vi.fn(),
-    submitRefund: vi.fn(),
-    submitVoid: vi.fn(),
+    submitRefund: mocks.submitRefund,
+    submitVoid: mocks.submitVoid,
     approveAdjustment: vi.fn(),
     rejectAdjustment: vi.fn(),
   },
@@ -62,7 +66,14 @@ const detail = {
   receipt: {},
 }
 
+const approvalRefresh = vi.fn().mockResolvedValue(undefined)
+
 async function mountView() {
+  const pinia = createPinia()
+  const session = useSessionStore(pinia)
+  session.user = { id: 2, username: 'admin', displayName: '管理员', role: 'ADMIN' }
+  session.accessToken = 'test-token'
+  vi.spyOn(useApprovalTasksStore(pinia), 'refresh').mockImplementation(approvalRefresh)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -74,7 +85,7 @@ async function mountView() {
   await router.push('/payments/detail')
   await router.isReady()
   const wrapper = mount(PaymentDetailView, {
-    global: { plugins: [createPinia(), router, ElementPlus] },
+    global: { plugins: [pinia, router, ElementPlus] },
   })
   await flushPromises()
   return wrapper
@@ -84,6 +95,9 @@ describe('PaymentDetailView pagination', () => {
   beforeEach(() => {
     mocks.list.mockReset()
     mocks.detail.mockReset()
+    mocks.submitRefund.mockReset().mockResolvedValue({})
+    mocks.submitVoid.mockReset().mockResolvedValue({})
+    approvalRefresh.mockClear()
     mocks.list
       .mockResolvedValueOnce({ items: [row(81)], page: 1, pageSize: 10, total: 21 })
       .mockResolvedValueOnce({ items: [row(71)], page: 2, pageSize: 10, total: 21 })
@@ -111,6 +125,41 @@ describe('PaymentDetailView pagination', () => {
 
     expect(mocks.list).toHaveBeenNthCalledWith(3, { page: 1, pageSize: 10 })
     expect(mocks.detail).toHaveBeenCalledTimes(1)
+  })
+
+  it('提交退款或作废申请成功后立即刷新统一待审批数量', async () => {
+    const wrapper = await mountView()
+    const view = wrapper.vm as unknown as {
+      refund: { refundAmount: string; refundDate: string; refundMethod: string; reason: string; allocations: Record<number, string> }
+      voidReason: string
+      submitRefund: () => Promise<void>
+      submitVoid: () => Promise<void>
+    }
+
+    view.refund.refundAmount = '100.00'
+    view.refund.reason = '重复收款'
+    await view.submitRefund()
+    view.voidReason = '票据录入错误'
+    await view.submitVoid()
+
+    expect(mocks.submitRefund).toHaveBeenCalledTimes(1)
+    expect(mocks.submitVoid).toHaveBeenCalledTimes(1)
+    expect(approvalRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('退款申请提交失败时不刷新待审批数量', async () => {
+    mocks.submitRefund.mockRejectedValueOnce(new Error('提交失败'))
+    const wrapper = await mountView()
+    const view = wrapper.vm as unknown as {
+      refund: { refundAmount: string; reason: string }
+      submitRefund: () => Promise<void>
+    }
+    view.refund.refundAmount = '100.00'
+    view.refund.reason = '重复收款'
+
+    await expect(view.submitRefund()).rejects.toThrow('提交失败')
+
+    expect(approvalRefresh).not.toHaveBeenCalled()
   })
 
   it('shows checkout supplemental category and inspection deduction in Chinese', async () => {

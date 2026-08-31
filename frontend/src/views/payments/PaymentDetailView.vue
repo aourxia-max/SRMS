@@ -7,6 +7,7 @@ import PaymentWorkspace from "../../components/payments/PaymentWorkspace.vue";
 import { checkoutApi } from "../../services/checkout";
 import { paymentApi } from "../../services/payments";
 import { useSessionStore } from "../../stores/session";
+import { useApprovalTasksStore } from "../../stores/approval-tasks";
 import type {
   PaymentDetail,
   PaymentListItem,
@@ -23,6 +24,7 @@ import {
 const route = useRoute();
 const router = useRouter();
 const session = useSessionStore();
+const approvalTasks = useApprovalTasksStore();
 const rows = ref<PaymentListItem[]>([]);
 const detail = ref<PaymentDetail | null>(null);
 const loading = ref(false);
@@ -226,6 +228,7 @@ async function submitRefund() {
   refundOpen.value = false;
   ElMessage.success("退款申请已提交，等待超级管理员确认");
   await openDetail(detail.value.id);
+  await approvalTasks.refresh();
 }
 async function submitVoid() {
   if (!detail.value || !voidReason.value.trim())
@@ -237,6 +240,7 @@ async function submitVoid() {
   voidOpen.value = false;
   ElMessage.success("作废申请已提交");
   await openDetail(detail.value.id);
+  await approvalTasks.refresh();
 }
 function prepareEdit() {
   if (!detail.value) return;

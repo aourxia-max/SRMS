@@ -4,11 +4,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PaymentWorkspace from '../../components/payments/PaymentWorkspace.vue'
 import { paymentApi } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import type { ReviewItem } from '../../types/payments'
 import { refundAdjustmentDecisions } from './payment-review'
 import { billAdjustmentTypeLabel } from '../../utils/status-labels'
 
-const session = useSessionStore(); const queue = ref<ReviewItem[]>([]); const selected = ref<ReviewItem|null>(null); const detail = ref<Record<string,any>|null>(null); const loading=ref(false); const acting=ref(false)
+const session = useSessionStore(); const approvalTasks = useApprovalTasksStore(); const queue = ref<ReviewItem[]>([]); const selected = ref<ReviewItem|null>(null); const detail = ref<Record<string,any>|null>(null); const loading=ref(false); const acting=ref(false)
 const filters=reactive({type:'',status:'PENDING',roomKeyword:'',tenantKeyword:'',dateFrom:'',dateTo:''})
 const decisions=reactive<Record<number,{decision:'REVERSE'|'KEEP';keepReason:string}>>({})
 const isSuperAdmin=computed(()=>session.user?.role==='SUPER_ADMIN')
@@ -17,8 +18,8 @@ function money(value:unknown){return value===null||value===undefined?'—':`¥${
 function date(value:unknown){return value?String(value).slice(0,10):'—'}
 async function load(){loading.value=true;try{queue.value=await paymentApi.reviews(Object.fromEntries(Object.entries(filters).filter(([,value])=>value)));if(selected.value){const latest=queue.value.find((item)=>item.type===selected.value?.type&&item.id===selected.value?.id);if(!latest){selected.value=null;detail.value=null}}}finally{loading.value=false}}
 async function choose(item:ReviewItem){selected.value=item;detail.value=await paymentApi.reviewDetail(item.type,item.id);Object.keys(decisions).forEach((key)=>delete decisions[Number(key)]);if(item.type==='REFUND')Object.assign(decisions,refundAdjustmentDecisions(detail.value))}
-async function approve(){if(!selected.value)return;const adjustmentDecisions=Object.entries(decisions).map(([id,item])=>({billAdjustmentId:Number(id),decision:item.decision,keepReason:item.decision==='KEEP'?item.keepReason:undefined}));if(adjustmentDecisions.some((item)=>item.decision==='KEEP'&&!item.keepReason?.trim()))return ElMessage.warning('保留优惠时必须填写原因');acting.value=true;try{await paymentApi.approveReview(selected.value.type,selected.value.id,adjustmentDecisions);ElMessage.success('审核已确认，账务冲回已完成');selected.value=null;detail.value=null;await load()}finally{acting.value=false}}
-async function reject(){if(!selected.value)return;const reason=await ElMessageBox.prompt('请输入驳回原因','驳回申请',{inputPattern:/\S+/,inputErrorMessage:'驳回原因不能为空'}).then((result)=>result.value);acting.value=true;try{await paymentApi.rejectReview(selected.value.type,selected.value.id,reason);ElMessage.success('申请已驳回');selected.value=null;detail.value=null;await load()}finally{acting.value=false}}
+async function approve(){if(!selected.value)return;const adjustmentDecisions=Object.entries(decisions).map(([id,item])=>({billAdjustmentId:Number(id),decision:item.decision,keepReason:item.decision==='KEEP'?item.keepReason:undefined}));if(adjustmentDecisions.some((item)=>item.decision==='KEEP'&&!item.keepReason?.trim()))return ElMessage.warning('保留优惠时必须填写原因');acting.value=true;try{await paymentApi.approveReview(selected.value.type,selected.value.id,adjustmentDecisions);ElMessage.success('审核已确认，账务冲回已完成');selected.value=null;detail.value=null;await load();await approvalTasks.refresh()}finally{acting.value=false}}
+async function reject(){if(!selected.value)return;const reason=await ElMessageBox.prompt('请输入驳回原因','驳回申请',{inputPattern:/\S+/,inputErrorMessage:'驳回原因不能为空'}).then((result)=>result.value);acting.value=true;try{await paymentApi.rejectReview(selected.value.type,selected.value.id,reason);ElMessage.success('申请已驳回');selected.value=null;detail.value=null;await load();await approvalTasks.refresh()}finally{acting.value=false}}
 onMounted(()=>void load())
 </script>
 

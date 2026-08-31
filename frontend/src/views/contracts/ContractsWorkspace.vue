@@ -14,6 +14,7 @@ import { appendContractFile, approveFixedRentRebate, confirmContractDraft, confi
 import { http } from '../../services/http'
 import { listAllPayments } from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import { emptyContractForm, type ContractDetail, type ContractChange, type ContractFile, type ContractFormModel, type ContractListItem, type ContractPayload, type ContractPreview, type ContractRole, type ContractRoom, type ContractTenant, type ContractWorkspaceTab, type PricingRebate, type RentBill } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
 
@@ -23,6 +24,7 @@ const draftStorageKey = 'srms.currentFixedContractDraftId'
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
+const approvalTasks = useApprovalTasksStore()
 const role = computed<ContractRole>(() => session.user?.role || 'VISITOR')
 const canAccessVoidCorrection = computed(() => role.value === 'ADMIN' || role.value === 'SUPER_ADMIN')
 const tab = ref<ContractWorkspaceTab>('list')
@@ -415,6 +417,7 @@ async function submitRebate(payload: Record<string, unknown>) {
     if (!selectedContract.value) throw new Error('请先选择合同')
     await submitFixedRentRebate(selectedContract.value, payload)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
+    await approvalTasks.refresh()
     ElMessage.success('固定月租退差申请已提交')
   } catch (error) {
     ElMessage.error(errorMessage(error, '退差申请提交失败'))
@@ -452,6 +455,7 @@ async function approveRebate(id: number) {
   try {
     await approveFixedRentRebate(id)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
+    await approvalTasks.refresh()
     ElMessage.success('退差已确认')
   } catch (error) {
     ElMessage.error(errorMessage(error, '退差确认失败'))
@@ -467,6 +471,7 @@ async function rejectRebate(id: number) {
     })
     await rejectFixedRentRebate(id, result.value)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
+    await approvalTasks.refresh()
     ElMessage.success('退差已驳回')
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(errorMessage(error, '退差驳回失败'))

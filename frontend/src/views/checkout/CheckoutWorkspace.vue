@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { checkoutApi } from "../../services/checkout";
+import { useApprovalTasksStore } from "../../stores/approval-tasks";
 import { useSessionStore } from "../../stores/session";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
@@ -20,6 +21,7 @@ import type {
 const route = useRoute() || { query: {} };
 const router = useRouter();
 const session = useSessionStore();
+const approvalTasks = useApprovalTasksStore();
 const activeTab = ref<CheckoutTab>("initiate");
 const contracts = ref<CheckoutContract[]>([]);
 const settlements = ref<CheckoutSettlement[]>([]);
@@ -375,6 +377,7 @@ async function submitSettlement(
   try {
     await checkoutApi.submit(id, payload);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "提交结算失败，请检查填写内容后重试");
   } finally {
@@ -413,6 +416,7 @@ async function returnToDraft(id: number) {
   try {
     await checkoutApi.returnToDraft(id);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "退回草稿失败，请稍后重试");
   }
@@ -424,6 +428,7 @@ async function cancelSettlement(id: number) {
   try {
     await checkoutApi.cancel(id);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "取消退租结算失败，请稍后重试");
   } finally {
@@ -435,6 +440,7 @@ async function approveSettlement(id: number) {
   try {
     await checkoutApi.approve(id);
     await loadData();
+    await approvalTasks.refresh();
     activeTab.value = "refund";
   } catch (error) {
     actionError.value = message(error, "确认结算失败，请稍后重试");
@@ -467,6 +473,7 @@ async function submitRefund(payload: Record<string, unknown>) {
   try {
     await checkoutApi.submitRefund(payload);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "登记退款失败，请稍后重试");
   } finally {
@@ -480,6 +487,7 @@ async function approveRefund(id: number) {
   try {
     await checkoutApi.approveRefund(id);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "确认退款失败，请稍后重试");
   } finally {
@@ -499,6 +507,7 @@ async function cancelRefundApplication(id: number) {
   try {
     await checkoutApi.cancelRefund(id);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "取消退款申请失败，请稍后重试");
   } finally {
@@ -518,6 +527,7 @@ async function cancelApprovedCheckout(id: number) {
   try {
     await checkoutApi.cancel(id);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "取消整个退租失败，请稍后重试");
   } finally {
@@ -540,6 +550,7 @@ async function completeZeroRefund(id: number) {
   try {
     await checkoutApi.completeZeroRefund(id);
     await loadData();
+    await approvalTasks.refresh();
   } catch (error) {
     actionError.value = message(error, "最终确认失败，请稍后重试");
   }

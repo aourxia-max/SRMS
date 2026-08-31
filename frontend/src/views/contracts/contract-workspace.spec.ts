@@ -17,6 +17,7 @@ import * as contractService from '../../services/contracts'
 import { http } from '../../services/http'
 import * as paymentService from '../../services/payments'
 import { useSessionStore } from '../../stores/session'
+import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import { buildFixedRentRebatePayload, contractConcessionError, createLatestRequestGuard, filterFixedRentRebateContracts, fixedRentRebateContractLabel, isFixedRentRebateEligible, normalizeConcessionType, toContractPayload } from '../../services/contracts'
 import { emptyContractForm, type ContractDetail, type ContractFormModel } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
@@ -99,6 +100,7 @@ describe('固定合同工作区', () => {
   it('仅展示四项固定合同导航，不出现阶梯功能', () => {
     const wrapper = mount(ContractTopNav, {
       props: { modelValue: 'list' },
+      global: { plugins: [createPinia()] },
     })
 
     expect(wrapper.text()).toContain('合同列表')
@@ -200,9 +202,59 @@ describe('固定合同工作区', () => {
   it('未选择合同时显示真实空状态提示', () => {
     const wrapper = mount(ContractTopNav, {
       props: { modelValue: 'detail', selectedContractId: null },
+      global: { plugins: [createPinia()] },
     })
 
     expect(wrapper.text()).toContain('请先从合同列表选择合同')
+  })
+})
+
+describe('固定月租退差待审批提醒刷新', () => {
+  it('提交退差申请并重载列表后立即刷新统一待审批数量', async () => {
+    vi.spyOn(http, 'get').mockImplementation(
+      (url: string) =>
+        Promise.resolve({
+          data: { data: url === '/properties/rooms' ? [] : { items: [] } },
+        }) as never,
+    )
+    vi.spyOn(contractService, 'listContracts').mockResolvedValue([activeContract()])
+    vi.spyOn(contractService, 'getContract').mockResolvedValue(activeContract())
+    vi.spyOn(contractService, 'getContractBills').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractFiles').mockResolvedValue([])
+    vi.spyOn(contractService, 'getContractChanges').mockResolvedValue([])
+    vi.spyOn(contractService, 'listFixedRentRebates').mockResolvedValue([])
+    vi.spyOn(paymentService, 'listAllPayments').mockResolvedValue([])
+    const submitRebate = vi.spyOn(contractService, 'submitFixedRentRebate').mockResolvedValue({} as never)
+    const pinia = createPinia()
+    const session = useSessionStore(pinia)
+    session.user = { id: 2, username: 'admin', displayName: '管理员', role: 'ADMIN' }
+    session.accessToken = 'access-token'
+    const refresh = vi.spyOn(useApprovalTasksStore(pinia), 'refresh').mockResolvedValue()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/contracts', name: 'contracts', component: ContractsWorkspace }],
+    })
+    await router.push('/contracts?tab=fixed-rebate&contractId=12')
+    await router.isReady()
+    const wrapper = mount(ContractsWorkspace, {
+      global: { plugins: [pinia, router, ElementPlus] },
+    })
+    await flushPromises()
+
+    wrapper.getComponent(FixedRentRebatePanel).vm.$emit('submit', {
+      rentBillId: 91,
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      actualAmount: '100.00',
+      differenceReason: '维修协商',
+      settlementMethod: 'PREPAYMENT_CREDIT',
+    })
+    await flushPromises()
+
+    expect(submitRebate).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+    vi.restoreAllMocks()
   })
 })
 
