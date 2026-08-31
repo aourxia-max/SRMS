@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import PaymentRecordList from "../../components/payments/PaymentRecordList.vue";
@@ -117,6 +117,7 @@ function closeCheckoutRefundProofPreview() {
     checkoutRefundProofPreview.value = null;
   }
 }
+onBeforeUnmount(closeCheckoutRefundProofPreview);
 function printReceipt() {
   window.print();
 }

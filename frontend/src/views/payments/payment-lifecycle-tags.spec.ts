@@ -188,13 +188,14 @@ describe("收款详情退租租金退款", () => {
   });
   it("shows the actual combined-refund proof filename and previews it through the checkout API", async () => {
     const createObjectURL = vi.fn().mockReturnValue("blob:checkout-refund-43");
+    const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
       value: createObjectURL,
     });
     Object.defineProperty(URL, "revokeObjectURL", {
       configurable: true,
-      value: vi.fn(),
+      value: revokeObjectURL,
     });
     vi.mocked(checkoutApi.downloadRefundProof).mockResolvedValue({
       data: new Blob(["checkout refund proof"], { type: "image/webp" }),
@@ -230,5 +231,6 @@ describe("收款详情退租租金退款", () => {
         ?.getAttribute("src"),
     ).toBe("blob:checkout-refund-43");
     wrapper.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:checkout-refund-43");
   });
 });
