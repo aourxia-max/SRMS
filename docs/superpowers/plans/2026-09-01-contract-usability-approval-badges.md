@@ -544,14 +544,17 @@ git commit -m "feat: search contracts in contract changes"
 - Produces: `.building-map { max-height: 645px; }`.
 - Preserves: `.floor-name` and `.room-cell` `min-height: 76px`.
 
-- [ ] **Step 1: Write the failing source-contract test**
+- [ ] **Step 1: Write the failing rendered-style test**
 
-Read `DashboardView.vue` and assert:
+Mount the real `DashboardView` with its data services stubbed at the network boundary, attach it to `document.body`, and assert the user-visible layout through computed styles rather than reading source text:
 
 ```ts
-expect(source).toMatch(/\.building-map\s*\{[^}]*max-height:\s*645px/s)
-expect(source).toMatch(/\.room-cell\s*\{[^}]*min-height:\s*76px/s)
-expect(source).not.toMatch(/\.building-map\s*\{[^}]*min-height:\s*645px/s)
+const map = wrapper.get('[data-test="building-map"]').element
+const room = wrapper.get('[data-test="room-cell"]').element
+
+expect(getComputedStyle(map).maxHeight).toBe('645px')
+expect(getComputedStyle(map).minHeight).not.toBe('645px')
+expect(getComputedStyle(room).minHeight).toBe('76px')
 ```
 
 - [ ] **Step 2: Run test and verify RED**
@@ -562,7 +565,7 @@ npm --prefix frontend run test:unit -- src/views/dashboard-room-map-height.spec.
 
 - [ ] **Step 3: Change only the map maximum height**
 
-Replace `max-height:430px` with `max-height:645px`; do not alter room cell sizing, color, filtering, routing, or overflow.
+Add stable `data-test` attributes to the existing map and room cells, then replace `max-height:430px` with `max-height:645px`; do not alter room cell sizing, color, filtering, routing, or overflow.
 
 - [ ] **Step 4: Run test and commit**
 
