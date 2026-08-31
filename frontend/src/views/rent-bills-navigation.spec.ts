@@ -2,6 +2,7 @@
 
 import ElementPlus from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchRentBill, fetchRentBills, http } from '../services/http'
 import RentBillsView from './RentBillsView.vue'
@@ -162,6 +163,58 @@ describe('租金账单关联收款', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('1 / 0')
+    wrapper.unmount()
+  })
+
+  it('把当前月份的有效账单数量明确标为本月账单', async () => {
+    vi.mocked(http.get).mockResolvedValue({ data: { data: [] } })
+    vi.mocked(fetchRentBills).mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 8,
+      summary: {
+        payable: '8000.00',
+        received: '1000.00',
+        outstanding: '7000.00',
+        count: 8,
+        overdueCount: 1,
+      },
+    })
+
+    const wrapper = mount(RentBillsView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('本月账单')
+    expect(wrapper.text()).not.toContain('待收账单')
+    expect(wrapper.text()).toContain('含逾期 1 笔')
+    wrapper.unmount()
+  })
+
+  it('选择其他月份时把账单数量标为对应月份账单', async () => {
+    vi.mocked(http.get).mockResolvedValue({ data: { data: [] } })
+    vi.mocked(fetchRentBills).mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+      summary: {
+        payable: '0.00',
+        received: '0.00',
+        outstanding: '0.00',
+        count: 0,
+        overdueCount: 0,
+      },
+    })
+
+    const wrapper = mount(RentBillsView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const view = wrapper.vm as unknown as { filters: { month?: string } }
+    view.filters.month = '2025-07'
+    await nextTick()
+
+    expect(wrapper.text()).toContain('2025年7月账单')
+    expect(wrapper.text()).not.toContain('本月账单')
     wrapper.unmount()
   })
 })

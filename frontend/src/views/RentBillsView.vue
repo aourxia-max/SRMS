@@ -20,6 +20,7 @@ const monthlyMovement = ref({ monthlyMoveInCount: 0, monthlyCheckoutCount: 0 })
 const filters = reactive<RentBillQuery>({ keyword: '', buildingId: undefined, status: undefined, month: currentRentBillMonth(), page: 1, pageSize: 20 })
 
 const monthLabel = computed(() => filters.month ? `${filters.month.slice(0, 4)}年${Number(filters.month.slice(5, 7))}月` : '全部月份')
+const billCountLabel = computed(() => filters.month === currentRentBillMonth() ? '本月账单' : `${monthLabel.value}账单`)
 const statusMap = rentBillStatusMap
 const statusInfo = rentBillStatusInfo
 const money = (value: unknown) => `¥ ${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -78,7 +79,7 @@ onMounted(async () => {
     <section class="metrics-grid">
       <el-card shadow="never"><span>本月应收</span><strong>{{ money(summary.payable) }}</strong><small>{{ monthLabel }}</small></el-card>
       <el-card shadow="never"><span>本月已收</span><strong>{{ money(summary.received) }}</strong><small>收缴率 {{ summary.payable === '0.00' ? '0.0' : (Number(summary.received) / Number(summary.payable) * 100).toFixed(1) }}%</small></el-card>
-      <el-card shadow="never"><span>待收账单</span><strong>{{ summary.count }} <em>笔</em></strong><small class="danger-text">含逾期 {{ summary.overdueCount }} 笔</small></el-card>
+      <el-card shadow="never"><span>{{ billCountLabel }}</span><strong>{{ summary.count }} <em>笔</em></strong><small class="danger-text">含逾期 {{ summary.overdueCount }} 笔</small></el-card>
       <el-card shadow="never"><span>本月新增 / 退租</span><strong>{{ monthlyMovement.monthlyMoveInCount }} <em>/ {{ monthlyMovement.monthlyCheckoutCount }}</em></strong><small>新增合同 / 实际退租</small></el-card>
     </section>
 

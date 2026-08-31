@@ -155,7 +155,43 @@ describe('DashboardService room map monthly rent visibility', () => {
     expect(roomSummary.rooms[0]).not.toHaveProperty('contracts');
   });
 
-  it('does not query or return contract rent to an administrator', async () => {
+  it('returns the current monthly rent to an administrator', async () => {
+    const room = {
+      id: 11,
+      fullHouseNo: '1栋601',
+      houseNo: '601',
+      floorNo: 6,
+      roomStatus: 'RENTED',
+      usageType: 'RESIDENCE',
+      building: { id: 1, buildingNo: '1栋', buildingName: '一号楼' },
+      contracts: [
+        {
+          status: 'ACTIVE',
+          monthlyRent: '2200.00',
+          startDate: new Date('2026-08-01'),
+        },
+      ],
+    };
+    const { prisma, finance, roomFindMany } = dependencies([room]);
+
+    const result = await new DashboardService(prisma, finance).summary({
+      id: 2,
+      role: 'ADMIN',
+    });
+    const roomSummary = result.roomSummary as { rooms: any[] };
+
+    expect(roomFindMany.mock.calls[0][0].include.contracts).toEqual(
+      expect.objectContaining({
+        where: {
+          status: { in: ['PENDING_START', 'ACTIVE', 'PENDING_CHECKOUT'] },
+        },
+      }),
+    );
+    expect(roomSummary.rooms[0].currentMonthlyRent).toBe('2200.00');
+    expect(roomSummary.rooms[0]).not.toHaveProperty('contracts');
+  });
+
+  it('does not query or return contract rent to a visitor', async () => {
     const room = {
       id: 11,
       fullHouseNo: '1栋601',
@@ -168,8 +204,8 @@ describe('DashboardService room map monthly rent visibility', () => {
     const { prisma, finance, roomFindMany } = dependencies([room]);
 
     const result = await new DashboardService(prisma, finance).summary({
-      id: 2,
-      role: 'ADMIN',
+      id: 3,
+      role: 'VISITOR',
     });
     const roomSummary = result.roomSummary as { rooms: any[] };
 

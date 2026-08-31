@@ -62,6 +62,7 @@ const roomMapFilters = reactive({
 })
 
 const isSuper = computed(() => session.user?.role === 'SUPER_ADMIN')
+const canViewRoomRent = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
 const statusMeta: Record<RoomStatus, { label: string; className: string; color: string }> = {
   EMPTY: { label: '空置', className: 'empty', color: '#20a37a' },
   PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#7ef1ff' },
@@ -180,7 +181,7 @@ function formatMoney(value: unknown) {
 }
 function roomBusinessMeta(room: DashboardRoom) {
   const usage = usageTypeLabel(room.usageType)
-  if (!isSuper.value) return usage
+  if (!canViewRoomRent.value) return usage
   if (
     room.currentMonthlyRent === null ||
     room.currentMonthlyRent === undefined ||

@@ -15,7 +15,7 @@ vi.mock('../services/http', () => ({
   http: { get: vi.fn() },
 }))
 
-function sessionFor(role: 'SUPER_ADMIN' | 'ADMIN') {
+function sessionFor(role: 'SUPER_ADMIN' | 'ADMIN' | 'VISITOR') {
   const pinia = createPinia()
   const session = useSessionStore(pinia)
   session.user = { id: 1, username: role.toLowerCase(), displayName: role, role }
@@ -76,10 +76,21 @@ describe('驾驶舱房态卡片用途与月租', () => {
     wrapper.unmount()
   })
 
-  it('管理员只看到使用用途，不暴露月租金额', async () => {
-    mockRoom({ ...baseRoom, usageType: 'SHOP' })
+  it('普通管理员看到用途和当前月租', async () => {
+    mockRoom({ ...baseRoom, usageType: 'SHOP', currentMonthlyRent: '2200.00' })
     const wrapper = mount(DashboardView, {
       global: { plugins: [sessionFor('ADMIN'), ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.room-owner').text()).toBe('商铺 · ¥2,200/月')
+    wrapper.unmount()
+  })
+
+  it('游客只看到使用用途，不显示月租金额', async () => {
+    mockRoom({ ...baseRoom, usageType: 'SHOP', currentMonthlyRent: '2200.00' })
+    const wrapper = mount(DashboardView, {
+      global: { plugins: [sessionFor('VISITOR'), ElementPlus] },
     })
     await flushPromises()
 

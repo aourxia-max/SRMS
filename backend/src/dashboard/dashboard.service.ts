@@ -38,7 +38,8 @@ export class DashboardService {
     const monthPeriod = currentMonthPeriod(now);
     const monthFrom = new Date(monthPeriod.from);
     const monthTo = new Date(monthPeriod.to);
-    const canViewRoomRent = user.role === UserRole.SUPER_ADMIN;
+    const canViewRoomRent =
+      user.role === UserRole.SUPER_ADMIN || user.role === UserRole.ADMIN;
     const rooms = await this.prisma.db.room.findMany({
       where: {
         deletedAt: null,
