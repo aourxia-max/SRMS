@@ -17,6 +17,14 @@ vi.mock("../../services/payments", () => ({
   paymentApi: { list: vi.fn(), detail: vi.fn() },
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("paymentLifecycleTags", () => {
   it("only shows the receipt type for a confirmed payment without completed lifecycle changes", () => {
     expect(
@@ -231,6 +239,113 @@ describe("收款详情退租租金退款", () => {
         ?.getAttribute("src"),
     ).toBe("blob:checkout-refund-43");
     wrapper.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:checkout-refund-43");
+  });
+
+  it("discards a pending checkout refund proof after the page is unmounted", async () => {
+    const pendingDownload = deferred<{ data: Blob }>();
+    const createObjectURL = vi.fn().mockReturnValue("blob:late-proof");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    vi.mocked(checkoutApi.downloadRefundProof).mockReturnValue(
+      pendingDownload.promise as never,
+    );
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/payments/detail/:id?", component: PaymentDetailView },
+        { path: "/payments/collect", component: { template: "<div />" } },
+        { path: "/payments/reviews", component: { template: "<div />" } },
+      ],
+    });
+    await router.push("/payments/detail/81");
+    await router.isReady();
+    const wrapper = mount(PaymentDetailView, {
+      global: { plugins: [createPinia(), router, ElementPlus] },
+    });
+    await flushPromises();
+
+    await wrapper
+      .get('[data-test="preview-checkout-refund-proof-43"]')
+      .trigger("click");
+    wrapper.unmount();
+    pendingDownload.resolve({
+      data: new Blob(["late checkout refund proof"], { type: "image/webp" }),
+    });
+    await flushPromises();
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("closing the preview invalidates a newer pending checkout refund proof", async () => {
+    const pendingDownload = deferred<{ data: Blob }>();
+    const createObjectURL = vi
+      .fn()
+      .mockReturnValueOnce("blob:checkout-refund-43")
+      .mockReturnValueOnce("blob:late-proof");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    vi.mocked(checkoutApi.downloadRefundProof)
+      .mockResolvedValueOnce({
+        data: new Blob(["first checkout refund proof"], {
+          type: "image/webp",
+        }),
+      } as never)
+      .mockReturnValueOnce(pendingDownload.promise as never);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/payments/detail/:id?", component: PaymentDetailView },
+        { path: "/payments/collect", component: { template: "<div />" } },
+        { path: "/payments/reviews", component: { template: "<div />" } },
+      ],
+    });
+    await router.push("/payments/detail/81");
+    await router.isReady();
+    const wrapper = mount(PaymentDetailView, {
+      global: { plugins: [createPinia(), router, ElementPlus] },
+    });
+    await flushPromises();
+
+    const previewButton = wrapper.get(
+      '[data-test="preview-checkout-refund-proof-43"]',
+    );
+    await previewButton.trigger("click");
+    await flushPromises();
+    await previewButton.trigger("click");
+    const previewDialog = wrapper
+      .findAllComponents({ name: "ElDialog" })
+      .find((dialog) => dialog.props("title") === "退租合并退款凭证.webp");
+    expect(previewDialog).toBeDefined();
+    previewDialog?.vm.$emit("update:modelValue", false);
+    previewDialog?.vm.$emit("closed");
+    await flushPromises();
+
+    pendingDownload.resolve({
+      data: new Blob(["late checkout refund proof"], { type: "image/webp" }),
+    });
+    await flushPromises();
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:checkout-refund-43");
+    wrapper.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
   });
 });

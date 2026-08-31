@@ -71,6 +71,8 @@ const checkoutRefundProofPreview = ref<{
   mimeType: string;
   url: string;
 } | null>(null);
+let checkoutRefundProofRequestVersion = 0;
+let checkoutRefundProofDisposed = false;
 const isAutomaticDeposit = computed(
   () =>
     detail.value?.paymentCategory === "DEPOSIT" &&
@@ -95,29 +97,49 @@ function billLabel(bill: PaymentDetail["allocations"][number]["bill"]) {
     ? "验房扣款"
     : `第 ${bill.periodSeq} 期`;
 }
+function releaseCheckoutRefundProofPreview() {
+  if (checkoutRefundProofPreview.value) {
+    URL.revokeObjectURL(checkoutRefundProofPreview.value.url);
+    checkoutRefundProofPreview.value = null;
+  }
+}
 async function previewCheckoutRefundProof(
   refundId: number,
   file: { id: number; originalName: string; mimeType: string },
 ) {
+  const requestVersion = ++checkoutRefundProofRequestVersion;
   try {
     const response = await checkoutApi.downloadRefundProof(refundId, file.id);
-    closeCheckoutRefundProofPreview();
+    if (
+      checkoutRefundProofDisposed ||
+      requestVersion !== checkoutRefundProofRequestVersion
+    ) {
+      return;
+    }
+    releaseCheckoutRefundProofPreview();
     checkoutRefundProofPreview.value = {
       ...file,
       url: URL.createObjectURL(response.data),
     };
     checkoutRefundProofPreviewOpen.value = true;
   } catch {
-    ElMessage.error("退款凭证预览失败，请稍后重试");
+    if (
+      !checkoutRefundProofDisposed &&
+      requestVersion === checkoutRefundProofRequestVersion
+    ) {
+      ElMessage.error("退款凭证预览失败，请稍后重试");
+    }
   }
 }
 function closeCheckoutRefundProofPreview() {
-  if (checkoutRefundProofPreview.value) {
-    URL.revokeObjectURL(checkoutRefundProofPreview.value.url);
-    checkoutRefundProofPreview.value = null;
-  }
+  checkoutRefundProofRequestVersion += 1;
+  releaseCheckoutRefundProofPreview();
 }
-onBeforeUnmount(closeCheckoutRefundProofPreview);
+onBeforeUnmount(() => {
+  checkoutRefundProofDisposed = true;
+  checkoutRefundProofRequestVersion += 1;
+  releaseCheckoutRefundProofPreview();
+});
 function printReceipt() {
   window.print();
 }
