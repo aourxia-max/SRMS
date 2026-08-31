@@ -66,8 +66,9 @@
 - 测试环境地址：http://localhost:15173/
 - API 健康检查：http://localhost:13000/api/health
 - 当前 Docker context：`desktop-linux`。
+- 本次部署的业务代码版本：本地 `main` 的 `20c01a0`（退租退款恢复闭环共 9 个提交，已完整合并）。
 - 功能分支已 fast-forward 合并到本地 `main`；使用主工作区 `deploy/.env.test` 和基础 `deploy/docker-compose.yml` 执行 `up -d --build --no-deps api web`，仅重建 `api`、`web`。
-- 更新前后 MySQL 容器 ID 和创建时间保持不变，仍为运行且健康；API 运行且健康，Web 正常运行，首页和健康检查均返回 HTTP 200。
+- 更新前后 MySQL 容器 ID 均为 `b13c65a1a07e`，创建时间保持不变且运行健康；API 运行且健康，Web 正常运行，首页和健康检查均返回 HTTP 200。
 - 本次未操作生产环境或 GitHub，未推送远程，也未执行 `down`、`DROP`、清库、删除 volume 或重建 MySQL。
 
 安全更新命令：
