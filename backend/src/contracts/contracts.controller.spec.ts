@@ -80,11 +80,7 @@ describe('ContractsController', () => {
         }
       ).updateRemark(7, { remark: '补充说明' }, admin),
     ).resolves.toEqual({ code: 200, message: 'success', data: updated });
-    expect(updateRemark).toHaveBeenCalledWith(
-      7,
-      { remark: '补充说明' },
-      admin,
-    );
+    expect(updateRemark).toHaveBeenCalledWith(7, { remark: '补充说明' }, admin);
   });
 
   it('rejects commission data from an admin before creating a fixed contract', async () => {

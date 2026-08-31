@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { describe, expect, it } from 'vitest'
 import PendingCountBadge from './PendingCountBadge.vue'
 
 function mountBadge(count: number) {

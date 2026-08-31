@@ -9,11 +9,14 @@ describe('UpdateContractRemarkDto', () => {
     { remark: '' },
     { remark: '补充说明' },
     { remark: '备'.repeat(500) },
-  ])('accepts a nullable remark no longer than 500 characters', async (input) => {
-    const dto = plainToInstance(UpdateContractRemarkDto, input);
+  ])(
+    'accepts a nullable remark no longer than 500 characters',
+    async (input) => {
+      const dto = plainToInstance(UpdateContractRemarkDto, input);
 
-    await expect(validate(dto)).resolves.toHaveLength(0);
-  });
+      await expect(validate(dto)).resolves.toHaveLength(0);
+    },
+  );
 
   it.each([{ remark: 123 }, { remark: '备'.repeat(501) }])(
     'rejects invalid remark input',
@@ -23,9 +26,11 @@ describe('UpdateContractRemarkDto', () => {
       const errors = await validate(dto);
 
       expect(errors.some((error) => error.property === 'remark')).toBe(true);
-      expect(errors.flatMap((error) => Object.values(error.constraints ?? {})).join(' ')).toMatch(
-        /备注/,
-      );
+      expect(
+        errors
+          .flatMap((error) => Object.values(error.constraints ?? {}))
+          .join(' '),
+      ).toMatch(/备注/);
     },
   );
 });

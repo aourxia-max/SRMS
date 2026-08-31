@@ -187,10 +187,11 @@ export class ContractsService {
         select: { id: true, contractNo: true, status: true, remark: true },
       });
       assertContractNotVoided(contract.status, '修改备注');
+      const updatedAt = new Date();
       const updated = await tx.contract.update({
         where: { id: contractId },
         data: { remark },
-        select: { id: true, remark: true, updatedAt: true },
+        select: { id: true, remark: true },
       });
       await tx.operationLog.create({
         data: {
@@ -204,9 +205,10 @@ export class ContractsService {
           afterData: { remark },
           operatorId: user.id,
           operatorRole: user.role,
+          occurredAt: updatedAt,
         },
       });
-      return updated;
+      return { ...updated, updatedAt };
     });
   }
 

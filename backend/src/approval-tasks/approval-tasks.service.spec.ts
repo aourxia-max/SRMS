@@ -33,7 +33,9 @@ describe('ApprovalTasksService', () => {
     const db = Object.fromEntries(
       Object.entries(countMocks).map(([name, count]) => [name, { count }]),
     );
-    const service = new ApprovalTasksService({ db } as unknown as PrismaService);
+    const service = new ApprovalTasksService({
+      db,
+    } as unknown as PrismaService);
     return { service, countMocks };
   }
 

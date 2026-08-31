@@ -78,21 +78,24 @@ describe('ContractsService', () => {
         remark: null,
       },
     ) {
-      const updatedAt = new Date('2026-09-01T01:00:00.000Z');
+      const updatedAt = new Date();
       const tx = {
         $queryRaw: jest.fn().mockResolvedValue([{ id: contract.id }]),
         contract: {
           findUniqueOrThrow: jest.fn().mockResolvedValue(contract),
-          update: jest.fn().mockImplementation(({ data }: { data: { remark: string | null } }) =>
-            Promise.resolve({ id: contract.id, remark: data.remark, updatedAt }),
-          ),
+          update: jest
+            .fn()
+            .mockImplementation(
+              ({ data }: { data: { remark: string | null } }) =>
+                Promise.resolve({ id: contract.id, remark: data.remark }),
+            ),
         },
         operationLog: { create: jest.fn().mockResolvedValue({}) },
       };
       const prisma = {
         db: {
-          $transaction: jest.fn((callback: (value: typeof tx) => Promise<unknown>) =>
-            callback(tx),
+          $transaction: jest.fn(
+            (callback: (value: typeof tx) => Promise<unknown>) => callback(tx),
           ),
         },
       };
@@ -113,7 +116,7 @@ describe('ContractsService', () => {
       expect(tx.contract.update).toHaveBeenCalledWith({
         where: { id: 7 },
         data: { remark: '补充说明' },
-        select: { id: true, remark: true, updatedAt: true },
+        select: { id: true, remark: true },
       });
       expect(tx.operationLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -126,14 +129,15 @@ describe('ContractsService', () => {
           afterData: { remark: '补充说明' },
           operatorId: admin.id,
           operatorRole: admin.role,
+          occurredAt: updatedAt,
         }),
       });
       expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
         tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
       );
-      expect(tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.contract.update.mock.invocationCallOrder[0],
-      );
+      expect(
+        tx.contract.findUniqueOrThrow.mock.invocationCallOrder[0],
+      ).toBeLessThan(tx.contract.update.mock.invocationCallOrder[0]);
       expect(tx.contract.update.mock.invocationCallOrder[0]).toBeLessThan(
         tx.operationLog.create.mock.invocationCallOrder[0],
       );
@@ -142,22 +146,27 @@ describe('ContractsService', () => {
     it.each([
       { input: { remark: '   ' }, expected: null },
       { input: { remark: null }, expected: null },
-    ])('normalizes a blank or null remark to null', async ({ input, expected }) => {
-      const { service, tx } = remarkService({
-        id: 7,
-        contractNo: 'HT202608050001',
-        status: 'ENDED',
-        remark: '旧备注',
-      });
+    ])(
+      'normalizes a blank or null remark to null',
+      async ({ input, expected }) => {
+        const { service, tx } = remarkService({
+          id: 7,
+          contractNo: 'HT202608050001',
+          status: 'ENDED',
+          remark: '旧备注',
+        });
 
-      await expect(service.updateRemark(7, input, admin)).resolves.toMatchObject({
-        id: 7,
-        remark: expected,
-      });
-      expect(tx.contract.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { remark: expected } }),
-      );
-    });
+        await expect(
+          service.updateRemark(7, input, admin),
+        ).resolves.toMatchObject({
+          id: 7,
+          remark: expected,
+        });
+        expect(tx.contract.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { remark: expected } }),
+        );
+      },
+    );
 
     it('rejects a voided contract before update and audit writes', async () => {
       const { service, tx } = remarkService({
