@@ -54,7 +54,7 @@ export class RefundsService {
     );
     if (!total.equals(refundAmount))
       throw new BadRequestException('退款明细合计必须等于退款金额');
-    return this.prisma.db.$transaction(async (tx) => {
+    const submitInTransaction = async (tx: Prisma.TransactionClient) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM payments WHERE id = ${dto.paymentId}) FOR UPDATE`,
       );
@@ -110,6 +110,9 @@ export class RefundsService {
         },
         include: { allocations: true },
       });
+    };
+    return this.prisma.db.$transaction(submitInTransaction, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
   }
   async approve(id: number, dto: ApproveRefundDto, user: AuthUser) {

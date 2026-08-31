@@ -25,6 +25,7 @@ describe('FinanceService void correction cash-flow audit', () => {
       db: {
         payment: { findMany: paymentFindMany },
         paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
       },
@@ -57,6 +58,7 @@ describe('FinanceService void correction cash-flow audit', () => {
       db: {
         payment: { findMany: paymentFindMany },
         paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: reversalFindMany },
       },
@@ -99,6 +101,7 @@ describe('FinanceService void correction cash-flow audit', () => {
       db: {
         payment: { findMany: jest.fn().mockResolvedValue([]) },
         paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: reversalFindMany },
       },
@@ -133,6 +136,7 @@ describe('FinanceService void correction cash-flow audit', () => {
             },
           ]),
         },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: {
           findMany: jest.fn().mockResolvedValue([
@@ -281,6 +285,7 @@ describe('FinanceService void correction cash-flow audit', () => {
       db: {
         payment: { findMany: paymentFindMany },
         paymentRefund: { findMany: refundFindMany },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: reversalFindMany },
       },

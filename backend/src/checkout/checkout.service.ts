@@ -522,7 +522,7 @@ export class CheckoutService {
   }
   async submit(id: number, dto: SubmitCheckoutSettlementDto, user: AuthUser) {
     const actual = new Date(dto.actualCheckoutDate);
-    return this.prisma.db.$transaction(async (tx) => {
+    const submitInTransaction = async (tx: Prisma.TransactionClient) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${id}) FOR UPDATE`,
       );
@@ -665,6 +665,9 @@ export class CheckoutService {
               (item) => item.itemType !== 'RENT_REFUND',
             ),
           };
+    };
+    return this.prisma.db.$transaction(submitInTransaction, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
   }
   async approve(id: number, user: AuthUser) {

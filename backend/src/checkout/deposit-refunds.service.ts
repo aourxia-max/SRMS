@@ -38,7 +38,7 @@ export class DepositRefundsService {
       throw new BadRequestException(
         '退租合并退款金额必须大于零且必须关联有效凭证',
       );
-    return this.prisma.db.$transaction(async (tx) => {
+    const submitInTransaction = async (tx: Prisma.TransactionClient) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM contracts WHERE id = (SELECT contract_id FROM checkout_settlements WHERE id = ${dto.checkoutSettlementId}) FOR UPDATE`,
       );
@@ -142,6 +142,9 @@ export class DepositRefundsService {
           files: { create: files.map((file) => ({ fileAssetId: file.id })) },
         },
       });
+    };
+    return this.prisma.db.$transaction(submitInTransaction, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
   }
   async approve(id: number, user: AuthUser) {
