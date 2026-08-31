@@ -15,6 +15,9 @@ vi.mock('../services/http', () => ({
 const contract = {
   id: 12,
   contractNo: 'HT202608250001｜1栋101｜张三01',
+  roomId: 101,
+  room: { id: 101, fullHouseNo: '1栋101' },
+  members: [{ memberRole: 'PRIMARY', tenant: { id: 9, name: '张三01' } }],
   concessions: [],
 }
 
@@ -104,6 +107,26 @@ describe('合同变更承租人搜索选择', () => {
       reason: '更换主承租人',
     })
     expect(approvalRefresh).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('合同选择框支持按合同编号、房号或承租人本地搜索', async () => {
+    const pinia = createPinia()
+    const wrapper = mount(ContractChangesView, {
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    await flushPromises()
+    const contractSelect = wrapper.findAllComponents(ElSelect)[0]
+
+    expect(contractSelect.attributes('data-test')).toBe('change-contract-select')
+    expect(contractSelect.props('filterable')).toBe(true)
+    expect(contractSelect.props('clearable')).toBe(true)
+    expect(contractSelect.props('placeholder')).toBe('输入合同编号、房号或承租人姓名搜索')
+    expect(
+      wrapper
+        .findAllComponents({ name: 'ElOption' })
+        .some((option) => option.props('label') === 'HT202608250001｜1栋101｜张三01'),
+    ).toBe(true)
     wrapper.unmount()
   })
 
