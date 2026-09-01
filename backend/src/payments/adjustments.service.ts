@@ -46,7 +46,7 @@ export class AdjustmentsService {
         direction: dto.direction,
         amount,
       });
-      return tx.billAdjustment.create({
+      const result = await tx.billAdjustment.create({
         data: {
           adjustmentNo: `TZ${Date.now()}${dto.rentBillId}`,
           rentBillId: dto.rentBillId,
@@ -60,6 +60,11 @@ export class AdjustmentsService {
           submittedBy: user.id,
         },
       });
+      await tx.rentBill.update({
+        where: { id: dto.rentBillId },
+        data: { updatedAt: new Date() },
+      });
+      return result;
     });
   }
 
@@ -138,7 +143,7 @@ export class AdjustmentsService {
         adjustment.rentBill.contract.status,
         '驳回账单调整',
       );
-      return tx.billAdjustment.update({
+      const result = await tx.billAdjustment.update({
         where: { id },
         data: {
           approvalStatus: 'REJECTED',
@@ -147,6 +152,11 @@ export class AdjustmentsService {
           approvedAt: new Date(),
         },
       });
+      await tx.rentBill.update({
+        where: { id: adjustment.rentBillId },
+        data: { updatedAt: new Date() },
+      });
+      return result;
     });
   }
 

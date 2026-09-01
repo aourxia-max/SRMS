@@ -110,6 +110,76 @@ describe('AdjustmentsService checkout supplemental protection', () => {
     );
   });
 
+  it('touches the parent rent bill when an adjustment is submitted', async () => {
+    const rentBillUpdate = jest.fn().mockResolvedValue({ id: 11 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      rentBill: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(activeBill),
+        update: rentBillUpdate,
+      },
+      checkoutSettlementItem: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      billAdjustment: {
+        create: jest.fn().mockResolvedValue({ id: 501 }),
+      },
+    };
+    const service = new AdjustmentsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.submit(
+      {
+        rentBillId: 11,
+        adjustmentType: 'DISCOUNT',
+        direction: 'DECREASE',
+        amount: '10.00',
+        reason: '测试调整',
+      } as never,
+      user,
+    );
+
+    expect(rentBillUpdate).toHaveBeenCalledWith({
+      where: { id: 11 },
+      data: { updatedAt: expect.any(Date) },
+    });
+  });
+
+  it('touches the parent rent bill when an adjustment is rejected', async () => {
+    const rentBillUpdate = jest.fn().mockResolvedValue({ id: 11 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 7 }]),
+      rentBill: { update: rentBillUpdate },
+      billAdjustment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 501,
+          rentBillId: 11,
+          approvalStatus: 'PENDING',
+          rentBill: { contract: { status: 'ACTIVE' } },
+        }),
+        update: jest.fn().mockResolvedValue({ id: 501 }),
+      },
+    };
+    const service = new AdjustmentsService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.reject(501, '信息有误', user);
+
+    expect(rentBillUpdate).toHaveBeenCalledWith({
+      where: { id: 11 },
+      data: { updatedAt: expect.any(Date) },
+    });
+  });
   it('orders adjustment approve as contract lock, adjustment reload, then bill write', async () => {
     const firstWriteError = new Error('adjustment approve write reached');
     const firstWrite = jest.fn().mockRejectedValue(firstWriteError);

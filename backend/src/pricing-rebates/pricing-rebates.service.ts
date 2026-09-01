@@ -172,6 +172,10 @@ export class PricingRebatesService {
           files: { include: { fileAsset: true } },
         },
       });
+      await tx.rentBill.update({
+        where: { id: rentBillId },
+        data: { updatedAt: new Date() },
+      });
       return this.serializeFiles(rebate);
     });
   }
@@ -215,7 +219,7 @@ export class PricingRebatesService {
           data: { lockedAt: new Date() },
         });
       }
-      return tx.pricingRebate.update({
+      const result = await tx.pricingRebate.update({
         where: { id },
         data: {
           approvalStatus: 'APPROVED',
@@ -223,6 +227,13 @@ export class PricingRebatesService {
           approvedAt: new Date(),
         },
       });
+      if (rebate.rentBillId) {
+        await tx.rentBill.update({
+          where: { id: rebate.rentBillId },
+          data: { updatedAt: new Date() },
+        });
+      }
+      return result;
     });
   }
 
@@ -241,7 +252,7 @@ export class PricingRebatesService {
       if (rebate.approvalStatus !== 'PENDING')
         throw new BadRequestException('只有待确认退差单可以驳回');
       assertContractNotVoided(rebate.contract.status, '驳回租金退差');
-      return tx.pricingRebate.update({
+      const result = await tx.pricingRebate.update({
         where: { id },
         data: {
           approvalStatus: 'REJECTED',
@@ -250,6 +261,13 @@ export class PricingRebatesService {
           approvedAt: new Date(),
         },
       });
+      if (rebate.rentBillId) {
+        await tx.rentBill.update({
+          where: { id: rebate.rentBillId },
+          data: { updatedAt: new Date() },
+        });
+      }
+      return result;
     });
   }
 

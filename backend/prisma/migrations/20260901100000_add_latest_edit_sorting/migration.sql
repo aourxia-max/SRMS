@@ -1,15 +1,15 @@
 ALTER TABLE `export_tasks`
-  ADD COLUMN `updated_at` DATETIME(3) NULL AFTER `created_at`;
+  ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `created_at`;
 ALTER TABLE `rent_bills`
-  ADD COLUMN `updated_at` DATETIME(3) NULL AFTER `checkout_settlement_id`;
+  ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `checkout_settlement_id`;
 ALTER TABLE `payments`
-  ADD COLUMN `updated_at` DATETIME(3) NULL AFTER `remark`;
+  ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `remark`;
 ALTER TABLE `payment_refunds`
-  ADD COLUMN `updated_at` DATETIME(3) NULL AFTER `rejected_reason`;
+  ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `rejected_reason`;
 ALTER TABLE `checkout_settlements`
-  ADD COLUMN `updated_at` DATETIME(3) NULL AFTER `remark`;
+  ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `remark`;
 ALTER TABLE `deposit_refunds`
-  ADD COLUMN `updated_at` DATETIME(3) NULL AFTER `cancelled_reason`;
+  ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `cancelled_reason`;
 
 UPDATE `export_tasks`
 SET `updated_at` = COALESCE(`completed_at`, `started_at`, `created_at`);
@@ -20,13 +20,39 @@ SET `updated_at` = COALESCE(`voided_at`, CAST(`payment_date` AS DATETIME(3)));
 UPDATE `payment_refunds`
 SET `updated_at` = COALESCE(`approved_at`, `submitted_at`, CAST(`refund_date` AS DATETIME(3)));
 
-UPDATE `checkout_settlements`
-SET `updated_at` = COALESCE(
-  `approved_at`,
-  `submitted_at`,
-  `inspection_at`,
-  CAST(`actual_checkout_date` AS DATETIME(3)),
-  CAST(`planned_checkout_date` AS DATETIME(3))
+UPDATE `checkout_settlements` AS cs
+LEFT JOIN (
+  SELECT rsh.`business_id` AS `settlement_id`, MAX(rsh.`changed_at`) AS `latest_at`
+  FROM `room_status_histories` AS rsh
+  WHERE rsh.`business_type` = 'CHECKOUT'
+    AND rsh.`to_status` <> 'PENDING_CHECKOUT'
+  GROUP BY rsh.`business_id`
+) AS checkout_history ON checkout_history.`settlement_id` = cs.`id`
+LEFT JOIN (
+  SELECT dr.`checkout_settlement_id` AS `settlement_id`, MAX(rsh.`changed_at`) AS `latest_at`
+  FROM `deposit_refunds` AS dr
+  INNER JOIN `room_status_histories` AS rsh
+    ON rsh.`business_type` = 'DEPOSIT_REFUND'
+   AND rsh.`business_id` = dr.`id`
+   AND rsh.`to_status` <> 'PENDING_CHECKOUT'
+  GROUP BY dr.`checkout_settlement_id`
+) AS refund_history ON refund_history.`settlement_id` = cs.`id`
+SET cs.`updated_at` = GREATEST(
+  COALESCE(
+    checkout_history.`latest_at`,
+    CAST('1000-01-01 00:00:00.000' AS DATETIME(3))
+  ),
+  COALESCE(
+    refund_history.`latest_at`,
+    CAST('1000-01-01 00:00:00.000' AS DATETIME(3))
+  ),
+  COALESCE(
+    cs.`approved_at`,
+    cs.`submitted_at`,
+    cs.`inspection_at`,
+    CAST(cs.`actual_checkout_date` AS DATETIME(3)),
+    CAST(cs.`planned_checkout_date` AS DATETIME(3))
+  )
 );
 
 UPDATE `deposit_refunds`

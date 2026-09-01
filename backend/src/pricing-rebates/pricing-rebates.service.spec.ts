@@ -75,6 +75,7 @@ function rebateFixture(
         ),
     },
     fileAsset: { findMany: jest.fn().mockResolvedValue([]) },
+    rentBill: { update: jest.fn().mockResolvedValue({ id: 9 }) },
   };
   const service = new PricingRebatesService({
     db: {
@@ -145,8 +146,82 @@ describe('PricingRebatesService', () => {
       submit.tx.contract.findUniqueOrThrow,
       submit.tx.pricingRebate.create,
     );
+    expect(submit.tx.rentBill.update).toHaveBeenCalledWith({
+      where: { id: 9 },
+      data: { updatedAt: expect.any(Date) },
+    });
   });
 
+  it('touches the parent rent bill when a rebate is approved', async () => {
+    const rentBillUpdate = jest.fn().mockResolvedValue({ id: 9 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      pricingRebate: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 21,
+          contractId: 1,
+          rentBillId: 9,
+          rebateNo: 'TC21',
+          approvalStatus: 'PENDING',
+          settlementMethod: 'PREPAYMENT_CREDIT',
+          actualAmount: '100.00',
+          files: [],
+          contract: { status: 'ACTIVE' },
+        }),
+        update: jest.fn().mockResolvedValue({ id: 21 }),
+      },
+      prepaymentTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 30 }),
+      },
+      rentBill: { update: rentBillUpdate },
+    };
+    const service = new PricingRebatesService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.approve(21, admin);
+
+    expect(rentBillUpdate).toHaveBeenCalledWith({
+      where: { id: 9 },
+      data: { updatedAt: expect.any(Date) },
+    });
+  });
+
+  it('touches the parent rent bill when a rebate is rejected', async () => {
+    const rentBillUpdate = jest.fn().mockResolvedValue({ id: 9 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      pricingRebate: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 21,
+          rentBillId: 9,
+          approvalStatus: 'PENDING',
+          contract: { status: 'ACTIVE' },
+        }),
+        update: jest.fn().mockResolvedValue({ id: 21 }),
+      },
+      rentBill: { update: rentBillUpdate },
+    };
+    const service = new PricingRebatesService({
+      db: {
+        $transaction: jest.fn(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+      },
+    } as never);
+
+    await service.reject(21, '信息有误', admin);
+
+    expect(rentBillUpdate).toHaveBeenCalledWith({
+      where: { id: 9 },
+      data: { updatedAt: expect.any(Date) },
+    });
+  });
   it('orders rebate approve as contract lock, rebate reload, then prepayment write', async () => {
     const firstWriteError = new Error('pricing rebate approve write reached');
     const firstWrite = jest.fn().mockRejectedValue(firstWriteError);
