@@ -4,7 +4,7 @@ import ElementPlus, { ElDialog, ElMessage, ElMessageBox, ElOption, ElSelect } fr
 import { nextTick } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ContractDetailPanel from '../../components/contracts/ContractDetailPanel.vue'
 import ContractVoidPanel from '../../components/contracts/voids/ContractVoidPanel.vue'
@@ -21,6 +21,8 @@ import { useApprovalTasksStore } from '../../stores/approval-tasks'
 import { buildFixedRentRebatePayload, contractConcessionError, createLatestRequestGuard, filterFixedRentRebateContracts, fixedRentRebateContractLabel, isFixedRentRebateEligible, normalizeConcessionType, toContractPayload } from '../../services/contracts'
 import { emptyContractForm, type ContractDetail, type ContractFormModel } from '../../types/contracts'
 import type { PaymentListItem } from '../../types/payments'
+
+enableAutoUnmount(afterEach)
 
 const completeForm = (): ContractFormModel => ({
   externalContractNo: 'ZZ-2026-001',
