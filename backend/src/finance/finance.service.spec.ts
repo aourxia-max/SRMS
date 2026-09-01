@@ -96,6 +96,15 @@ describe('FinanceService rent collection category isolation', () => {
         status: 'CONFIRMED',
       },
       {
+        id: 6,
+        paymentDate: new Date('2026-08-06'),
+        updatedAt: new Date('2026-08-06T10:00:00.000Z'),
+        paymentCategory: 'RENT',
+        amount: new Prisma.Decimal('600.00'),
+        receiptNo: 'SK-FULLY-REFUNDED-6',
+        status: 'FULLY_REFUNDED',
+      },
+      {
         id: 3,
         paymentDate: new Date('2026-08-07'),
         updatedAt: new Date('2026-08-07T08:00:00.000Z'),
@@ -117,8 +126,31 @@ describe('FinanceService rent collection category isolation', () => {
     const service = new FinanceService({
       db: {
         payment: { findMany: paymentFindMany },
-        paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
-        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        paymentRefund: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 21,
+              refundDate: new Date('2026-08-09'),
+              updatedAt: new Date('2026-08-09T08:00:00.000Z'),
+              refundAmount: new Prisma.Decimal('200.00'),
+              refundNo: 'TK-ORDINARY-21',
+            },
+          ]),
+        },
+        depositRefund: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 22,
+              refundDate: new Date('2026-08-10'),
+              updatedAt: new Date('2026-08-10T08:00:00.000Z'),
+              refundAmount: new Prisma.Decimal('400.00'),
+              depositRefundAmount: new Prisma.Decimal('100.00'),
+              prepaymentRefundAmount: new Prisma.Decimal('100.00'),
+              rentRefundAmount: new Prisma.Decimal('200.00'),
+              refundNo: 'TZ-REFUND-22',
+            },
+          ]),
+        },
         depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
         contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
       },
@@ -127,12 +159,17 @@ describe('FinanceService rent collection category isolation', () => {
     const report = await service.cashFlows('2026-08-01', '2026-08-31');
 
     expect(report.rentAndDepositReceivedTotal).toEqual(
-      new Prisma.Decimal('4600.00'),
+      new Prisma.Decimal('5200.00'),
     );
+    expect(report.outflow).toEqual(new Prisma.Decimal('600.00'));
     expect(paymentFindMany).toHaveBeenCalledWith({
       where: {
         OR: [
-          { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+          {
+            status: {
+              in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'],
+            },
+          },
           { id: { in: [] } },
         ],
         paymentDate: {
@@ -368,7 +405,11 @@ describe('FinanceService rent collection category isolation', () => {
     expect(paymentFindMany).toHaveBeenCalledWith({
       where: {
         OR: [
-          { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+          {
+            status: {
+              in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'],
+            },
+          },
           { id: { in: expect.any(Array) } },
         ],
         paymentDate: {

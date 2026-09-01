@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { FinanceService } from './finance.service';
 
 describe('FinanceService void correction cash-flow audit', () => {
-  it('excludes ordinary fully refunded and voided payments without a correction reversal', async () => {
+  it('retains an ordinary fully refunded payment as historical inflow', async () => {
     const paymentFindMany = jest.fn().mockImplementation(({ where }) =>
       Promise.resolve(
         (where.status?.in ?? where.OR?.[0]?.status.in ?? []).some(
@@ -30,7 +30,17 @@ describe('FinanceService void correction cash-flow audit', () => {
         contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
       },
     } as never);
-    await expect(service.cashFlows()).resolves.toMatchObject({ flows: [] });
+    await expect(service.cashFlows()).resolves.toMatchObject({
+      rentAndDepositReceivedTotal: new Prisma.Decimal('100.00'),
+      flows: [
+        expect.objectContaining({
+          flowType: 'PAYMENT',
+          amount: new Prisma.Decimal('100.00'),
+          direction: 'IN',
+          countsAsRentReceipt: false,
+        }),
+      ],
+    });
   });
   it('retains a terminal payment when its contract correction reversal matches it', async () => {
     const paymentFindMany = jest.fn().mockImplementation(({ where }) =>
@@ -185,7 +195,11 @@ describe('FinanceService void correction cash-flow audit', () => {
     expect(prisma.db.payment.findMany).toHaveBeenCalledWith({
       where: {
         OR: [
-          { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+          {
+            status: {
+              in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'],
+            },
+          },
           { id: { in: expect.any(Array) } },
         ],
       },

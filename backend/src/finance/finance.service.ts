@@ -187,7 +187,11 @@ export class FinanceService {
         this.prisma.db.payment.findMany({
           where: {
             OR: [
-              { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+              {
+                status: {
+                  in: ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'],
+                },
+              },
               { id: { in: terminalPaymentIds } },
             ],
             ...(date ? { paymentDate: date } : {}),
@@ -361,7 +365,9 @@ export class FinanceService {
       .filter(
         (item) =>
           ['RENT', 'PREPAYMENT', 'DEPOSIT'].includes(item.paymentCategory) &&
-          ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.status),
+          ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'].includes(
+            item.status,
+          ),
       )
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
     return {
