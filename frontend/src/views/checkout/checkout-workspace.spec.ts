@@ -361,6 +361,13 @@ describe("CheckoutTopNav", () => {
     let resolveFirst!: (value: Record<string, unknown>) => void;
     let resolveSecond!: (value: Record<string, unknown>) => void;
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
     api.preview.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -373,12 +380,6 @@ describe("CheckoutTopNav", () => {
           resolveSecond = resolve;
         }),
     );
-    const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [checkoutTestPinia()] },
-    });
-    await flushPromises();
-    await wrapper.get("button:nth-child(2)").trigger("click");
-    const panel = wrapper.findComponent(CheckoutSettlementPanel);
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
@@ -447,18 +448,19 @@ describe("CheckoutTopNav", () => {
         finalReceivable: "0.00",
       },
     ]);
-    api.preview.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolvePreview = resolve;
-        }),
-    );
     const wrapper = mount(CheckoutWorkspace, {
       global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreview = resolve;
+        }),
+    );
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
@@ -494,6 +496,13 @@ describe("CheckoutTopNav", () => {
     let rejectFirst!: (error: Error) => void;
     let resolveSecond!: (value: Record<string, unknown>) => void;
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
     api.preview.mockImplementationOnce(
       () =>
         new Promise((_, reject) => {
@@ -506,12 +515,6 @@ describe("CheckoutTopNav", () => {
           resolveSecond = resolve;
         }),
     );
-    const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [checkoutTestPinia()] },
-    });
-    await flushPromises();
-    await wrapper.get("button:nth-child(2)").trigger("click");
-    const panel = wrapper.findComponent(CheckoutSettlementPanel);
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
@@ -638,6 +641,13 @@ describe("CheckoutTopNav", () => {
     let resolveFirst!: (value: Record<string, unknown>) => void;
     let resolveSecond!: (value: Record<string, unknown>) => void;
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
     api.preview.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -650,12 +660,6 @@ describe("CheckoutTopNav", () => {
           resolveSecond = resolve;
         }),
     );
-    const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [checkoutTestPinia()] },
-    });
-    await flushPromises();
-    await wrapper.get("button:nth-child(2)").trigger("click");
-    const panel = wrapper.findComponent(CheckoutSettlementPanel);
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
