@@ -1,13 +1,13 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getApprovalTaskCounts, type ApprovalTaskCounts } from '../services/approval-tasks'
+import { getApprovalTaskSummary, type ApprovalTaskCounts, type ApprovalTaskSummary } from '../services/approval-tasks'
 import { useApprovalTasksStore } from './approval-tasks'
 
 vi.mock('../services/approval-tasks', () => ({
-  getApprovalTaskCounts: vi.fn(),
+  getApprovalTaskSummary: vi.fn(),
 }))
 
-const getCountsMock = vi.mocked(getApprovalTaskCounts)
+const getSummaryMock = vi.mocked(getApprovalTaskSummary)
 
 const firstCounts: ApprovalTaskCounts = {
   contractChanges: 1,
@@ -38,6 +38,8 @@ const latestCounts: ApprovalTaskCounts = {
   checkoutsTotal: 5,
   total: 44,
 }
+const asSummary = (counts: ApprovalTaskCounts): ApprovalTaskSummary => ({ counts, items: [] })
+
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -52,7 +54,7 @@ function deferred<T>() {
 describe('useApprovalTasksStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    getCountsMock.mockReset()
+    getSummaryMock.mockReset()
   })
 
   afterEach(() => {
@@ -60,7 +62,7 @@ describe('useApprovalTasksStore', () => {
   })
 
   it('刷新成功后保存服务端返回的完整数量', async () => {
-    getCountsMock.mockResolvedValue(firstCounts)
+    getSummaryMock.mockResolvedValue(asSummary(firstCounts))
     const store = useApprovalTasksStore()
 
     await store.refresh()
@@ -69,23 +71,23 @@ describe('useApprovalTasksStore', () => {
   })
 
   it('较晚发起的请求先返回时不会被旧响应覆盖', async () => {
-    const older = deferred<ApprovalTaskCounts>()
-    const newer = deferred<ApprovalTaskCounts>()
-    getCountsMock.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+    const older = deferred<ApprovalTaskSummary>()
+    const newer = deferred<ApprovalTaskSummary>()
+    getSummaryMock.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
     const store = useApprovalTasksStore()
 
     const olderRefresh = store.refresh()
     const newerRefresh = store.refresh()
-    newer.resolve(latestCounts)
+    newer.resolve(asSummary(latestCounts))
     await newerRefresh
-    older.resolve(firstCounts)
+    older.resolve(asSummary(firstCounts))
     await olderRefresh
 
     expect(store.counts).toEqual(latestCounts)
   })
 
   it('后续刷新失败时保留最近一次成功数量', async () => {
-    getCountsMock.mockResolvedValueOnce(firstCounts).mockRejectedValueOnce(new Error('网络暂时不可用'))
+    getSummaryMock.mockResolvedValueOnce(asSummary(firstCounts)).mockRejectedValueOnce(new Error('网络暂时不可用'))
     const store = useApprovalTasksStore()
 
     await store.refresh()
@@ -96,14 +98,14 @@ describe('useApprovalTasksStore', () => {
 
   it('重置时清零、停止轮询并阻止在途响应恢复旧登录数据', async () => {
     vi.useFakeTimers()
-    const pending = deferred<ApprovalTaskCounts>()
-    getCountsMock.mockReturnValue(pending.promise)
+    const pending = deferred<ApprovalTaskSummary>()
+    getSummaryMock.mockReturnValue(pending.promise)
     const store = useApprovalTasksStore()
     store.startPolling()
     const refresh = store.refresh()
 
     store.reset()
-    pending.resolve(firstCounts)
+    pending.resolve(asSummary(firstCounts))
     await refresh
 
     expect(store.counts.total).toBe(0)
@@ -112,14 +114,14 @@ describe('useApprovalTasksStore', () => {
 
   it('每六十秒触发一次刷新且重复启动不会叠加计时器', async () => {
     vi.useFakeTimers()
-    getCountsMock.mockResolvedValue(firstCounts)
+    getSummaryMock.mockResolvedValue(asSummary(firstCounts))
     const store = useApprovalTasksStore()
 
     store.startPolling()
     store.startPolling()
     await vi.advanceTimersByTimeAsync(60_000)
 
-    expect(getCountsMock).toHaveBeenCalledTimes(1)
+    expect(getSummaryMock).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(1)
   })
 })

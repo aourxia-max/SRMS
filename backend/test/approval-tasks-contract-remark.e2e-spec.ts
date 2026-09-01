@@ -222,7 +222,7 @@ describe('approval task counts and contract remark authorization (e2e)', () => {
       .expect(401);
   });
 
-  it('returns only authoritative integer counts to an administrator', async () => {
+  it('returns zero counts and no approval details to an administrator', async () => {
     currentUser = admin;
     await request(app.getHttpServer())
       .get('/api/approval-tasks/counts')
@@ -231,17 +231,40 @@ describe('approval task counts and contract remark authorization (e2e)', () => {
         expect(Object.keys(body.data).sort()).toEqual(
           [...expectedCountKeys].sort(),
         );
-        expect(Object.values(body.data)).toEqual(
-          expect.arrayContaining([expect.any(Number)]),
+        expect(Object.values(body.data).every((value) => value === 0)).toBe(
+          true,
         );
-        expect(
-          Object.values(body.data).every(
-            (value) => Number.isInteger(value) && Number(value) >= 0,
-          ),
-        ).toBe(true);
         expect(JSON.stringify(body.data)).not.toMatch(
           /tenant|room|amount|contractNo/i,
         );
+      });
+
+    await request(app.getHttpServer())
+      .get('/api/approval-tasks/summary')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(
+          Object.values(body.data.counts).every((value) => value === 0),
+        ).toBe(true);
+        expect(body.data.items).toEqual([]);
+      });
+  });
+
+  it('returns the unified approval summary only to a super administrator', async () => {
+    currentUser = superAdmin;
+    await request(app.getHttpServer())
+      .get('/api/approval-tasks/summary')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(Object.keys(body.data.counts).sort()).toEqual(
+          [...expectedCountKeys].sort(),
+        );
+        expect(
+          Object.values(body.data.counts).every(
+            (value) => Number.isInteger(value) && Number(value) >= 0,
+          ),
+        ).toBe(true);
+        expect(Array.isArray(body.data.items)).toBe(true);
       });
   });
 
@@ -257,6 +280,16 @@ describe('approval task counts and contract remark authorization (e2e)', () => {
         expect(Object.values(body.data).every((value) => value === 0)).toBe(
           true,
         );
+      });
+
+    await request(app.getHttpServer())
+      .get('/api/approval-tasks/summary')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(
+          Object.values(body.data.counts).every((value) => value === 0),
+        ).toBe(true);
+        expect(body.data.items).toEqual([]);
       });
   });
 

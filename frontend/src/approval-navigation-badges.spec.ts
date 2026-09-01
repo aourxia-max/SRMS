@@ -64,13 +64,20 @@ function sidebarBadge(wrapper: Awaited<ReturnType<typeof mountApp>>['wrapper'], 
 }
 
 describe('全局待审批导航提醒', () => {
-  it('管理员侧边栏按模块显示合同、合同变更、收款和退租数量', async () => {
-    const { wrapper } = await mountApp('ADMIN')
+  it('超级管理员侧边栏按模块显示合同、合同变更、收款和退租数量', async () => {
+    const { wrapper } = await mountApp('SUPER_ADMIN')
 
     expect(sidebarBadge(wrapper, '合同管理').text()).toBe('9')
     expect(sidebarBadge(wrapper, '合同变更').text()).toBe('2')
     expect(sidebarBadge(wrapper, '收款管理').text()).toBe('18')
     expect(sidebarBadge(wrapper, '退租结算').text()).toBe('17')
+    wrapper.unmount()
+  })
+
+  it('普通管理员即使本地有旧数量也不显示任何审批红点', async () => {
+    const { wrapper } = await mountApp('ADMIN')
+
+    expect(wrapper.find('[data-test="pending-count-badge"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

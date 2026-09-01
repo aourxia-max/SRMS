@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
 import { checkoutApi } from "../../services/checkout";
 import { useApprovalTasksStore } from "../../stores/approval-tasks";
+import { useSessionStore } from "../../stores/session";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
 import CheckoutWorkspace from "./CheckoutWorkspace.vue";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
@@ -152,11 +153,14 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.text()).toContain("3 退租退款确认");
   });
 
-  it("shows settlement and deposit-refund pending counts on their exact tabs", () => {
+  it("仅超级管理员在退租页签看到待处理数量", () => {
     const pinia = createPinia();
     const approvals = useApprovalTasksStore(pinia);
     approvals.counts.checkoutSettlements = 8;
     approvals.counts.depositRefunds = 9;
+    useSessionStore(pinia).user = {
+      id: 1, username: "root", displayName: "超级管理员", role: "SUPER_ADMIN",
+    };
     const wrapper = mount(CheckoutTopNav, {
       props: { activeTab: "initiate" },
       global: { plugins: [pinia] },
@@ -164,6 +168,19 @@ describe("CheckoutTopNav", () => {
 
     expect(wrapper.get('[data-test="badge-checkout-settlement"]').text()).toBe("8");
     expect(wrapper.get('[data-test="badge-checkout-refund"]').text()).toBe("9");
+
+    const adminPinia = createPinia();
+    const adminApprovals = useApprovalTasksStore(adminPinia);
+    adminApprovals.counts.checkoutSettlements = 8;
+    adminApprovals.counts.depositRefunds = 9;
+    useSessionStore(adminPinia).user = {
+      id: 2, username: "admin", displayName: "管理员", role: "ADMIN",
+    };
+    const admin = mount(CheckoutTopNav, {
+      props: { activeTab: "initiate" },
+      global: { plugins: [adminPinia] },
+    });
+    expect(admin.find('[data-test^="badge-checkout-"]').exists()).toBe(false);
   });
   it("places checkout workflow navigation at the top without the old page intro block", () => {
     const wrapper = mount(CheckoutWorkspace, {

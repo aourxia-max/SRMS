@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import PendingCountBadge from '../PendingCountBadge.vue'
 import { useApprovalTasksStore } from '../../stores/approval-tasks'
+import { useSessionStore } from '../../stores/session'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const approvalTasks = useApprovalTasksStore()
+const session = useSessionStore()
 
 const items = [
   { label: '\u6536\u6b3e\u767b\u8bb0', path: '/payments/collect', match: '/payments/collect' },
@@ -23,7 +25,7 @@ const items = [
     >
       {{ item.label }}
       <span
-        v-if="item.match === '/payments/reviews' && approvalTasks.counts.paymentRefunds + approvalTasks.counts.paymentVoidRequests"
+        v-if="session.user?.role === 'SUPER_ADMIN' && item.match === '/payments/reviews' && approvalTasks.counts.paymentRefunds + approvalTasks.counts.paymentVoidRequests"
         data-test="badge-payment-reviews"
         class="top-nav-badge"
       >

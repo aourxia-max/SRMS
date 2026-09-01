@@ -62,12 +62,12 @@ onBeforeUnmount(() => approvalTasks.stopPolling())
         <router-link to="/" class="srms-nav-item"><span>▦</span><b v-show="!collapsed">经营驾驶舱</b></router-link>
         <router-link to="/properties" class="srms-nav-item"><span>⌂</span><b v-show="!collapsed">房源管理</b></router-link>
         <router-link to="/tenants" class="srms-nav-item"><span>♙</span><b v-show="!collapsed">承租人管理</b></router-link>
-        <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b><PendingCountBadge v-if="isAdmin" class="srms-nav-badge" :count="approvalTasks.counts.contractsTotal" /></router-link>
-        <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b><PendingCountBadge class="srms-nav-badge" :count="approvalTasks.counts.contractChanges" /></router-link>
+        <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.contractsTotal" /></router-link>
+        <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.contractChanges" /></router-link>
         <p v-show="!collapsed">租赁财务</p>
         <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
-        <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b><PendingCountBadge v-if="isAdmin" class="srms-nav-badge" :count="approvalTasks.counts.paymentsTotal" /></router-link>
-        <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b><PendingCountBadge class="srms-nav-badge" :count="approvalTasks.counts.checkoutsTotal" /></router-link>
+        <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.paymentsTotal" /></router-link>
+        <router-link v-if="isAdmin" to="/checkout" class="srms-nav-item"><span>↩</span><b v-show="!collapsed">退租结算</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.checkoutsTotal" /></router-link>
         <router-link v-if="isSuperAdmin" to="/finance" class="srms-nav-item"><span>¥</span><b v-show="!collapsed">财务中心</b></router-link>
         <p v-if="isSuperAdmin" v-show="!collapsed">系统</p>
         <router-link v-if="isSuperAdmin" to="/admin/users" class="srms-nav-item"><span>♧</span><b v-show="!collapsed">用户管理</b></router-link>

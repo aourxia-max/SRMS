@@ -11,6 +11,13 @@ const admin: AuthUser = {
   role: UserRole.ADMIN,
 };
 
+const superAdmin: AuthUser = {
+  id: 1,
+  username: 'root',
+  displayName: '超级管理员',
+  role: UserRole.SUPER_ADMIN,
+};
+
 const visitor: AuthUser = {
   id: 3,
   username: 'visitor',
@@ -42,7 +49,7 @@ describe('ApprovalTasksService', () => {
   it('按数据库待审批状态返回八类数量和三个模块合计', async () => {
     const { service, countMocks } = setup();
 
-    await expect(service.counts(admin)).resolves.toEqual({
+    await expect(service.counts(superAdmin)).resolves.toEqual({
       contractChanges: 2,
       fixedRentRebates: 3,
       contractVoidRequests: 4,
@@ -81,6 +88,17 @@ describe('ApprovalTasksService', () => {
     expect(countMocks.depositRefund).toHaveBeenCalledWith({
       where: { approvalStatus: 'PENDING' },
     });
+  });
+
+  it('普通管理员只获得零值且不会查询全局审批业务表', async () => {
+    const { service, countMocks } = setup();
+
+    await expect(service.counts(admin)).resolves.toEqual(
+      emptyApprovalTaskCounts(),
+    );
+    for (const count of Object.values(countMocks)) {
+      expect(count).not.toHaveBeenCalled();
+    }
   });
 
   it('访客只获得零值且不会查询审批业务表', async () => {

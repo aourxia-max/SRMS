@@ -123,7 +123,7 @@ describe('tiered cleanup preflight fingerprint', () => {
       status: 'SUCCESS',
       checksum: createHash('sha256').update('database backup').digest('hex'),
       databasePath: '/backups/BK-TEST-1.sql',
-      retentionUntil: new Date('2026-09-01T00:00:00.000Z'),
+      retentionUntil: new Date('2099-12-31T23:59:59.000Z'),
     });
     db.contract.findMany.mockResolvedValueOnce([
       { id: 7, contractNo: 'HT-TIER-7', roomId: 31 },
@@ -142,7 +142,7 @@ describe('tiered cleanup preflight fingerprint', () => {
       status: 'SUCCESS',
       checksum: createHash('sha256').update('database backup').digest('hex'),
       databasePath: '/backups/BK-TEST-1.sql',
-      retentionUntil: new Date('2026-09-01T00:00:00.000Z'),
+      retentionUntil: new Date('2099-12-31T23:59:59.000Z'),
     });
     db.contract.findMany
       .mockResolvedValueOnce([{ id: 7, contractNo: 'HT-TIER-7', roomId: 31 }])

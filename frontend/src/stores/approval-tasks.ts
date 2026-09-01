@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
-  getApprovalTaskCounts,
+  getApprovalTaskSummary,
+  type ApprovalTaskItem,
   type ApprovalTaskCounts,
 } from '../services/approval-tasks'
 
@@ -24,14 +25,18 @@ function emptyCounts(): ApprovalTaskCounts {
 
 export const useApprovalTasksStore = defineStore('approval-tasks', () => {
   const counts = ref<ApprovalTaskCounts>(emptyCounts())
+  const items = ref<ApprovalTaskItem[]>([])
   let requestGeneration = 0
   let pollingTimer: number | null = null
 
   async function refresh() {
     const generation = ++requestGeneration
     try {
-      const nextCounts = await getApprovalTaskCounts()
-      if (generation === requestGeneration) counts.value = nextCounts
+      const summary = await getApprovalTaskSummary()
+      if (generation === requestGeneration) {
+        counts.value = summary.counts
+        items.value = summary.items
+      }
     } catch {
       // 保留最近一次成功结果，短暂网络错误不应让提醒闪烁或清零。
     }
@@ -51,7 +56,8 @@ export const useApprovalTasksStore = defineStore('approval-tasks', () => {
     requestGeneration += 1
     stopPolling()
     counts.value = emptyCounts()
+    items.value = []
   }
 
-  return { counts, refresh, reset, startPolling, stopPolling }
+  return { counts, items, refresh, reset, startPolling, stopPolling }
 })

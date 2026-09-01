@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../services/http'
+import { useApprovalTasksStore } from '../stores/approval-tasks'
 import { useSessionStore } from '../stores/session'
 import { usageTypeLabel } from '../utils/status-labels'
 
@@ -36,6 +37,7 @@ type RoomSearchSuggestion =
 
 const router = useRouter()
 const session = useSessionStore()
+const approvalTasks = useApprovalTasksStore()
 const data = ref<any>({
   roomSummary: { statusCounts: {}, rooms: [] },
   rentReminders: [],
@@ -78,11 +80,7 @@ const statusOptions = Object.entries(statusMeta).map(([value, item]) => ({ value
 
 const rooms = computed<DashboardRoom[]>(() => roomMapData.value.roomSummary?.rooms ?? [])
 const monthValue = computed(() => new Date().toISOString().slice(0, 7))
-const totalApprovals = computed(() =>
-  Number(data.value.approvals?.billAdjustments || 0) +
-  Number(data.value.approvals?.paymentRefunds || 0) +
-  Number(data.value.approvals?.pricingRebates || 0),
-)
+const totalApprovals = computed(() => approvalTasks.counts.total)
 const rentCollection = computed(() => data.value.rentCollectionOverview)
 const collectionRate = computed(() => {
   const value = rentCollection.value?.collectionRate
@@ -121,14 +119,28 @@ function contractTodoRooms(items: any[], type: string) {
 function roomTodoRooms(items: any[], type: string) {
   return deDuplicatedTodoRooms((items ?? []).map((room) => ({ roomId: room.id, fullHouseNo: room.fullHouseNo, type })))
 }
+function approvalTaskPath(type: string) {
+  if (type === 'CONTRACT_CHANGE') return '/contracts/changes'
+  if (type === 'PRICING_REBATE') return '/contracts?tab=fixed-rebate'
+  if (type === 'CONTRACT_VOID_REQUEST') return '/contracts?tab=void-correction'
+  if (['BILL_ADJUSTMENT', 'PAYMENT_REFUND', 'PAYMENT_VOID_REQUEST'].includes(type)) return '/payments/reviews'
+  return '/checkout'
+}
 function approvalTodoRooms() {
-  return deDuplicatedTodoRooms((data.value.approvalRooms ?? []).map((room: any) => ({ roomId: room.roomId, fullHouseNo: room.fullHouseNo, type: (room.types ?? []).join('、') || '审批待处理', count: room.count })))
+  return approvalTasks.items.map((item) => ({
+    roomId: item.roomId,
+    fullHouseNo: item.fullHouseNo,
+    types: [item.label],
+    count: 1,
+    businessNo: item.businessNo,
+    path: approvalTaskPath(item.type),
+  }))
 }
 const todoItems = computed(() => [
   { title: '逾期未收', desc: '仍有未结清的逾期账单', count: data.value.arrears?.length || 0, tone: 'danger', path: '/payments', rooms: billTodoRooms(data.value.arrears, '逾期未收') },
   { title: String(data.value.rentReminderDays || 7) + ' 天内应缴', desc: '即将到期的租金账单', count: data.value.rentReminders?.length || 0, tone: 'warning', path: '/payments', rooms: billTodoRooms(data.value.rentReminders, '应缴提醒') },
   { title: '合同即将到期', desc: '未来 ' + String(data.value.contractExpiryDays || 30) + ' 天内到期', count: data.value.expiringContracts?.length || 0, tone: 'primary', path: '/contracts', rooms: contractTodoRooms(data.value.expiringContracts, '合同即将到期') },
-  { title: '审批待处理', desc: '账单、退款、固定月租退差待审批', count: totalApprovals.value, tone: 'purple', path: '/contracts/changes', rooms: approvalTodoRooms() },
+  ...(session.user?.role === 'SUPER_ADMIN' ? [{ title: '审批待处理', desc: '需要超级管理员审批的业务事项', count: totalApprovals.value, tone: 'purple', path: '/contracts/changes', rooms: approvalTodoRooms() }] : []),
   { title: '长期空置', desc: '连续空置超过 ' + String(data.value.longVacancyDays || 30) + ' 天', count: data.value.longVacancyRooms?.length || 0, tone: 'green', path: '/properties', rooms: roomTodoRooms(data.value.longVacancyRooms, '长期空置') },
 ])
 function openTodo(item: any) {
@@ -138,6 +150,10 @@ function openTodo(item: any) {
 function openTodoRoom(roomId: number) {
   todoDialogOpen.value = false
   void router.push({ name: 'room-detail', params: { id: roomId } })
+}
+function openTodoPath(path: string) {
+  todoDialogOpen.value = false
+  void router.push(path)
 }
 function openTodoTarget() {
   if (!selectedTodo.value) return
@@ -505,10 +521,13 @@ onMounted(init)
     <el-dialog v-model="todoDialogOpen" :title="selectedTodo?.title || '今日待办'" width="620px">
       <el-empty v-if="!selectedTodo?.rooms?.length" description="暂无待处理房源" />
       <el-table v-else :data="selectedTodo.rooms" size="small">
+        <el-table-column v-if="selectedTodo?.title === '审批待处理'" prop="businessNo" label="业务编号" min-width="140" />
         <el-table-column prop="fullHouseNo" label="房号" min-width="130" />
         <el-table-column label="待办类型" min-width="180"><template #default="{ row }">{{ row.types.join('、') }}</template></el-table-column>
         <el-table-column prop="count" label="数量" width="80" />
-        <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openTodoRoom(row.roomId)">查看房源</el-button></template></el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }"><el-button link type="primary" @click="row.path ? openTodoPath(row.path) : openTodoRoom(row.roomId)">{{ row.path ? '前往处理' : '查看房源' }}</el-button></template>
+        </el-table-column>
       </el-table>
       <template #footer><el-button @click="todoDialogOpen = false">关闭</el-button><el-button type="primary" @click="openTodoTarget">前往处理</el-button></template>
     </el-dialog>

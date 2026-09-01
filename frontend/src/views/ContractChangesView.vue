@@ -36,6 +36,9 @@ const tenantOptions = ref<TenantOption[]>([])
 const tenantSearchLoading = ref(false)
 let tenantSearchRequestId = 0
 const isSuperAdmin = computed(() => session.user?.role === 'SUPER_ADMIN')
+const pendingContractChanges = computed(() =>
+  approvalTasks.items.filter((item) => item.type === 'CONTRACT_CHANGE'),
+)
 const form = reactive({
   changeType: 'RENT', effectiveDate: '', monthlyRent: '', endDate: '',
   primaryTenantId: undefined as number | undefined, reason: '',
@@ -56,6 +59,10 @@ async function selectContract() {
     billingPeriodCount: item.billingPeriodCount ?? undefined, reason: item.reason,
   }))
   await loadChanges()
+}
+async function locatePendingChange(contractId: number) {
+  selectedContractId.value = contractId
+  await selectContract()
 }
 function tenantOptionLabel(tenant: TenantOption) {
   return tenant.phone ? `${tenant.name}｜${tenant.phone}` : tenant.name
@@ -132,6 +139,22 @@ onMounted(loadContracts)
 <template>
   <main class="users-page">
     <header><div><el-tag>Task006</el-tag><h1>合同变更</h1><p>已收款账单金额锁定；变更只会重算生效账期起未收款的账单。</p></div></header>
+    <el-card v-if="isSuperAdmin" header="待审批变更" class="pending-change-card">
+      <el-empty v-if="!pendingContractChanges.length" description="当前无待审批合同变更" />
+      <el-table v-else :data="pendingContractChanges">
+        <el-table-column prop="businessNo" label="变更编号" min-width="160" />
+        <el-table-column prop="contractNo" label="合同编号" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="fullHouseNo" label="房号" min-width="120" />
+        <el-table-column label="提交时间" min-width="170">
+          <template #default="{ row }">{{ row.submittedAt ? row.submittedAt.slice(0, 19).replace('T', ' ') : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button :data-test="`locate-pending-change-${row.id}`" link type="primary" @click="locatePendingChange(row.contractId)">查看并处理</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
     <el-card header="提交合同变更"><el-form label-position="top"><el-row :gutter="16"><el-col :span="8"><el-form-item label="合同"><el-select data-test="change-contract-select" v-model="selectedContractId" filterable clearable placeholder="输入合同编号、房号或承租人姓名搜索" @change="selectContract"><el-option v-for="contract in contracts" :key="contract.id" :label="contractChangeOptionLabel(contract)" :value="contract.id" /></el-select></el-form-item></el-col><el-col :span="8"><el-form-item label="变更类型"><el-select v-model="form.changeType"><el-option label="租金变更" value="RENT" /><el-option label="租期变更" value="TERM" /><el-option label="主承租人变更" value="PRIMARY_TENANT" /><el-option label="优惠变更" value="CONCESSION" /></el-select></el-form-item></el-col><el-col :span="8"><el-form-item label="生效日期（须为账期开始日）"><el-date-picker data-test="effective-date" v-model="form.effectiveDate" value-format="YYYY-MM-DD" type="date" /></el-form-item></el-col><el-col v-if="form.changeType === 'RENT'" :span="8"><el-form-item label="新月租（元）"><el-input v-model="form.monthlyRent" /></el-form-item></el-col><el-col v-if="form.changeType === 'TERM'" :span="8"><el-form-item label="新结束日期"><el-date-picker v-model="form.endDate" value-format="YYYY-MM-DD" type="date" /></el-form-item></el-col><el-col v-if="form.changeType === 'PRIMARY_TENANT'" :span="8"><el-form-item label="新主承租人" required><el-select data-test="primary-tenant-select" v-model="form.primaryTenantId" filterable remote clearable reserve-keyword :remote-method="searchTenants" :loading="tenantSearchLoading" placeholder="输入承租人姓名或联系电话搜索"><el-option v-for="tenant in tenantOptions" :key="tenant.id" :label="tenantOptionLabel(tenant)" :value="tenant.id" /><template #empty><span class="tenant-search-empty">未找到承租人，请先到承租人管理新增</span></template></el-select><div class="tenant-search-hint">只能选择已存在且启用的承租人</div></el-form-item></el-col><el-col :span="24"><el-form-item label="变更原因"><el-input data-test="change-reason" v-model="form.reason" type="textarea" /></el-form-item></el-col></el-row></el-form>
       <template v-if="form.changeType === 'CONCESSION'"><el-divider>完整优惠规则列表</el-divider><p>这里展示当前有效规则。可修改、删除或新增；提交后会替换该合同的有效优惠规则。</p><el-button size="small" @click="addConcession">新增优惠规则</el-button><el-table :data="currentConcessions"><el-table-column label="类型"><template #default="{ row }"><el-select v-model="row.concessionType" @change="changeConcessionType(row)"><el-option label="日期区间免租" value="RENT_FREE" /><el-option label="固定金额" value="FIXED_AMOUNT" /><el-option label="比例优惠" value="PERCENTAGE" /></el-select></template></el-table-column><el-table-column label="适用范围"><template #default="{ row }"><template v-if="row.applyMode === 'DATE_RANGE'"><el-date-picker v-model="row.startDate" value-format="YYYY-MM-DD" type="date" /><el-date-picker v-model="row.endDate" value-format="YYYY-MM-DD" type="date" /></template><el-input-number v-else v-model="row.billingPeriodCount" :min="1" /></template></el-table-column><el-table-column label="金额/比例"><template #default="{ row }"><el-input v-if="row.concessionType === 'FIXED_AMOUNT'" v-model="row.fixedAmount" /><el-input v-else-if="row.concessionType === 'PERCENTAGE'" v-model="row.discountRate" placeholder="0.1 表示九折" /><span v-else>按重叠天数计算</span></template></el-table-column><el-table-column label="原因"><template #default="{ row }"><el-input v-model="row.reason" /></template></el-table-column><el-table-column label="操作"><template #default="{ $index }"><el-button size="small" @click="removeConcession($index)">删除</el-button></template></el-table-column></el-table></template>
       <el-button style="margin-top: 16px" type="primary" @click="submit">提交变更</el-button>
@@ -145,6 +168,10 @@ onMounted(loadContracts)
 .tenant-search-empty {
   color: #86909c;
   font-size: 12px;
+}
+
+.pending-change-card {
+  margin-bottom: 16px;
 }
 
 .tenant-search-hint {

@@ -28,7 +28,7 @@ const visibleItems = computed(() => items.filter((item) => (
 const needsSelection = computed(() => ['detail', 'fixed-rebate'].includes(props.modelValue) && !props.selectedContractId)
 
 function badgeCount(tab: ContractWorkspaceTab) {
-  if (props.role === 'VISITOR') return 0
+  if (props.role !== 'SUPER_ADMIN') return 0
   if (tab === 'fixed-rebate') return approvalTasks.counts.fixedRentRebates
   if (tab === 'void-correction') return approvalTasks.counts.contractVoidRequests
   return 0

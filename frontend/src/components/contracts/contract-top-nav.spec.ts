@@ -61,12 +61,17 @@ describe("合同工作区顶部导航", () => {
     expect(superAdmin.text()).toContain("合同作废／纠错");
   });
 
-  it("在对应审批入口显示固定月租退差和合同作废待处理数量", () => {
-    const wrapper = mount(ContractTopNav, {
+  it("仅超级管理员在对应审批入口看到待处理数量", () => {
+    const admin = mount(ContractTopNav, {
       props: { modelValue: "list", role: "ADMIN" },
       global: { plugins: [approvalPinia()] },
     });
+    const wrapper = mount(ContractTopNav, {
+      props: { modelValue: "list", role: "SUPER_ADMIN" },
+      global: { plugins: [approvalPinia()] },
+    });
 
+    expect(admin.find('[data-test^="badge-"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="badge-fixed-rebate"]').text()).toBe("3");
     expect(wrapper.get('[data-test="badge-void-correction"]').text()).toBe("4");
   });

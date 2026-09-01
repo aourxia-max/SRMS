@@ -53,4 +53,32 @@ describe('ApprovalTasksController', () => {
     });
     expect(service.counts).toHaveBeenCalledWith(admin);
   });
+
+  it('通过统一摘要接口返回待审批数量和可定位事项', async () => {
+    const summary = {
+      counts,
+      items: [
+        {
+          id: 1,
+          type: 'CONTRACT_CHANGE',
+          label: '合同变更',
+          businessNo: 'BG001',
+          contractId: 9,
+          contractNo: 'HT001',
+          roomId: 11,
+          fullHouseNo: '1栋101',
+          submittedAt: new Date('2026-09-01T00:00:00Z'),
+        },
+      ],
+    };
+    const service = { summary: jest.fn().mockResolvedValue(summary) };
+    const controller = new ApprovalTasksController(service as never);
+
+    await expect(controller.summary(admin)).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: summary,
+    });
+    expect(service.summary).toHaveBeenCalledWith(admin);
+  });
 });

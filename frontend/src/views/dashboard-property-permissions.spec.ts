@@ -27,7 +27,7 @@ const dashboardData = {
   contractExpiryDays: 30,
   longVacancyRooms: [],
   longVacancyDays: 30,
-  approvals: { billAdjustments: 0, paymentRefunds: 0, pricingRebates: 0 },
+  approvals: { billAdjustments: 1, paymentRefunds: 1, pricingRebates: 1 },
   approvalRooms: [],
   monthlyMoveInCount: 0,
   monthlyCheckoutCount: 0,
@@ -71,6 +71,17 @@ describe('驾驶舱角色可见性和今日待办', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('本月租金收缴概览')
     wrapper.unmount()
+  })
+
+  it('only shows the global approval todo to a super administrator', async () => {
+    const adminWrapper = mount(DashboardView, { global: { plugins: [sessionFor('ADMIN'), ElementPlus] } })
+    const superWrapper = mount(DashboardView, { global: { plugins: [sessionFor('SUPER_ADMIN'), ElementPlus] } })
+    await flushPromises()
+
+    expect(adminWrapper.text()).not.toContain('审批待处理')
+    expect(superWrapper.text()).toContain('审批待处理')
+    adminWrapper.unmount()
+    superWrapper.unmount()
   })
 
   it('opens a room list instead of navigating immediately when a todo is clicked', async () => {

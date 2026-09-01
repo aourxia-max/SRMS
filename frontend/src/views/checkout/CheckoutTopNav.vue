@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import PendingCountBadge from '../../components/PendingCountBadge.vue'
 import { useApprovalTasksStore } from '../../stores/approval-tasks'
+import { useSessionStore } from '../../stores/session'
 import type { CheckoutTab } from './checkout-types'
 
 defineProps<{ activeTab: CheckoutTab }>()
 const emit = defineEmits<{ change: [tab: CheckoutTab] }>()
 const approvalTasks = useApprovalTasksStore()
+const session = useSessionStore()
 
 const tabs: Array<{ key: CheckoutTab; label: string }> = [
   { key: 'initiate', label: '\u0031 \u53d1\u8d77\u9000\u79df' },
@@ -15,6 +17,7 @@ const tabs: Array<{ key: CheckoutTab; label: string }> = [
 ]
 
 function badgeCount(tab: CheckoutTab) {
+  if (session.user?.role !== 'SUPER_ADMIN') return 0
   if (tab === 'settlement') return approvalTasks.counts.checkoutSettlements
   if (tab === 'refund') return approvalTasks.counts.depositRefunds
   return 0

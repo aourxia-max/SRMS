@@ -19,6 +19,9 @@ describe('currentMonthPeriod', () => {
 
 describe('DashboardService rent collection permissions', () => {
   it('does not return financial collection amounts to an administrator', async () => {
+    const billAdjustmentFindMany = jest.fn().mockResolvedValue([]);
+    const paymentRefundFindMany = jest.fn().mockResolvedValue([]);
+    const pricingRebateFindMany = jest.fn().mockResolvedValue([]);
     const prisma = {
       db: {
         systemSetting: { findMany: jest.fn().mockResolvedValue([]) },
@@ -29,9 +32,9 @@ describe('DashboardService rent collection permissions', () => {
           count: jest.fn().mockResolvedValue(0),
         },
         checkoutSettlement: { count: jest.fn().mockResolvedValue(0) },
-        billAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
-        paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
-        pricingRebate: { findMany: jest.fn().mockResolvedValue([]) },
+        billAdjustment: { findMany: billAdjustmentFindMany },
+        paymentRefund: { findMany: paymentRefundFindMany },
+        pricingRebate: { findMany: pricingRebateFindMany },
       },
     } as any;
     const finance = { rentCollection: jest.fn() } as any;
@@ -42,56 +45,11 @@ describe('DashboardService rent collection permissions', () => {
     expect(result).not.toHaveProperty('rentCollectionOverview');
     expect(result).not.toHaveProperty('arrearsTotal');
     expect(finance.rentCollection).not.toHaveBeenCalled();
-  });
-
-  it('returns de-duplicated minimal room summaries for pending approvals', async () => {
-    const room101 = { id: 11, fullHouseNo: '1栋101' };
-    const room202 = { id: 22, fullHouseNo: '2栋202' };
-    const prisma = {
-      db: {
-        systemSetting: { findMany: jest.fn().mockResolvedValue([]) },
-        room: { findMany: jest.fn().mockResolvedValue([]) },
-        rentBill: { findMany: jest.fn().mockResolvedValue([]) },
-        contract: {
-          findMany: jest.fn().mockResolvedValue([]),
-          count: jest.fn().mockResolvedValue(0),
-        },
-        checkoutSettlement: { count: jest.fn().mockResolvedValue(0) },
-        billAdjustment: {
-          findMany: jest
-            .fn()
-            .mockResolvedValue([
-              { rentBill: { contract: { room: room101 } } },
-              { rentBill: { contract: { room: room101 } } },
-            ]),
-        },
-        paymentRefund: {
-          findMany: jest
-            .fn()
-            .mockResolvedValue([{ contract: { room: room101 } }]),
-        },
-        pricingRebate: {
-          findMany: jest
-            .fn()
-            .mockResolvedValue([{ contract: { room: room202 } }]),
-        },
-      },
-    } as any;
-    const service = new DashboardService(prisma, {
-      rentCollection: jest.fn(),
-    } as any);
-
-    const result = await service.summary({ id: 2, role: 'ADMIN' });
-
-    expect(result.approvalRooms).toEqual([
-      {
-        roomId: 11,
-        fullHouseNo: '1栋101',
-        types: ['账单调整', '退款申请'],
-        count: 3,
-      },
-      { roomId: 22, fullHouseNo: '2栋202', types: ['固定月租退差'], count: 1 },
-    ]);
+    expect(result).not.toHaveProperty('approvals');
+    expect(result).not.toHaveProperty('approvalRooms');
+    expect(billAdjustmentFindMany).not.toHaveBeenCalled();
+    expect(paymentRefundFindMany).not.toHaveBeenCalled();
+    expect(pricingRebateFindMany).not.toHaveBeenCalled();
   });
 });
 
