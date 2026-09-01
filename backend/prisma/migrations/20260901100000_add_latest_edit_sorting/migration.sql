@@ -1,3 +1,12 @@
+-- Capture the rows that existed before the new timestamp columns are added.
+-- Inserts that race with this migration receive CURRENT_TIMESTAMP from the
+-- column default and must not be rewritten as historical records below.
+SET @srms_export_tasks_high_water_id := (SELECT COALESCE(MAX(`id`), 0) FROM `export_tasks`);
+SET @srms_rent_bills_high_water_id := (SELECT COALESCE(MAX(`id`), 0) FROM `rent_bills`);
+SET @srms_payments_high_water_id := (SELECT COALESCE(MAX(`id`), 0) FROM `payments`);
+SET @srms_payment_refunds_high_water_id := (SELECT COALESCE(MAX(`id`), 0) FROM `payment_refunds`);
+SET @srms_checkout_settlements_high_water_id := (SELECT COALESCE(MAX(`id`), 0) FROM `checkout_settlements`);
+SET @srms_deposit_refunds_high_water_id := (SELECT COALESCE(MAX(`id`), 0) FROM `deposit_refunds`);
 ALTER TABLE `export_tasks`
   ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `created_at`;
 ALTER TABLE `rent_bills`
@@ -12,13 +21,16 @@ ALTER TABLE `deposit_refunds`
   ADD COLUMN `updated_at` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER `cancelled_reason`;
 
 UPDATE `export_tasks`
-SET `updated_at` = COALESCE(`completed_at`, `started_at`, `created_at`);
+SET `updated_at` = COALESCE(`completed_at`, `started_at`, `created_at`)
+WHERE `id` <= @srms_export_tasks_high_water_id;
 
 UPDATE `payments`
-SET `updated_at` = COALESCE(`voided_at`, CAST(`payment_date` AS DATETIME(3)));
+SET `updated_at` = COALESCE(`voided_at`, CAST(`payment_date` AS DATETIME(3)))
+WHERE `id` <= @srms_payments_high_water_id;
 
 UPDATE `payment_refunds`
-SET `updated_at` = COALESCE(`approved_at`, `submitted_at`, CAST(`refund_date` AS DATETIME(3)));
+SET `updated_at` = COALESCE(`approved_at`, `submitted_at`, CAST(`refund_date` AS DATETIME(3)))
+WHERE `id` <= @srms_payment_refunds_high_water_id;
 
 UPDATE `checkout_settlements` AS cs
 LEFT JOIN (
@@ -53,10 +65,12 @@ SET cs.`updated_at` = GREATEST(
     CAST(cs.`actual_checkout_date` AS DATETIME(3)),
     CAST(cs.`planned_checkout_date` AS DATETIME(3))
   )
-);
+)
+WHERE cs.`id` <= @srms_checkout_settlements_high_water_id;
 
 UPDATE `deposit_refunds`
-SET `updated_at` = COALESCE(`approved_at`, `submitted_at`, CAST(`refund_date` AS DATETIME(3)));
+SET `updated_at` = COALESCE(`approved_at`, `submitted_at`, CAST(`refund_date` AS DATETIME(3)))
+WHERE `id` <= @srms_deposit_refunds_high_water_id;
 
 UPDATE `rent_bills` AS rb
 LEFT JOIN (
@@ -85,7 +99,8 @@ LEFT JOIN (
 SET rb.`updated_at` = COALESCE(
   activity.`latest_at`,
   TIMESTAMPADD(SECOND, rb.`id`, CAST('2000-01-01 00:00:00.000' AS DATETIME(3)))
-);
+)
+WHERE rb.`id` <= @srms_rent_bills_high_water_id;
 
 ALTER TABLE `export_tasks`
   MODIFY COLUMN `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
