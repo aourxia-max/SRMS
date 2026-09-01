@@ -764,18 +764,20 @@ describe("CheckoutTopNav", () => {
         finalReceivable: "0.00",
       },
     ]);
-    api.preview.mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectPreview = reject;
-        }),
-    );
+
     const wrapper = mount(CheckoutWorkspace, {
       global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectPreview = reject;
+        }),
+    );
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
@@ -962,13 +964,14 @@ describe("CheckoutTopNav", () => {
         finalReceivable: "0.00",
       },
     ]);
-    api.preview.mockRejectedValueOnce(new Error("preview failed"));
     const wrapper = mount(CheckoutWorkspace, {
       global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
+    api.preview.mockRejectedValueOnce(new Error("preview failed"));
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
