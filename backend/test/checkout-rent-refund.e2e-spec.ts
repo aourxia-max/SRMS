@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   ExecutionContext,
   INestApplication,
@@ -47,6 +49,43 @@ type CleanupScope = {
 const actualCheckoutDate = '2035-01-15';
 const refundDate = '2035-01-20';
 
+function loadLocalTestDatabaseEnvironment() {
+  const content = readFileSync(
+    resolve(__dirname, '../../deploy/.env.test'),
+    'utf8',
+  );
+  const mysql: Record<string, string> = {};
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^\s*(MYSQL_[A-Za-z0-9_]+)\s*=(.*)$/.exec(line);
+    if (!match) continue;
+    let value = match[2].trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    }
+    mysql[match[1]] = value;
+  }
+  const required = [
+    'MYSQL_USER',
+    'MYSQL_PASSWORD',
+    'MYSQL_DATABASE',
+    'MYSQL_PORT',
+  ];
+  if (required.some((name) => !mysql[name])) {
+    throw new Error('本机测试环境数据库配置不完整');
+  }
+  const databaseUrl = new URL('mysql://127.0.0.1');
+  databaseUrl.username = mysql.MYSQL_USER;
+  databaseUrl.password = mysql.MYSQL_PASSWORD;
+  databaseUrl.port = mysql.MYSQL_PORT;
+  databaseUrl.pathname = `/${mysql.MYSQL_DATABASE}`;
+  process.env.DATABASE_URL = databaseUrl.toString();
+  process.env.NODE_ENV = 'test';
+}
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -67,6 +106,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   const suitePrefix = `T9RR${marker}`;
 
   beforeAll(async () => {
+    loadLocalTestDatabaseEnvironment();
     if (!process.env.DATABASE_URL) {
       throw new Error(
         '缺少隔离测试库 DATABASE_URL，无法运行退租租金退款 MySQL E2E',
@@ -430,6 +470,37 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     ]);
   }
 
+  async function financeSnapshot() {
+    currentUser = operator;
+    const overview = await request(app.getHttpServer())
+      .get('/api/finance/overview')
+      .expect(200);
+    const rentCollection = await request(app.getHttpServer())
+      .get('/api/finance/rent-collection')
+      .expect(200);
+    return {
+      depositBalance: overview.body.data.depositBalanceTotal as string,
+      prepaymentBalance: overview.body.data.prepaymentBalanceTotal as string,
+      originalReceivable: rentCollection.body.data.total
+        .originalReceivable as string,
+      netReceivable: rentCollection.body.data.total.netReceivable as string,
+      validReceived: rentCollection.body.data.total.validReceived as string,
+      outstanding: rentCollection.body.data.total.outstanding as string,
+    };
+  }
+
+  function expectFinanceDelta(
+    before: Awaited<ReturnType<typeof financeSnapshot>>,
+    after: Awaited<ReturnType<typeof financeSnapshot>>,
+    expected: Record<keyof Awaited<ReturnType<typeof financeSnapshot>>, string>,
+  ) {
+    for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
+      expect(new Prisma.Decimal(after[key]).minus(before[key]).toFixed(2)).toBe(
+        expected[key],
+      );
+    }
+  }
+
   it('原子完成押金、预收款和租金合并退款，只展示最终回冲且只产生一笔外部退款', async () => {
     const fixture = await createFixture('atomic');
     const payload = settlementPayload('1000.00');
@@ -511,9 +582,19 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
       expect.objectContaining({ status: 'RESERVED', amount: '1000.00' }),
     ]);
 
+    const financeBeforeRefund = await financeSnapshot();
     await request(app.getHttpServer())
       .post(`/api/deposit-refunds/${refundId}/approve`)
       .expect(201);
+    const financeAfterRefund = await financeSnapshot();
+    expectFinanceDelta(financeBeforeRefund, financeAfterRefund, {
+      depositBalance: '-800.00',
+      prepaymentBalance: '-200.00',
+      originalReceivable: '0.00',
+      netReceivable: '-1000.00',
+      validReceived: '-1000.00',
+      outstanding: '0.00',
+    });
 
     const [bill, allocation, payment, refund, reservations, adjustment] =
       await Promise.all([
@@ -1230,6 +1311,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
           historicalBillId: historicalBill.id,
         };
       });
+    const financeBeforeOrdinaryRefund = await financeSnapshot();
     currentUser = asRole(UserRole.ADMIN);
     const ordinary = await request(app.getHttpServer())
       .post('/api/payment-refunds')
@@ -1252,6 +1334,19 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
       .post(`/api/payment-refunds/${ordinary.body.data.id}/approve`)
       .send({ adjustmentDecisions: [] })
       .expect(201);
+    const financeAfterOrdinaryRefund = await financeSnapshot();
+    expectFinanceDelta(
+      financeBeforeOrdinaryRefund,
+      financeAfterOrdinaryRefund,
+      {
+        depositBalance: '0.00',
+        prepaymentBalance: '0.00',
+        originalReceivable: '0.00',
+        netReceivable: '0.00',
+        validReceived: '-1000.00',
+        outstanding: '1000.00',
+      },
+    );
     await expect(
       prisma.db.payment.findUniqueOrThrow({
         where: { id: fixture.paymentId },

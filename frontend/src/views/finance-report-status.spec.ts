@@ -16,9 +16,14 @@ vi.mock('../services/http', () => ({
 
 const billStatuses = ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE', 'VOIDED', 'REFUNDED']
 
-function mockFinanceResponses() {
+function mockFinanceResponses(depositTotals = ['10000.00']) {
+  let overviewIndex = 0
   vi.mocked(http.get).mockImplementation(async (url) => {
-    if (url === '/finance/overview') return { data: { data: { depositBalanceTotal: '10000.00' } } }
+    if (url === '/finance/overview') {
+      const depositBalanceTotal = depositTotals[Math.min(overviewIndex, depositTotals.length - 1)]
+      overviewIndex += 1
+      return { data: { data: { depositBalanceTotal } } }
+    }
     if (url === '/finance/rent-collection') {
       return {
         data: {
@@ -88,6 +93,22 @@ describe('财务报表账单状态中文显示', () => {
     expect(wrapper.text()).toContain('押金余额总额')
     expect(wrapper.text()).toContain('￥10,000.00')
     expect(wrapper.text()).toContain('当前实际保管押金')
+    wrapper.unmount()
+  })
+
+  it('refreshes deposit and rent metrics when the finance page regains focus after a refund', async () => {
+    mockFinanceResponses(['10000.00', '9100.00'])
+    const wrapper = mount(FinanceView, {
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('￥10,000.00')
+
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('￥9,100.00')
+    expect(wrapper.text()).not.toContain('￥10,000.00')
     wrapper.unmount()
   })
 

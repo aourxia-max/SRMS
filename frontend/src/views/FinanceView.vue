@@ -90,6 +90,9 @@ async function load() {
   contracts.value = d.data.data
   await loadExportTasks()
 }
+function refreshAfterExternalChange() {
+  void load()
+}
 async function createCommission() {
   if (!commissionForm.contractId || !commissionForm.recipientName || commissionForm.amount === '') {
     ElMessage.warning('请完整填写提成信息')
@@ -130,12 +133,14 @@ async function downloadTask(id: number, name: string) {
 
 let exportTaskTimer: number | undefined
 onMounted(async () => {
+  window.addEventListener('focus', refreshAfterExternalChange)
   await load()
   exportTaskTimer = window.setInterval(() => {
     if (exportTasks.value.some((task: any) => task.status === 'PENDING' || task.status === 'RUNNING')) void loadExportTasks()
   }, 3000)
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('focus', refreshAfterExternalChange)
   if (exportTaskTimer) window.clearInterval(exportTaskTimer)
 })
 </script>
