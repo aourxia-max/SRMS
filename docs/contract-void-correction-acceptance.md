@@ -9,6 +9,13 @@ Task 11 验收前 HEAD：02c0945
 
 ## 验收结论
 
+### 押金收款去重口径补充（2026-09-01）
+
+- 合同作废预览的“有效收款”由非押金有效收款、当前押金余额及未被当前合同收款覆盖的转入预收款组成。
+- 系统自动生成的 DEPOSIT 收款与押金余额代表同一笔资金，不得重复计入“当前净影响”。
+- 当前合同收款已经包含的预收款不得再次叠加；没有本合同收款来源的历史转入预收款仍按余额计入。
+- “当前净影响”等于去重后的“有效收款”，“计划冲销”为其相反数；账单应收、押金余额、预收余额和退款净额继续作为明细展示。
+
 合同作废／纠错已通过 Prisma、迁移状态、后端全量、前端全量、全部后端 E2E、Docker 健康和四类真实 API／数据库流程验收。
 
 - 四个验收合同均已进入 VOIDED，对应纠错单均为 COMPLETED。
@@ -292,15 +299,15 @@ Task 10 fix round 2 已在用户明确授权下完成一次整体迁移演练，
 
 ### 新鲜自动化证据
 
-| 命令／检查 | 最终结果 |
-| --- | --- |
-| `npm run lint` | 通过；0 errors |
-| `npm test -- --runInBand` | 80/80 suites、516/516 tests |
-| `npm --prefix backend run test:e2e -- --runInBand` | 7/7 suites、40/40 tests；普通 GREEN，mutation proof 未设置 |
-| `npm --prefix frontend run test:unit -- --testTimeout=15000` | 39/39 files、248/248 tests |
-| `npm run build` | 前端 vue-tsc + Vite、后端 Nest build 均通过；仅保留既有大 chunk warning |
-| `npm run db:validate` | Prisma schema valid |
-| 独立全分支审查 | Critical / Important / Minor 均为 0；最终结论 APPROVED |
+| 命令／检查                                                   | 最终结果                                                                |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `npm run lint`                                               | 通过；0 errors                                                          |
+| `npm test -- --runInBand`                                    | 80/80 suites、516/516 tests                                             |
+| `npm --prefix backend run test:e2e -- --runInBand`           | 7/7 suites、40/40 tests；普通 GREEN，mutation proof 未设置              |
+| `npm --prefix frontend run test:unit -- --testTimeout=15000` | 39/39 files、248/248 tests                                              |
+| `npm run build`                                              | 前端 vue-tsc + Vite、后端 Nest build 均通过；仅保留既有大 chunk warning |
+| `npm run db:validate`                                        | Prisma schema valid                                                     |
+| 独立全分支审查                                               | Critical / Important / Minor 均为 0；最终结论 APPROVED                  |
 
 ### 本机测试库最终状态
 

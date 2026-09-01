@@ -49,12 +49,47 @@ function inputFixture(
 }
 
 describe('contract void impact', () => {
+  it('does not count an auto-recorded deposit payment and the deposit balance twice', () => {
+    const impact = computeContractVoidImpact(
+      inputFixture({
+        payments: [
+          {
+            id: 21,
+            status: 'CONFIRMED',
+            paymentCategory: 'RENT',
+            amount: '1100.00',
+            allocatedAmount: '1100.00',
+            refundedAmount: '0.00',
+            prepaymentNet: '0.00',
+          },
+          {
+            id: 22,
+            status: 'CONFIRMED',
+            paymentCategory: 'DEPOSIT',
+            amount: '1400.00',
+            allocatedAmount: '0.00',
+            refundedAmount: '0.00',
+            prepaymentNet: '0.00',
+          },
+        ],
+        depositBalance: '1400.00',
+      }),
+    );
+
+    expect(impact.summary).toMatchObject({
+      effectivePayment: '2500.00',
+      depositBalance: '1400.00',
+      currentNetImpact: '2500.00',
+      plannedReversal: '-2500.00',
+    });
+  });
+
   it('calculates the approved partial-refund cash impact without double-counting the refund', () => {
     const impact = computeContractVoidImpact(inputFixture());
 
     expect(impact.summary).toEqual({
       rentBillPayable: '3000.00',
-      effectivePayment: '2500.00',
+      effectivePayment: '3500.00',
       depositBalance: '1000.00',
       prepaymentBalance: '0.00',
       refundNet: '500.00',
@@ -103,7 +138,7 @@ describe('contract void impact', () => {
     );
 
     expect(impact.summary).toMatchObject({
-      effectivePayment: '0.00',
+      effectivePayment: '1080.60',
       refundNet: '0.00',
       currentNetImpact: '1080.60',
       plannedReversal: '-1080.60',
@@ -156,7 +191,7 @@ describe('contract void impact', () => {
       }),
     );
 
-    expect(impact.summary.effectivePayment).toBe('50.00');
+    expect(impact.summary.effectivePayment).toBe('1050.00');
     expect(impact.summary.refundNet).toBe('200.00');
     expect(impact.rows.filter((row) => row.category === 'PAYMENT')).toEqual(
       expect.arrayContaining([
@@ -198,7 +233,7 @@ describe('contract void impact', () => {
       }),
     );
 
-    expect(impact.summary.effectivePayment).toBe('0.00');
+    expect(impact.summary.effectivePayment).toBe('1000.00');
     expect(impact.summary.refundNet).toBe('200.00');
     const paired = impact.rows.filter(
       (row) =>
@@ -231,7 +266,7 @@ describe('contract void impact', () => {
 
     expect(impact.summary).toMatchObject({
       rentBillPayable: '3000.00',
-      effectivePayment: '1200.00',
+      effectivePayment: '2200.00',
       currentNetImpact: '2200.00',
       plannedReversal: '-2200.00',
     });
@@ -268,7 +303,7 @@ describe('contract void impact', () => {
     );
 
     expect(impact.summary).toMatchObject({
-      effectivePayment: '2500.00',
+      effectivePayment: '3500.00',
       refundNet: '500.00',
     });
     expect(impact.rows.filter((row) => row.category === 'REFUND')).toEqual([
@@ -319,7 +354,7 @@ describe('contract void impact', () => {
     );
 
     expect(impact.summary).toMatchObject({
-      effectivePayment: '1500.00',
+      effectivePayment: '2500.00',
       refundNet: '1500.00',
       currentNetImpact: '2500.00',
     });
@@ -571,8 +606,8 @@ describe('contract void impact', () => {
     expect(impact.summary).toMatchObject({
       effectivePayment: '160.00',
       prepaymentBalance: '20.00',
-      currentNetImpact: '180.00',
-      plannedReversal: '-180.00',
+      currentNetImpact: '160.00',
+      plannedReversal: '-160.00',
       postReversalNetImpact: '0.00',
     });
     expect(

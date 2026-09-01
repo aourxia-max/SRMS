@@ -27,6 +27,7 @@ export type ContractVoidImpactInput = {
   payments: Array<{
     id: number;
     status: string;
+    paymentCategory?: string;
     amount: string;
     allocatedAmount: string;
     refundedAmount: string;
@@ -233,6 +234,10 @@ export function computeContractVoidImpact(
   const traceablePaymentIds = new Set(
     traceablePayments.map((payment) => payment.id),
   );
+  const cashPayments = traceablePayments.filter(
+    (payment) => payment.paymentCategory !== 'DEPOSIT',
+  );
+  const cashPaymentIds = new Set(cashPayments.map((payment) => payment.id));
   const approvedRefunds = input.refunds
     ? input.refunds.filter(
         (refund) =>
@@ -257,7 +262,7 @@ export function computeContractVoidImpact(
     (total, bill) => total.plus(decimal(bill.payableAmount)),
     zero,
   );
-  const grossPayment = traceablePayments.reduce(
+  const grossPayment = cashPayments.reduce(
     (total, payment) => total.plus(decimal(payment.amount)),
     zero,
   );
@@ -269,12 +274,32 @@ export function computeContractVoidImpact(
         zero,
       ),
     );
+  const cashRefundNet = approvedRefunds
+    .filter((refund) => cashPaymentIds.has(refund.paymentId))
+    .reduce((total, refund) => total.plus(decimal(refund.amount)), zero)
+    .plus(
+      approvedCheckoutRentRefunds
+        .filter((refund) => cashPaymentIds.has(refund.paymentId))
+        .reduce((total, refund) => total.plus(decimal(refund.amount)), zero),
+    );
   const depositBalance = decimal(input.depositBalance);
   const prepaymentBalance = decimal(input.prepaymentBalance);
-  const effectivePayment = grossPayment.minus(refundNet);
-  const currentNetImpact = effectivePayment
+  const paymentBackedPrepayment = cashPayments.reduce(
+    (total, payment) => total.plus(decimal(payment.prepaymentNet)),
+    zero,
+  );
+  const unrepresentedPrepayment = Prisma.Decimal.max(
+    prepaymentBalance.minus(paymentBackedPrepayment),
+    zero,
+  );
+  // Automatic deposit receipts mirror the deposit ledger, while a payment's
+  // prepayment credit already belongs to that payment amount. Use the current
+  // ledger balances only for money not otherwise represented by cash payments.
+  const effectivePayment = grossPayment
+    .minus(cashRefundNet)
     .plus(depositBalance)
-    .plus(prepaymentBalance);
+    .plus(unrepresentedPrepayment);
+  const currentNetImpact = effectivePayment;
 
   const rows: ContractVoidImpactRow[] = [
     ...input.bills.map((bill) =>
@@ -302,6 +327,7 @@ export function computeContractVoidImpact(
         true,
         {
           status: payment.status,
+          paymentCategory: payment.paymentCategory ?? null,
           allocatedAmount: amount(payment.allocatedAmount),
           refundedAmount: amount(payment.refundedAmount),
           prepaymentNet: amount(payment.prepaymentNet),

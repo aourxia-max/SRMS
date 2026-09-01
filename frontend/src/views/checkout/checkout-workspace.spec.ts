@@ -1,6 +1,8 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
+import type { App } from "vue";
+import ElementPlus, { ElSelect } from "element-plus";
 import { checkoutApi } from "../../services/checkout";
 import { useApprovalTasksStore } from "../../stores/approval-tasks";
 import { useSessionStore } from "../../stores/session";
@@ -22,7 +24,12 @@ function checkoutTestPinia() {
   vi.spyOn(useApprovalTasksStore(pinia), "refresh").mockImplementation(
     approvalRefresh,
   );
-  return pinia;
+  return {
+    install(app: App) {
+      app.use(pinia);
+      app.use(ElementPlus);
+    },
+  };
 }
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: routeQuery.value }),
@@ -139,6 +146,7 @@ vi.mock("../../services/checkout", () => ({
 describe("CheckoutTopNav", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(checkoutApi.preview).mockReset();
     routeQuery.value = {};
   });
 
@@ -159,14 +167,19 @@ describe("CheckoutTopNav", () => {
     approvals.counts.checkoutSettlements = 8;
     approvals.counts.depositRefunds = 9;
     useSessionStore(pinia).user = {
-      id: 1, username: "root", displayName: "超级管理员", role: "SUPER_ADMIN",
+      id: 1,
+      username: "root",
+      displayName: "超级管理员",
+      role: "SUPER_ADMIN",
     };
     const wrapper = mount(CheckoutTopNav, {
       props: { activeTab: "initiate" },
       global: { plugins: [pinia] },
     });
 
-    expect(wrapper.get('[data-test="badge-checkout-settlement"]').text()).toBe("8");
+    expect(wrapper.get('[data-test="badge-checkout-settlement"]').text()).toBe(
+      "8",
+    );
     expect(wrapper.get('[data-test="badge-checkout-refund"]').text()).toBe("9");
 
     const adminPinia = createPinia();
@@ -174,7 +187,10 @@ describe("CheckoutTopNav", () => {
     adminApprovals.counts.checkoutSettlements = 8;
     adminApprovals.counts.depositRefunds = 9;
     useSessionStore(adminPinia).user = {
-      id: 2, username: "admin", displayName: "管理员", role: "ADMIN",
+      id: 2,
+      username: "admin",
+      displayName: "管理员",
+      role: "ADMIN",
     };
     const admin = mount(CheckoutTopNav, {
       props: { activeTab: "initiate" },
@@ -198,13 +214,14 @@ describe("CheckoutTopNav", () => {
     });
 
     expect(wrapper.text()).toContain("发起退租");
-    expect(wrapper.text()).toContain("请选择待开始或正在履行的合同");
+    expect(wrapper.text()).toContain("输入合同编号、房号或承租人姓名搜索");
   });
   it("requires an active contract and checkout reason before initiation", async () => {
     const wrapper = mount(CheckoutInitiatePanel, {
       props: {
         contracts: [{ id: 1, contractNo: "HT202608010001", status: "ACTIVE" }],
       },
+      global: { plugins: [ElementPlus] },
     });
 
     await wrapper.get('[data-test="initiate-submit"]').trigger("click");
@@ -218,7 +235,11 @@ describe("CheckoutTopNav", () => {
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("HT202608010001");
+    expect(
+      wrapper
+        .findAllComponents({ name: "ElOption" })
+        .some((option) => option.props("label") === "HT202608010001"),
+    ).toBe(true);
   });
   it("allows a pending-start contract to be selected for checkout", async () => {
     const wrapper = mount(CheckoutInitiatePanel, {
@@ -228,15 +249,66 @@ describe("CheckoutTopNav", () => {
         ],
         selectedContractId: 2,
       },
+      global: { plugins: [ElementPlus] },
     });
     await flushPromises();
 
-    const select = wrapper.get('[data-test="checkout-contract-select"]');
-    expect((select.element as HTMLSelectElement).value).toBe("2");
+    expect(wrapper.findComponent(ElSelect).props("modelValue")).toBe("2");
     expect(wrapper.text()).toContain("HT202609010002");
     expect(wrapper.text()).toContain("未入住退租");
     expect(wrapper.emitted("contractChange")).toEqual([[2]]);
   });
+  it("退租合同支持按合同编号、房号或承租人姓名输入检索", () => {
+    const wrapper = mount(CheckoutInitiatePanel, {
+      props: {
+        contracts: [
+          {
+            id: 1,
+            contractNo: "HT202609010001",
+            status: "ACTIVE",
+            room: { id: 11, fullHouseNo: "1栋201" },
+            members: [{ memberRole: "PRIMARY", tenant: { name: "张三01" } }],
+          },
+          {
+            id: 2,
+            contractNo: "HT202609010002",
+            status: "PENDING_START",
+            room: { id: 22, fullHouseNo: "2栋301" },
+            members: [{ memberRole: "PRIMARY", tenant: { name: "李四02" } }],
+          },
+          {
+            id: 3,
+            contractNo: "HT202609010003",
+            status: "ENDED",
+            room: { id: 33, fullHouseNo: "2栋302" },
+            members: [
+              { memberRole: "PRIMARY", tenant: { name: "已结束租户" } },
+            ],
+          },
+        ],
+      },
+      global: { plugins: [ElementPlus] },
+    });
+
+    const contractSelect = wrapper.findComponent(ElSelect);
+    expect(contractSelect.exists()).toBe(true);
+    expect(contractSelect.attributes("data-test")).toBe(
+      "checkout-contract-select",
+    );
+    expect(contractSelect.props("filterable")).toBe(true);
+    expect(contractSelect.props("placeholder")).toBe(
+      "输入合同编号、房号或承租人姓名搜索",
+    );
+    expect(
+      wrapper
+        .findAllComponents({ name: "ElOption" })
+        .map((option) => option.props("label")),
+    ).toEqual([
+      "HT202609010001｜1栋201｜张三01",
+      "HT202609010002｜2栋301｜李四02",
+    ]);
+  });
+
   it("renders the locked combined refund breakdown and reserved rent allocations", () => {
     const wrapper = mount(CheckoutRefundPanel, {
       props: {
@@ -1534,6 +1606,7 @@ describe("CheckoutTopNav", () => {
           futureBillCount: 2,
         },
       },
+      global: { plugins: [ElementPlus] },
     });
 
     expect(wrapper.text()).toContain("财务快照");
@@ -1966,11 +2039,11 @@ describe("CheckoutTopNav", () => {
         contracts: [{ id: 1, contractNo: "HT202608010001", status: "ACTIVE" }],
         selectedContractId: 1,
       },
+      global: { plugins: [ElementPlus] },
     });
     await flushPromises();
 
-    const select = wrapper.find('[data-test="checkout-contract-select"]');
-    expect((select.element as HTMLSelectElement).value).toBe("1");
+    expect(wrapper.findComponent(ElSelect).props("modelValue")).toBe("1");
     expect(wrapper.emitted("contractChange")).toEqual([[1]]);
   });
 });

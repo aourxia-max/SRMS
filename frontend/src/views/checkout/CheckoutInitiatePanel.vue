@@ -35,16 +35,32 @@ const eligibleContracts = computed(() =>
     ["PENDING_START", "ACTIVE"].includes(item.status),
   ),
 );
-const isEligible = (status: string) => ["PENDING_START", "ACTIVE"].includes(status);
+const isEligible = (status: string) =>
+  ["PENDING_START", "ACTIVE"].includes(status);
+
+function contractOptionLabel(contract: CheckoutContract) {
+  const room = contract.room?.fullHouseNo || contract.room?.roomNo || "";
+  const tenants = (contract.members ?? [])
+    .map((member) => member.tenant.name.trim())
+    .filter(Boolean)
+    .join("、");
+  return [contract.contractNo, room, tenants].filter(Boolean).join("｜");
+}
 
 watch(
   () => [props.selectedContractId, props.contracts] as const,
   ([contractId]) => {
     if (!contractId) return;
     const contract = props.contracts.find((item) => item.id === contractId);
-    if (!contract || !isEligible(contract.status) || form.contractId === String(contractId)) return;
+    if (
+      !contract ||
+      !isEligible(contract.status) ||
+      form.contractId === String(contractId)
+    )
+      return;
     form.contractId = String(contractId);
-    form.checkoutType = contract.status === "PENDING_START" ? "未入住退租" : "提前退租";
+    form.checkoutType =
+      contract.status === "PENDING_START" ? "未入住退租" : "提前退租";
     emit("contractChange", contractId);
   },
   { immediate: true },
@@ -54,7 +70,8 @@ function contractChange() {
   if (!form.contractId) return;
   const contractId = Number(form.contractId);
   const contract = props.contracts.find((item) => item.id === contractId);
-  form.checkoutType = contract?.status === "PENDING_START" ? "未入住退租" : "提前退租";
+  form.checkoutType =
+    contract?.status === "PENDING_START" ? "未入住退租" : "提前退租";
   emit("contractChange", contractId);
 }
 
@@ -114,34 +131,32 @@ function submit() {
       <div class="initiate-panel__grid">
         <label class="form-field form-field--wide">
           <span><i>*</i>退租合同</span>
-          <select
+          <el-select
             data-test="checkout-contract-select"
             v-model="form.contractId"
+            filterable
+            clearable
             :disabled="loading"
+            placeholder="输入合同编号、房号或承租人姓名搜索"
+            no-data-text="没有符合退租条件的合同"
+            no-match-text="未找到匹配合同"
             @change="contractChange"
           >
-            <option value="">请选择待开始或正在履行的合同</option>
-            <option
+            <el-option
               v-for="contract in eligibleContracts"
               :key="contract.id"
+              :label="contractOptionLabel(contract)"
               :value="String(contract.id)"
-            >
-              {{ contract.contractNo
-              }}{{
-                contract.room?.fullHouseNo
-                  ? `｜${contract.room.fullHouseNo}`
-                  : ""
-              }}
-            </option>
-          </select>
+            />
+          </el-select>
         </label>
         <label class="form-field">
           <span><i>*</i>退租类型</span>
           <select v-model="form.checkoutType">
             <option>提前退租</option>
             <option>到期退租</option>
-          </select>
             <option>未入住退租</option>
+          </select>
         </label>
         <label class="form-field">
           <span><i>*</i>计划退房日期</span>
@@ -225,6 +240,7 @@ function submit() {
   color: #f05252;
   font-style: normal;
 }
+.form-field :deep(.el-select),
 .form-field select,
 .form-field input,
 .form-field textarea {

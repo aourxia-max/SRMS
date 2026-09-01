@@ -44,6 +44,7 @@ function contractFixture() {
       {
         id: 21,
         status: 'PARTIALLY_REFUNDED',
+        paymentCategory: 'RENT',
         amount: new Prisma.Decimal('3500.00'),
         paymentDate: new Date('2026-08-03T00:00:00.000Z'),
         allocations: [
@@ -230,7 +231,7 @@ describe('ContractVoidPreviewService', () => {
       contract: { id: 7 },
       impactHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       summary: {
-        effectivePayment: '3000.00',
+        effectivePayment: '4000.00',
         prepaymentBalance: '400.00',
         depositBalance: '1000.00',
       },
@@ -312,7 +313,9 @@ describe('ContractVoidPreviewService', () => {
           members: expect.any(Object),
           room: expect.any(Object),
           bills: expect.any(Object),
-          payments: expect.any(Object),
+          payments: expect.objectContaining({
+            select: expect.objectContaining({ paymentCategory: true }),
+          }),
           refunds: expect.any(Object),
           prepaymentTransactions: expect.any(Object),
           depositTransactions: expect.any(Object),

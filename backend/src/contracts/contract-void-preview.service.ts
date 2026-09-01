@@ -250,6 +250,7 @@ export class ContractVoidPreviewService {
           select: {
             id: true,
             status: true,
+            paymentCategory: true,
             amount: true,
             paymentDate: true,
             allocations: {
@@ -452,6 +453,7 @@ export class ContractVoidPreviewService {
       payments: contract.payments.map((payment) => ({
         id: payment.id,
         status: payment.status,
+        paymentCategory: payment.paymentCategory,
         amount: money(payment.amount),
         allocatedAmount: money(
           payment.allocations.reduce(
