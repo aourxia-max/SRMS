@@ -82,6 +82,11 @@ describe('contract void impact', () => {
       currentNetImpact: '2500.00',
       plannedReversal: '-2500.00',
     });
+    expect(
+      impact.rows.find(
+        (row) => row.category === 'PAYMENT' && row.originalEntityId === 22,
+      ),
+    ).toMatchObject({ affectsNetImpact: false });
   });
 
   it('calculates the approved partial-refund cash impact without double-counting the refund', () => {

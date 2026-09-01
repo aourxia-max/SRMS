@@ -324,7 +324,7 @@ export function computeContractVoidImpact(
         payment.id,
         payment.amount,
         payment.occurredAt ?? null,
-        true,
+        payment.paymentCategory !== 'DEPOSIT',
         {
           status: payment.status,
           paymentCategory: payment.paymentCategory ?? null,
@@ -386,8 +386,8 @@ export function computeContractVoidImpact(
             input.contract.id,
             prepaymentBalance,
             null,
-            true,
-            {},
+            !unrepresentedPrepayment.isZero(),
+            { netImpactContribution: amount(unrepresentedPrepayment) },
           ),
         ]
       : []),

@@ -296,6 +296,7 @@ describe("CheckoutTopNav", () => {
       "checkout-contract-select",
     );
     expect(contractSelect.props("filterable")).toBe(true);
+    expect(contractSelect.props("clearable")).toBe(false);
     expect(contractSelect.props("placeholder")).toBe(
       "输入合同编号、房号或承租人姓名搜索",
     );

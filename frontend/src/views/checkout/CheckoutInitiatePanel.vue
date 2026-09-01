@@ -135,7 +135,6 @@ function submit() {
             data-test="checkout-contract-select"
             v-model="form.contractId"
             filterable
-            clearable
             :disabled="loading"
             placeholder="输入合同编号、房号或承租人姓名搜索"
             no-data-text="没有符合退租条件的合同"
@@ -240,7 +239,13 @@ function submit() {
   color: #f05252;
   font-style: normal;
 }
-.form-field :deep(.el-select),
+.form-field :deep(.el-select) {
+  width: 100%;
+}
+.form-field :deep(.el-select__wrapper) {
+  min-height: 40px;
+  border-radius: 6px;
+}
 .form-field select,
 .form-field input,
 .form-field textarea {

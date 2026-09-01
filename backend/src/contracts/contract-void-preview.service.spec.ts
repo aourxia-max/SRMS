@@ -546,6 +546,39 @@ describe('ContractVoidPreviewService', () => {
     expect(leftPreview.impactHash).toBe(rightPreview.impactHash);
   });
 
+  it('maps an automatic deposit payment without counting it again over the deposit ledger balance', async () => {
+    const fixture = contractFixture();
+    fixture.payments.push({
+      id: 22,
+      status: 'CONFIRMED',
+      paymentCategory: 'DEPOSIT',
+      amount: new Prisma.Decimal('1000.00'),
+      paymentDate: new Date('2026-08-03T01:00:00.000Z'),
+      allocations: [],
+      refunds: [],
+      checkoutRentRefundAllocations: [],
+      prepaymentTransactions: [],
+      voidRequests: [],
+    });
+    const service = new ContractVoidPreviewService({
+      db: buildDb(fixture),
+    } as never);
+
+    const preview = await service.preview(7, admin);
+
+    expect(preview.summary).toMatchObject({
+      effectivePayment: '4000.00',
+      depositBalance: '1000.00',
+      currentNetImpact: '4000.00',
+      plannedReversal: '-4000.00',
+    });
+    expect(
+      preview.rows.find(
+        (row) => row.category === 'PAYMENT' && row.originalEntityId === 22,
+      ),
+    ).toMatchObject({ affectsNetImpact: false });
+  });
+
   it('changes the hash when a retained source amount changes', async () => {
     const leftFixture = contractFixture();
     const rightFixture = contractFixture();
