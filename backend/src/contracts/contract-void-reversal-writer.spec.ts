@@ -818,6 +818,46 @@ describe('ContractVoidReversalWriter', () => {
     expect(tx.depositTransaction.create).not.toHaveBeenCalled();
   });
 
+  it('keeps the full prepayment balance reversal but does not count payment-backed balance twice', async () => {
+    const { tx, inserted } = txFixture();
+    const impact = executionImpact();
+    const prepaymentRow = impact.rows.find(
+      (row) =>
+        row.category === 'PREPAYMENT' &&
+        row.originalEntityType === 'ContractPrepaymentBalance',
+    );
+    expect(prepaymentRow).toBeDefined();
+    prepaymentRow!.affectsNetImpact = false;
+    prepaymentRow!.metadata = {
+      ...prepaymentRow!.metadata,
+      netImpactContribution: '0.00',
+    };
+
+    await new ContractVoidReversalWriter().write(
+      tx as never,
+      request,
+      impact,
+      now,
+    );
+
+    expect(tx.prepaymentTransaction.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        amount: new Prisma.Decimal('80.00'),
+        balanceAfter: new Prisma.Decimal('0.00'),
+      }),
+    });
+    const persisted = inserted().find(
+      (row) =>
+        row.category === 'PREPAYMENT' &&
+        row.originalEntityType === 'ContractPrepaymentBalance',
+    );
+    expect(persisted?.metadata).toEqual(
+      expect.objectContaining({
+        affectsNetImpact: false,
+        netImpactContribution: '0.00',
+      }),
+    );
+  });
   it('fails closed when the reversal insert count is smaller than the planned rows', async () => {
     const { tx } = txFixture();
     tx.contractVoidReversal.createMany.mockResolvedValue({ count: 0 });

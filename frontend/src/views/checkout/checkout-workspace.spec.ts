@@ -546,6 +546,13 @@ describe("CheckoutTopNav", () => {
 
   it("recovers from a failed preview with a fresh maximum before showing it to the settlement panel", async () => {
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
     api.preview.mockRejectedValueOnce(new Error("preview failed"));
     api.preview.mockResolvedValueOnce({
       depositRefundableAmount: "0.00",
@@ -556,12 +563,6 @@ describe("CheckoutTopNav", () => {
       finalReceivable: "0.00",
       rentRefundAllocations: [],
     });
-    const wrapper = mount(CheckoutWorkspace, {
-      global: { plugins: [checkoutTestPinia()] },
-    });
-    await flushPromises();
-    await wrapper.get("button:nth-child(2)").trigger("click");
-    const panel = wrapper.findComponent(CheckoutSettlementPanel);
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",
@@ -717,13 +718,14 @@ describe("CheckoutTopNav", () => {
         finalReceivable: "0.00",
       },
     ]);
-    api.preview.mockRejectedValueOnce(new Error("preview failed"));
     const wrapper = mount(CheckoutWorkspace, {
       global: { plugins: [checkoutTestPinia()] },
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
     const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    api.preview.mockReset();
+    api.preview.mockRejectedValueOnce(new Error("preview failed"));
     const payload = {
       actualCheckoutDate: "2026-08-20",
       handoverDate: "2026-08-20",

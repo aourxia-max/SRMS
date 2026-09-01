@@ -202,6 +202,11 @@ export class ContractVoidReversalWriter {
       data: { status: 'VOIDED' },
     });
 
+    const prepaymentImpactRow = impact.rows.find(
+      (row) =>
+        row.category === 'PREPAYMENT' &&
+        row.originalEntityType === 'ContractPrepaymentBalance',
+    );
     const prepaymentBalance = decimal(impact.summary.prepaymentBalance);
     if (!prepaymentBalance.isZero()) {
       const generated = await tx.prepaymentTransaction.create({
@@ -230,7 +235,9 @@ export class ContractVoidReversalWriter {
           metadata: {
             sourceTransactionId:
               impact.sourceSnapshot.prepaymentBalanceSource?.id ?? null,
-            affectsNetImpact: true,
+            affectsNetImpact: prepaymentImpactRow?.affectsNetImpact ?? false,
+            netImpactContribution:
+              prepaymentImpactRow?.metadata.netImpactContribution ?? '0.00',
           },
         }),
       );

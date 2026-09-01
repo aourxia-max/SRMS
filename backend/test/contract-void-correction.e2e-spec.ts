@@ -774,7 +774,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
       sources,
       allocationSources,
       expectedReversals,
-      expectedCurrentNetImpact: '250.00',
+      expectedCurrentNetImpact: '175.00',
       cleanup: location.cleanup,
     };
     return fixture;
@@ -1203,7 +1203,7 @@ describe('contract void correction API and financial invariants (e2e)', () => {
           generatedEntityType: null,
         },
       ],
-      expectedCurrentNetImpact: '180.00',
+      expectedCurrentNetImpact: '160.00',
       cleanup: base.location.cleanup,
     };
     return {
