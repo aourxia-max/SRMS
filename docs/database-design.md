@@ -914,7 +914,7 @@ outstanding_amount = max(0, payable_amount - received_amount)
 外部资金流入 = 有效租金收款 + 押金收取 + 预收款收取 + 其他实际收款
 外部资金流出 = 已确认普通收款退款 + 人工退差实际退款 + 已确认退租合并退款
 净资金流 = 外部资金流入 - 外部资金流出
-租金及押金入账合计 = payment_date位于所选日期范围、status为CONFIRMED、PARTIALLY_REFUNDED或FULLY_REFUNDED、payment_category为RENT、PREPAYMENT或DEPOSIT的收款金额合计
+租金及押金入账合计 = payment_date位于所选日期范围、status为CONFIRMED、PARTIALLY_REFUNDED或FULLY_REFUNDED、payment_category为RENT、PREPAYMENT或DEPOSIT，且付款ID未进入合同作废回滚PAYMENT清单的收款金额合计
 ```
 
 退租合并退款内部的押金、预收款和租金拆分只用于分类与追溯，不得重复形成三笔外部资金流。
