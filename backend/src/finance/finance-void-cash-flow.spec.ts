@@ -73,13 +73,15 @@ describe('FinanceService void correction cash-flow audit', () => {
         contractVoidReversal: { findMany: reversalFindMany },
       },
     } as never);
-    await expect(service.cashFlows()).resolves.toMatchObject({
-      flows: [
-        expect.objectContaining({
-          source: { entityType: 'Payment', entityId: 14 },
-        }),
-      ],
-    });
+    const report = await service.cashFlows();
+    expect(report.flows).toEqual([
+      expect.objectContaining({
+        source: { entityType: 'Payment', entityId: 14 },
+      }),
+    ]);
+    expect(report.rentAndDepositReceivedTotal).toEqual(
+      new Prisma.Decimal('0.00'),
+    );
   });
   it('does not map historical nonzero commission reversals into cash flows', async () => {
     const reversalFindMany = jest.fn().mockImplementation((args) =>

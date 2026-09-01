@@ -364,6 +364,7 @@ export class FinanceService {
     const rentAndDepositReceivedTotal = payments
       .filter(
         (item) =>
+          !terminalPaymentIds.includes(item.id) &&
           ['RENT', 'PREPAYMENT', 'DEPOSIT'].includes(item.paymentCategory) &&
           ['CONFIRMED', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'].includes(
             item.status,
