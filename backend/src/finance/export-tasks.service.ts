@@ -62,7 +62,7 @@ export class ExportTasksService implements OnModuleInit {
     const tasks = await this.prisma.db.exportTask.findMany({
       where: { createdBy: user.id },
       include: { fileAsset: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       take: 100,
     });
     return tasks.map((task) => ({

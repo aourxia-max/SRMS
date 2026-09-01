@@ -34,6 +34,8 @@ export type CashFlowRow = {
   generatedSource: CashFlowSource | null;
 };
 
+type SortableCashFlowRow = CashFlowRow & { sortAt: Date };
+
 function source(entityType: string | null, entityId: number | null) {
   return entityType ? { entityType, entityId } : null;
 }
@@ -103,7 +105,7 @@ export class FinanceService {
           select: { amount: true },
         },
       },
-      orderBy: { periodStart: 'asc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
     const rows = bills.map((bill) => {
       const validReceived = bill.allocations
@@ -224,9 +226,10 @@ export class FinanceService {
           orderBy: [{ correctionOccurredAt: 'desc' }, { id: 'desc' }],
         }),
       ]);
-    const flows: CashFlowRow[] = [
+    const sortableFlows: SortableCashFlowRow[] = [
       ...payments.map((item) => ({
         date: item.paymentDate,
+        sortAt: item.updatedAt ?? item.paymentDate,
         flowType: 'PAYMENT',
         type:
           item.paymentCategory === 'RENT'
@@ -253,6 +256,7 @@ export class FinanceService {
       })),
       ...refunds.map((item) => ({
         date: item.refundDate,
+        sortAt: item.updatedAt ?? item.refundDate,
         flowType: 'PAYMENT_REFUND',
         type: '收款退款',
         category: null,
@@ -270,6 +274,7 @@ export class FinanceService {
       })),
       ...checkoutRefunds.map((item) => ({
         date: item.refundDate,
+        sortAt: item.updatedAt ?? item.refundDate,
         flowType: 'CHECKOUT_COMBINED_REFUND',
         type: `退租合并退款（押金 ¥${new Prisma.Decimal(item.depositRefundAmount).toFixed(2)}、预收款 ¥${new Prisma.Decimal(item.prepaymentRefundAmount).toFixed(2)}、租金 ¥${new Prisma.Decimal(item.rentRefundAmount).toFixed(2)}）`,
         category: null,
@@ -293,6 +298,7 @@ export class FinanceService {
         )
         .map((item) => ({
           date: item.occurredAt,
+          sortAt: item.occurredAt,
           flowType: 'DEPOSIT_OFFSET',
           type: '押金内部抵扣',
           category: null,
@@ -312,6 +318,7 @@ export class FinanceService {
         .filter((item) => item.category !== 'COMMISSION')
         .map((item) => ({
           date: item.correctionOccurredAt,
+          sortAt: item.correctionOccurredAt,
           flowType: 'CONTRACT_VOID_REVERSAL',
           type: '合同纠错冲销',
           category: item.category,
@@ -333,11 +340,16 @@ export class FinanceService {
           ),
         })),
     ].sort((left, right) => {
-      const byDate = right.date.getTime() - left.date.getTime();
-      if (byDate !== 0) return byDate;
-      const byType = left.flowType.localeCompare(right.flowType);
-      if (byType !== 0) return byType;
-      return (right.source?.entityId ?? 0) - (left.source?.entityId ?? 0);
+      const byEditTime = right.sortAt.getTime() - left.sortAt.getTime();
+      if (byEditTime !== 0) return byEditTime;
+      const byId = (right.source?.entityId ?? 0) - (left.source?.entityId ?? 0);
+      if (byId !== 0) return byId;
+      return left.flowType.localeCompare(right.flowType);
+    });
+    const flows = sortableFlows.map((item) => {
+      const { sortAt, ...flow } = item;
+      void sortAt;
+      return flow;
     });
     const inflow = flows
       .filter((item) => item.external && item.direction === 'IN')

@@ -17,6 +17,7 @@ describe('FinanceService rent collection category isolation', () => {
           status: { not: 'VOIDED' },
           contract: { status: { not: 'VOIDED' } },
         }),
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       }),
     );
   });
@@ -95,6 +96,45 @@ describe('FinanceService rent collection category isolation', () => {
     });
   });
 
+  it('orders cash flows by their latest edit time instead of the business date', async () => {
+    const service = new FinanceService({
+      db: {
+        payment: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 1,
+              paymentDate: new Date('2026-08-30'),
+              updatedAt: new Date('2026-08-30T08:00:00.000Z'),
+              paymentCategory: 'RENT',
+              amount: new Prisma.Decimal('100.00'),
+              receiptNo: 'SK-OLD-EDIT',
+              status: 'CONFIRMED',
+            },
+            {
+              id: 2,
+              paymentDate: new Date('2026-08-01'),
+              updatedAt: new Date('2026-09-01T08:00:00.000Z'),
+              paymentCategory: 'RENT',
+              amount: new Prisma.Decimal('200.00'),
+              receiptNo: 'SK-LATEST-EDIT',
+              status: 'CONFIRMED',
+            },
+          ]),
+        },
+        paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
+        contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const report = await service.cashFlows();
+
+    expect(report.flows.map((item) => item.reference)).toEqual([
+      'SK-LATEST-EDIT',
+      'SK-OLD-EDIT',
+    ]);
+  });
   it('sums only the latest deposit balance of each contract', async () => {
     const depositFindMany = jest.fn().mockResolvedValue([
       { contractId: 1, balanceAfter: new Prisma.Decimal('7000.00') },

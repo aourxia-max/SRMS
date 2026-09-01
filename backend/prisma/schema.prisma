@@ -500,9 +500,11 @@ model ExportTask {
   startedAt     DateTime?        @map("started_at") @db.DateTime(3)
   completedAt   DateTime?        @map("completed_at") @db.DateTime(3)
   createdAt     DateTime         @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt     DateTime         @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
   fileAsset     FileAsset?       @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
 
   @@index([createdBy, createdAt])
+  @@index([updatedAt, id], map: "idx_export_tasks_updated_at_id")
   @@index([status, createdAt])
   @@map("export_tasks")
 }
@@ -879,6 +881,7 @@ model RentBill {
   status                  RentBillStatus           @default(PENDING)
   billCategory            RentBillCategory         @default(RENT) @map("bill_category")
   checkoutSettlementId    Int?                     @unique @map("checkout_settlement_id") @db.UnsignedInt
+  updatedAt               DateTime                 @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
   contract                Contract                 @relation(fields: [contractId], references: [id], onDelete: Restrict)
   pricingTier             ContractPricingTier?     @relation(fields: [contractPricingTierId], references: [id], onDelete: Restrict)
   allocations             PaymentAllocation[]
@@ -892,6 +895,7 @@ model RentBill {
 
   @@unique([contractId, periodSeq])
   @@index([dueDate, status])
+  @@index([updatedAt, id], map: "idx_rent_bills_updated_at_id")
   @@map("rent_bills")
 }
 
@@ -912,6 +916,7 @@ model Payment {
   voidedAt               DateTime?               @map("voided_at") @db.DateTime(3)
   editReason             String?                 @map("edit_reason") @db.VarChar(500)
   remark                 String?                 @db.VarChar(500)
+  updatedAt              DateTime                @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
   contract               Contract                @relation(fields: [contractId], references: [id], onDelete: Restrict)
   allocations            PaymentAllocation[]
   prepaymentTransactions PrepaymentTransaction[]
@@ -923,6 +928,7 @@ model Payment {
   checkoutRentRefundAllocations CheckoutRentRefundAllocation[]
 
   @@index([contractId, paymentDate, status])
+  @@index([updatedAt, id], map: "idx_payments_updated_at_id")
   @@map("payments")
 }
 
@@ -973,12 +979,14 @@ model PaymentRefund {
   approvedBy          Int?                              @map("approved_by") @db.UnsignedInt
   approvedAt          DateTime?                         @map("approved_at") @db.DateTime(3)
   rejectedReason      String?                           @map("rejected_reason") @db.VarChar(500)
+  updatedAt           DateTime                          @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
   payment             Payment                           @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   contract            Contract                          @relation(fields: [contractId], references: [id], onDelete: Restrict)
   allocations         PaymentRefundAllocation[]
   adjustmentDecisions PaymentRefundAdjustmentDecision[]
 
   @@index([paymentId, approvalStatus])
+  @@index([updatedAt, id], map: "idx_payment_refunds_updated_at_id")
   @@map("payment_refunds")
 }
 
@@ -1172,6 +1180,7 @@ model CheckoutSettlement {
   approvedAt                    DateTime?                @map("approved_at") @db.DateTime(3)
   rejectedReason                String?                  @map("rejected_reason") @db.VarChar(500)
   remark                        String?                  @db.VarChar(1000)
+  updatedAt                     DateTime                 @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
   contract                      Contract                 @relation(fields: [contractId], references: [id], onDelete: Restrict)
   items                         CheckoutSettlementItem[]
   depositTransactions           DepositTransaction[]
@@ -1179,6 +1188,7 @@ model CheckoutSettlement {
   supplementalBill              RentBill?                @relation("CheckoutSupplementalRentBill")
 
   @@index([contractId, status])
+  @@index([updatedAt, id], map: "idx_checkout_settlements_updated_at_id")
   @@map("checkout_settlements")
 }
 
@@ -1232,6 +1242,7 @@ model DepositRefund {
   approvedBy           Int?                 @map("approved_by") @db.UnsignedInt
   approvedAt           DateTime?            @map("approved_at") @db.DateTime(3)
   cancelledReason      String?              @map("cancelled_reason") @db.VarChar(500)
+  updatedAt            DateTime             @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
   contract             Contract             @relation(fields: [contractId], references: [id], onDelete: Restrict)
   checkoutSettlement   CheckoutSettlement   @relation(fields: [checkoutSettlementId], references: [id], onDelete: Restrict)
   transactions         DepositTransaction[]
@@ -1240,6 +1251,7 @@ model DepositRefund {
 
   @@index([contractId, approvalStatus])
   @@index([checkoutSettlementId, approvalStatus])
+  @@index([updatedAt, id], map: "idx_deposit_refunds_updated_at_id")
   @@map("deposit_refunds")
 }
 

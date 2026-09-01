@@ -257,6 +257,7 @@ describe('CheckoutService', () => {
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { status: 'COMPLETED', contract: { status: 'ENDED' } },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       }),
     );
   });

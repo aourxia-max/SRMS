@@ -44,19 +44,21 @@ describe('ExportTasksService', () => {
   });
 
   it('serializes completed export file sizes for task-list JSON responses', async () => {
+    const findMany = jest
+      .fn()
+      .mockResolvedValue([{ id: 1, fileAsset: { id: 1, sizeBytes: 256n } }]);
     const service = serviceWith({
-      exportTask: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { id: 1, fileAsset: { id: 1, sizeBytes: 256n } },
-          ]),
-      },
+      exportTask: { findMany },
     });
 
     const result = await service.list(user);
 
     expect(result[0].fileAsset.sizeBytes).toBe('256');
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      }),
+    );
   });
 
   it('requeues pending and interrupted tasks on startup', async () => {

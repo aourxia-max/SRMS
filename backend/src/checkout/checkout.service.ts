@@ -103,7 +103,7 @@ export class CheckoutService {
             select: { id: true, refundAmount: true },
           },
         },
-        orderBy: [{ actualCheckoutDate: 'desc' }, { id: 'desc' }],
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),

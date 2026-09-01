@@ -109,6 +109,7 @@ describe('RentBillsService', () => {
           periodStart: { gte: expect.any(Date), lt: expect.any(Date) },
           OR: expect.any(Array),
         }),
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       }),
     );
     expect(result).toMatchObject({

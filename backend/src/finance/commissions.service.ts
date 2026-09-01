@@ -14,7 +14,7 @@ export class CommissionsService {
         contract: { status: { not: 'VOIDED' } },
       },
       include: { contract: { include: { room: true } } },
-      orderBy: { id: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
   }
   async create(dto: CreateCommissionDto, user: AuthUser) {

@@ -49,7 +49,7 @@ describe('CommissionsService', () => {
         contract: { status: { not: 'VOIDED' } },
       },
       include: { contract: { include: { room: true } } },
-      orderBy: { id: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
   });
 

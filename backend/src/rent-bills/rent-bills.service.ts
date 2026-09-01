@@ -148,7 +148,7 @@ export class RentBillsService {
       this.prisma.db.rentBill.findMany({
         where,
         include: rentBillInclude,
-        orderBy: [{ periodStart: 'desc' }, { id: 'desc' }],
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.db.rentBill.count({ where }),
     ]);
