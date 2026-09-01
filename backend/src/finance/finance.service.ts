@@ -357,12 +357,20 @@ export class FinanceService {
     const outflow = flows
       .filter((item) => item.external && item.direction === 'OUT')
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+    const rentAndDepositReceivedTotal = payments
+      .filter(
+        (item) =>
+          ['RENT', 'PREPAYMENT', 'DEPOSIT'].includes(item.paymentCategory) &&
+          ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.status),
+      )
+      .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
     return {
       flows,
       total: flows.length,
       inflow,
       outflow,
       netCashFlow: inflow.minus(outflow),
+      rentAndDepositReceivedTotal,
     };
   }
 }

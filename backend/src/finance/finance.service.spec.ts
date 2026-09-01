@@ -66,6 +66,82 @@ describe('FinanceService rent collection category isolation', () => {
     expect(report.total.concessionAmount).toEqual(new Prisma.Decimal('200.00'));
   });
 
+  it('totals valid rent and deposit receipts by payment date without netting refunds', async () => {
+    const paymentFindMany = jest.fn().mockResolvedValue([
+      {
+        id: 1,
+        paymentDate: new Date('2026-08-05'),
+        updatedAt: new Date('2026-08-05T08:00:00.000Z'),
+        paymentCategory: 'RENT',
+        amount: new Prisma.Decimal('1000.00'),
+        receiptNo: 'SK-RENT-1',
+        status: 'CONFIRMED',
+      },
+      {
+        id: 2,
+        paymentDate: new Date('2026-08-06'),
+        updatedAt: new Date('2026-08-06T08:00:00.000Z'),
+        paymentCategory: 'DEPOSIT',
+        amount: new Prisma.Decimal('3000.00'),
+        receiptNo: 'SK-DEPOSIT-2',
+        status: 'PARTIALLY_REFUNDED',
+      },
+      {
+        id: 5,
+        paymentDate: new Date('2026-08-06'),
+        updatedAt: new Date('2026-08-06T09:00:00.000Z'),
+        paymentCategory: 'PREPAYMENT',
+        amount: new Prisma.Decimal('600.00'),
+        receiptNo: 'SK-PREPAYMENT-5',
+        status: 'CONFIRMED',
+      },
+      {
+        id: 3,
+        paymentDate: new Date('2026-08-07'),
+        updatedAt: new Date('2026-08-07T08:00:00.000Z'),
+        paymentCategory: 'CHECKOUT_SUPPLEMENTAL',
+        amount: new Prisma.Decimal('500.00'),
+        receiptNo: 'SK-CHECKOUT-3',
+        status: 'CONFIRMED',
+      },
+      {
+        id: 4,
+        paymentDate: new Date('2026-08-08'),
+        updatedAt: new Date('2026-08-08T08:00:00.000Z'),
+        paymentCategory: 'RENT',
+        amount: new Prisma.Decimal('700.00'),
+        receiptNo: 'SK-VOIDED-4',
+        status: 'VOIDED',
+      },
+    ]);
+    const service = new FinanceService({
+      db: {
+        payment: { findMany: paymentFindMany },
+        paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
+        contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const report = await service.cashFlows('2026-08-01', '2026-08-31');
+
+    expect(report.rentAndDepositReceivedTotal).toEqual(
+      new Prisma.Decimal('4600.00'),
+    );
+    expect(paymentFindMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+          { id: { in: [] } },
+        ],
+        paymentDate: {
+          gte: new Date('2026-07-31T16:00:00.000Z'),
+          lt: new Date('2026-08-31T16:00:00.000Z'),
+        },
+      },
+    });
+  });
   it('labels checkout supplemental receipts without counting them as rental receipts', async () => {
     const service = new FinanceService({
       db: {

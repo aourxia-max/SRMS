@@ -52,7 +52,7 @@ function mockFinanceResponses(depositTotals = ['10000.00']) {
         },
       }
     }
-    if (url === '/finance/cash-flows') return { data: { data: { flows: [], inflow: '0.00', outflow: '0.00', netCashFlow: '0.00' } } }
+    if (url === '/finance/cash-flows') return { data: { data: { flows: [], inflow: '0.00', outflow: '0.00', netCashFlow: '0.00', rentAndDepositReceivedTotal: '3000.00' } } }
     if (url === '/commissions') return { data: { data: [] } }
     if (url === '/contracts') return { data: { data: [] } }
     if (url === '/finance/export-tasks') return { data: { data: [] } }
@@ -123,7 +123,7 @@ describe('财务报表账单状态中文显示', () => {
     wrapper.unmount()
   })
 
-  it('displays the finance overview cards in the approved order without collection rate', async () => {
+  it('replaces the net receivable KPI with cash-basis rent and deposit receipts before original receivable', async () => {
     const wrapper = mount(FinanceView, {
       global: { plugins: [ElementPlus] },
     })
@@ -136,11 +136,13 @@ describe('财务报表账单状态中文显示', () => {
     expect(labels).toEqual([
       '有效实收',
       '押金余额总额',
+      '租金及押金入账合计',
       '原应收',
-      '净应收',
       '优惠减免',
       '未收',
     ])
+    expect(wrapper.find('.metrics').text()).toContain('￥3,000.00')
+    expect(wrapper.find('.metrics').text()).not.toContain('净应收')
     expect(wrapper.find('.metrics').text()).not.toContain('收租率')
     wrapper.unmount()
   })
