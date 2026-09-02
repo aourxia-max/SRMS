@@ -118,6 +118,12 @@ describe('物业办事具体路由与导航', () => {
     wrapper.unmount()
   })
 
+  it('离开物业办事模块后不保留模块高亮', async () => {
+    const { wrapper } = await mountApp('ADMIN', '/')
+    expect(wrapper.get('[data-test="property-affairs-sidebar"]').classes()).not.toContain('section-active')
+    wrapper.unmount()
+  })
+
   it('五个路由名称均显示对应中文页名', async () => {
     const { wrapper, router } = await mountApp('ADMIN')
     const pages = [
@@ -131,6 +137,7 @@ describe('物业办事具体路由与导航', () => {
       await router.push(path)
       await flushPromises()
       expect(wrapper.get('.srms-crumb').text()).toContain(label)
+      expect(wrapper.get('[data-test="property-affairs-sidebar"]').classes()).toContain('section-active')
     }
     wrapper.unmount()
   })

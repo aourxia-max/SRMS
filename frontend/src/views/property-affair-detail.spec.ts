@@ -139,6 +139,21 @@ describe('物业办事详情、进度与附件', () => {
     expect(wrapper.find('[data-test="delete-affair"]').exists()).toBe(true)
   })
 
+  it('创建人只取唯一初始进度快照，不受乱序及同一人员后来改名影响', async () => {
+    vi.mocked(api.getPropertyAffair).mockResolvedValue({
+      ...detail,
+      progresses: [
+        { id: 3, affairId: 7, content: '后续跟进', statusBefore: 'PENDING', statusAfter: 'IN_PROGRESS', createdBy: 1, createdBySnapshot: '李管理员（后来名称）', createdAt: '2026-09-02T02:00:00.000Z' },
+        { id: 2, affairId: 7, content: '其他人处理', statusBefore: 'IN_PROGRESS', statusAfter: 'COMPLETED', createdBy: 2, createdBySnapshot: '王管理员', createdAt: '2026-09-02T03:00:00.000Z' },
+        { id: 1, affairId: 7, content: '事项已创建', statusBefore: null, statusAfter: 'PENDING', createdBy: 1, createdBySnapshot: '李管理员（创建时）', createdAt: '2026-09-02T01:00:00.000Z' },
+      ],
+    })
+    const { wrapper } = await mountDetail()
+
+    const creator = wrapper.findAll('.info-grid > div').find((item) => item.find('dt').text() === '创建人')
+    expect(creator?.find('dd').text()).toBe('李管理员（创建时）')
+  })
+
   it('终态允许通过追加进度重新开启，发送精确当前版本并在成功后重载详情', async () => {
     const { wrapper } = await mountDetail()
     await wrapper.get('[data-test="open-progress-dialog"]').trigger('click')

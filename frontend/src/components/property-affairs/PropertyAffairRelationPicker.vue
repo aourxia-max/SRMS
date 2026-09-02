@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref, watch } from 'vue'
 import { listContracts } from '../../services/contracts'
 import { http } from '../../services/http'
+import { listAllTenantOptions } from '../../services/tenant-options'
 import type { PropertyAffairRelationsPayload, PropertyAffairSummary } from '../../types/property-affairs'
 
 type InitialRelations = Pick<PropertyAffairSummary, 'buildings' | 'rooms' | 'tenants' | 'contracts'>
@@ -17,11 +18,12 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: PropertyAffairRelationsPayload] }>()
 
 const loading = ref(false)
-const local = ref<PropertyAffairRelationsPayload>(normalized(props.modelValue))
-const buildingOptions = ref<Option[]>([])
-const roomOptions = ref<Option[]>([])
-const tenantOptions = ref<Option[]>([])
-const contractOptions = ref<Option[]>([])
+const initialLocal = normalized(props.modelValue)
+const local = ref<PropertyAffairRelationsPayload>(initialLocal)
+const buildingOptions = ref<Option[]>(seededOptions('buildings', initialLocal.buildingIds))
+const roomOptions = ref<Option[]>(seededOptions('rooms', initialLocal.roomIds))
+const tenantOptions = ref<Option[]>(seededOptions('tenants', initialLocal.tenantIds))
+const contractOptions = ref<Option[]>(seededOptions('contracts', initialLocal.contractIds))
 
 function ids(value: unknown): number[] {
   if (!Array.isArray(value)) return []
@@ -41,6 +43,10 @@ function historicalOptions(kind: keyof InitialRelations): Option[] {
   return (props.initialRelations?.[kind] ?? []).map((item) => ({ id: item.id, label: item.currentLabel || item.snapshotLabel }))
 }
 
+function seededOptions(kind: keyof InitialRelations, selectedIds: number[]) {
+  return mergeOptions(historicalOptions(kind), selectedIds.map((id) => ({ id, label: '名称暂不可用' })))
+}
+
 function contractLabel(contract: ContractOption) {
   const primaryTenant = contract.members?.find((member) => member.memberRole === 'PRIMARY')?.tenant.name
   return [contract.contractNo, contract.room?.fullHouseNo, primaryTenant].filter(Boolean).join('｜')
@@ -48,38 +54,39 @@ function contractLabel(contract: ContractOption) {
 
 async function loadOptions() {
   loading.value = true
-  try {
-    const [buildingResponse, roomResponse, tenantResponse, contractData] = await Promise.all([
-      http.get('/properties/buildings'),
-      http.get('/properties/rooms'),
-      http.get('/tenants', { params: { page: 1, pageSize: 100 } }),
-      listContracts(),
-    ])
-    buildingOptions.value = mergeOptions(
-      buildingResponse.data.data.map((item: { id: number; buildingNo: string; buildingName?: string | null }) => ({ id: item.id, label: item.buildingName ? `${item.buildingNo}｜${item.buildingName}` : item.buildingNo })),
-      historicalOptions('buildings'),
-    )
-    roomOptions.value = mergeOptions(roomResponse.data.data.map((item: { id: number; fullHouseNo: string }) => ({ id: item.id, label: item.fullHouseNo })), historicalOptions('rooms'))
-    tenantOptions.value = mergeOptions(
-      tenantResponse.data.data.items.map((item: { id: number; name: string; phone?: string | null }) => ({ id: item.id, label: item.phone ? `${item.name}｜${item.phone}` : item.name })),
-      historicalOptions('tenants'),
-    )
-    contractOptions.value = mergeOptions((contractData as ContractOption[]).map((item) => ({ id: item.id, label: contractLabel(item) })), historicalOptions('contracts'))
-  } catch {
-    ElMessage.error('关联对象加载失败，请稍后重试')
-  } finally {
-    loading.value = false
-  }
+  const results = await Promise.allSettled([
+    http.get('/properties/buildings').then((response) => response.data.data.map((item: { id: number; buildingNo: string; buildingName?: string | null }) => ({ id: item.id, label: item.buildingName ? `${item.buildingNo}｜${item.buildingName}` : item.buildingNo }))),
+    http.get('/properties/rooms').then((response) => response.data.data.map((item: { id: number; fullHouseNo: string }) => ({ id: item.id, label: item.fullHouseNo }))),
+    listAllTenantOptions().then((items) => items.map((item) => ({ id: item.id, label: item.phone ? `${item.name}｜${item.phone}` : item.name }))),
+    listContracts().then((items) => (items as ContractOption[]).map((item) => ({ id: item.id, label: contractLabel(item) }))),
+  ])
+  const targets = [buildingOptions, roomOptions, tenantOptions, contractOptions]
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') targets[index].value = mergeOptions(result.value, targets[index].value)
+  })
+  if (results.some((result) => result.status === 'rejected')) ElMessage.warning('部分关联对象加载失败，已保留当前关联信息')
+  loading.value = false
+}
+
+function optionTarget(key: keyof PropertyAffairRelationsPayload) {
+  return { buildingIds: buildingOptions, roomIds: roomOptions, tenantIds: tenantOptions, contractIds: contractOptions }[key]
+}
+
+function ensureReadableSelections(key: keyof PropertyAffairRelationsPayload, selectedIds: number[]) {
+  const target = optionTarget(key)
+  target.value = mergeOptions(target.value, selectedIds.map((id) => ({ id, label: '名称暂不可用' })))
 }
 
 function update(key: keyof PropertyAffairRelationsPayload, value: unknown) {
-  local.value = { ...local.value, [key]: ids(value) }
+  const selectedIds = ids(value)
+  ensureReadableSelections(key, selectedIds)
+  local.value = { ...local.value, [key]: selectedIds }
   emit('update:modelValue', normalized(local.value))
 }
 
 function selectedLabels(selectedIds: number[], options: Option[]) {
   const optionMap = new Map(options.map((item) => [item.id, item.label]))
-  return selectedIds.map((id) => optionMap.get(id)).filter((label): label is string => Boolean(label))
+  return selectedIds.map((id) => optionMap.get(id) || '名称暂不可用')
 }
 
 const summaries = computed(() => [
@@ -89,7 +96,13 @@ const summaries = computed(() => [
   { label: '合同', values: selectedLabels(local.value.contractIds, contractOptions.value) },
 ].filter((group) => group.values.length))
 
-watch(() => props.modelValue, (value) => { local.value = normalized(value) }, { deep: true })
+watch(() => props.modelValue, (value) => {
+  local.value = normalized(value)
+  ensureReadableSelections('buildingIds', local.value.buildingIds)
+  ensureReadableSelections('roomIds', local.value.roomIds)
+  ensureReadableSelections('tenantIds', local.value.tenantIds)
+  ensureReadableSelections('contractIds', local.value.contractIds)
+}, { deep: true })
 onMounted(loadOptions)
 </script>
 

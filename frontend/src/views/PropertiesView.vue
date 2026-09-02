@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../services/http'
 import { useSessionStore } from '../stores/session'
@@ -19,10 +19,18 @@ const editingBuildingId = ref<number | null>(null)
 const editingRoomId = ref<number | null>(null)
 const historyDialog = ref(false)
 const histories = ref<any[]>([])
-const buildingFilter = ref<number | null>(null)
+function positiveQueryId(value: unknown) {
+  const single = Array.isArray(value) ? value[0] : value
+  if ((typeof single !== 'string' && typeof single !== 'number') || !/^[1-9]\d*$/.test(String(single))) return null
+  const parsed = Number(single)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+const buildingFilter = ref<number | null>(positiveQueryId(route.query.buildingId))
 const statusFilter = ref<string | null>(null)
 const searchKeyword = ref(String(route.query.q || ''))
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+let roomLoadGeneration = 0
 const statusOptions = ['EMPTY', 'PENDING_MOVE_IN', 'RENTED', 'PENDING_CHECKOUT', 'MAINTENANCE', 'FOR_SALE', 'SOLD', 'DISABLED', 'OTHER']
 const statusLabels: Record<string, string> = { EMPTY: '空置', PENDING_MOVE_IN: '待入住', RENTED: '已出租', PENDING_CHECKOUT: '待退房', MAINTENANCE: '维修中', FOR_SALE: '待出售', SOLD: '已出售', DISABLED: '停用', OTHER: '其他' }
 const roomTypeLabels: Record<string, string> = { RESIDENTIAL: '住宅', SHOP: '商铺' }
@@ -34,13 +42,16 @@ async function loadBuildings() {
   buildings.value = (await http.get('/properties/buildings')).data.data
 }
 async function loadRooms() {
+  const generation = ++roomLoadGeneration
+  const params = {
+    keyword: searchKeyword.value.trim() || undefined,
+    buildingId: buildingFilter.value || undefined,
+    status: statusFilter.value || undefined,
+  }
   const response = await http.get('/properties/rooms', {
-    params: {
-      keyword: searchKeyword.value.trim() || undefined,
-      buildingId: buildingFilter.value || undefined,
-      status: statusFilter.value || undefined,
-    },
+    params,
   })
+  if (generation !== roomLoadGeneration) return
   rooms.value = response.data.data
 }
 async function reload() {
@@ -79,7 +90,14 @@ async function changeStatus(room: any, status: string) { await http.patch(`/prop
 async function showHistory(room: any) { histories.value = (await http.get(`/properties/rooms/${room.id}/history`)).data.data; historyDialog.value = true }
 async function removeRoom(room: any) { await ElMessageBox.confirm(`确认删除房源 ${room.fullHouseNo} 吗？`, '删除确认', { type: 'warning' }); await http.delete(`/properties/rooms/${room.id}`); await loadRooms() }
 onMounted(reload)
-onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer) })
+watch(() => route.query.buildingId, (value) => {
+  buildingFilter.value = positiveQueryId(value)
+  void loadRooms()
+})
+onBeforeUnmount(() => {
+  roomLoadGeneration += 1
+  if (searchTimer) clearTimeout(searchTimer)
+})
 </script>
 
 <template>

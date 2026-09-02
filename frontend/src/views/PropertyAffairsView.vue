@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listContracts } from '../services/contracts'
 import { http } from '../services/http'
+import { listAllTenantOptions, type TenantOption } from '../services/tenant-options'
 import {
   extractPropertyAffairErrorMessage,
   listPropertyAffairCategories,
@@ -26,7 +27,6 @@ import { propertyAffairPriorityLabel, propertyAffairStatusLabel } from '../utils
 
 type BuildingOption = { id: number; buildingNo: string; buildingName?: string | null }
 type RoomOption = { id: number; fullHouseNo: string }
-type TenantOption = { id: number; name: string; phone?: string | null }
 type ContractOption = { id: number; contractNo: string; room?: { fullHouseNo?: string }; members?: Array<{ memberRole: string; tenant: { name: string } }> }
 
 const route = useRoute()
@@ -62,6 +62,36 @@ const contracts = ref<ContractOption[]>([])
 
 const statusOptions: PropertyAffairStatus[] = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']
 const priorityOptions: PropertyAffairPriority[] = ['NORMAL', 'IMPORTANT', 'URGENT']
+let listGeneration = 0
+
+function queryValue(value: unknown) {
+  const single = Array.isArray(value) ? value[0] : value
+  return typeof single === 'string' ? single.trim() : ''
+}
+
+function positiveQueryInteger(value: unknown) {
+  const single = Array.isArray(value) ? value[0] : value
+  if ((typeof single !== 'string' && typeof single !== 'number') || !/^[1-9]\d*$/.test(String(single))) return null
+  const parsed = Number(single)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+function syncFiltersFromRoute() {
+  const status = queryValue(route.query.status)
+  const priority = queryValue(route.query.priority)
+  Object.assign(filters, {
+    keyword: queryValue(route.query.keyword),
+    category: queryValue(route.query.category),
+    status: statusOptions.includes(status as PropertyAffairStatus) ? status : '',
+    priority: priorityOptions.includes(priority as PropertyAffairPriority) ? priority : '',
+    responsibleUserId: positiveQueryInteger(route.query.responsibleUserId),
+    buildingId: positiveQueryInteger(route.query.buildingId),
+    roomId: positiveQueryInteger(route.query.roomId),
+    tenantId: positiveQueryInteger(route.query.tenantId),
+    contractId: positiveQueryInteger(route.query.contractId),
+  })
+  page.value = positiveQueryInteger(route.query.page) ?? 1
+}
 
 function queryParams(): PropertyAffairListQuery {
   return {
@@ -79,26 +109,32 @@ function queryParams(): PropertyAffairListQuery {
   }
 }
 
-async function loadCounts() {
+async function fetchCounts() {
   const statuses: Array<'ALL' | PropertyAffairStatus> = ['ALL', ...statusOptions]
   const responses = await Promise.all(statuses.map((status) => listPropertyAffairs({ ...(status === 'ALL' ? {} : { status }), page: 1, pageSize: 1 })))
-  responses.forEach((response, index) => { counts[statuses[index]] = response.total })
+  return Object.fromEntries(responses.map((response, index) => [statuses[index], response.total])) as Record<'ALL' | PropertyAffairStatus, number>
 }
 
 async function loadList() {
+  const generation = ++listGeneration
+  const mode = recycleMode.value ? 'recycle' : 'normal'
+  const params = queryParams()
   loading.value = true
   loadError.value = ''
   try {
-    const response = await (recycleMode.value ? listPropertyAffairsRecycleBin(queryParams()) : listPropertyAffairs(queryParams()))
+    const response = await (mode === 'recycle' ? listPropertyAffairsRecycleBin(params) : listPropertyAffairs(params))
+    const nextCounts = mode === 'normal' ? await fetchCounts() : null
+    if (generation !== listGeneration || mode !== (recycleMode.value ? 'recycle' : 'normal')) return
     items.value = response.items
     total.value = response.total
-    if (!recycleMode.value) await loadCounts()
+    if (nextCounts) Object.assign(counts, nextCounts)
   } catch (error) {
+    if (generation !== listGeneration || mode !== (recycleMode.value ? 'recycle' : 'normal')) return
     items.value = []
     total.value = 0
-    loadError.value = extractPropertyAffairErrorMessage(error, recycleMode.value ? '回收站加载失败，请稍后重试' : '物业办事加载失败，请稍后重试')
+    loadError.value = extractPropertyAffairErrorMessage(error, mode === 'recycle' ? '回收站加载失败，请稍后重试' : '物业办事加载失败，请稍后重试')
   } finally {
-    loading.value = false
+    if (generation === listGeneration && mode === (recycleMode.value ? 'recycle' : 'normal')) loading.value = false
   }
 }
 
@@ -109,14 +145,14 @@ async function loadOptions() {
       listPropertyAffairResponsibleUsers(),
       http.get('/properties/buildings'),
       http.get('/properties/rooms'),
-      http.get('/tenants', { params: { page: 1, pageSize: 100 } }),
+      listAllTenantOptions(),
       listContracts(),
     ])
     categories.value = categoryData
     responsibleUsers.value = userData
     buildings.value = buildingData.data.data
     rooms.value = roomData.data.data
-    tenants.value = tenantData.data.data.items
+    tenants.value = tenantData
     contracts.value = contractData as ContractOption[]
   } catch {
     ElMessage.warning('部分筛选选项加载失败，您仍可使用其他条件查询')
@@ -219,11 +255,12 @@ function contractLabel(contract: ContractOption) {
 }
 
 onMounted(() => {
+  syncFiltersFromRoute()
   void Promise.all([loadList(), loadOptions()])
 })
 
-watch(recycleMode, async () => {
-  page.value = 1
+watch(() => route.fullPath, async () => {
+  syncFiltersFromRoute()
   await loadList()
 })
 </script>

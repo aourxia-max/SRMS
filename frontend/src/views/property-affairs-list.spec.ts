@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessageBox, ElPagination, ElSelect } from 'element-plus'
+import ElementPlus, { ElMessageBox, ElOption, ElPagination, ElSelect } from 'element-plus'
 import { createPinia } from 'pinia'
 import { defineComponent } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -60,6 +60,13 @@ const affair: PropertyAffairSummary = {
 
 const emptyPage = { items: [], total: 0, page: 1, pageSize: 20 }
 const countTotals: Record<string, number> = { ALL: 42, PENDING: 12, IN_PROGRESS: 9, COMPLETED: 18, CANCELLED: 3 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
 
 function installApiMocks() {
   vi.mocked(api.listPropertyAffairs).mockImplementation(async (query = {}) => {
@@ -159,6 +166,136 @@ describe('物业办事列表与回收站', () => {
     await flushPromises()
 
     expect(api.listPropertyAffairsRecycleBin).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 })
+  })
+
+  it('普通列表晚于回收站完成时忽略普通列表的旧行和总数', async () => {
+    const ordinary = deferred<Awaited<ReturnType<typeof api.listPropertyAffairs>>>()
+    const recycle = deferred<Awaited<ReturnType<typeof api.listPropertyAffairsRecycleBin>>>()
+    vi.mocked(api.listPropertyAffairs).mockImplementation((query = {}) => {
+      if (query.pageSize === 1) return Promise.resolve({ items: [], total: 90, page: 1, pageSize: 1 })
+      return ordinary.promise
+    })
+    vi.mocked(api.listPropertyAffairsRecycleBin).mockReturnValue(recycle.promise)
+    const { wrapper, router } = await mountList()
+
+    await router.push('/property-affairs/recycle-bin')
+    recycle.resolve({ items: [{ ...affair, title: '回收站最新结果', deletedAt: '2026-09-02T03:00:00.000Z' }], total: 1, page: 1, pageSize: 20 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('回收站最新结果')
+
+    ordinary.resolve({ items: [{ ...affair, title: '普通列表过时结果' }], total: 77, page: 1, pageSize: 20 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('回收站最新结果')
+    expect(wrapper.text()).not.toContain('普通列表过时结果')
+    expect(wrapper.findComponent(ElPagination).props('total')).toBe(1)
+  })
+
+  it('旧请求失败不得覆盖最新模式错误状态或提前结束最新 loading', async () => {
+    const ordinary = deferred<Awaited<ReturnType<typeof api.listPropertyAffairs>>>()
+    const recycle = deferred<Awaited<ReturnType<typeof api.listPropertyAffairsRecycleBin>>>()
+    vi.mocked(api.listPropertyAffairs).mockImplementation((query = {}) => query.pageSize === 1
+      ? Promise.resolve({ items: [], total: 1, page: 1, pageSize: 1 })
+      : ordinary.promise)
+    vi.mocked(api.listPropertyAffairsRecycleBin).mockReturnValue(recycle.promise)
+    const { wrapper, router } = await mountList()
+
+    await router.push('/property-affairs/recycle-bin')
+    ordinary.reject(new Error('普通列表旧请求失败'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('回收站加载失败')
+    expect(wrapper.find('.list-card .el-loading-mask').attributes('style') ?? '').not.toContain('display: none')
+
+    recycle.resolve({ items: [{ ...affair, title: '回收站最终结果', deletedAt: '2026-09-02T03:00:00.000Z' }], total: 1, page: 1, pageSize: 20 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('回收站最终结果')
+  })
+
+  it('切换模式期间晚到的普通列表统计不得提交到后续页面', async () => {
+    const staleCounts = Array.from({ length: 5 }, () => deferred<Awaited<ReturnType<typeof api.listPropertyAffairs>>>() )
+    const nextOrdinary = deferred<Awaited<ReturnType<typeof api.listPropertyAffairs>>>()
+    let ordinaryPageCalls = 0
+    let countCalls = 0
+    vi.mocked(api.listPropertyAffairs).mockImplementation((query = {}) => {
+      if (query.pageSize === 1) return staleCounts[countCalls++].promise
+      ordinaryPageCalls += 1
+      if (ordinaryPageCalls === 1) return Promise.resolve({ items: [{ ...affair, title: '等待旧统计的普通结果' }], total: 1, page: 1, pageSize: 20 })
+      return nextOrdinary.promise
+    })
+    vi.mocked(api.listPropertyAffairsRecycleBin).mockResolvedValue({ items: [{ ...affair, title: '回收站结果', deletedAt: '2026-09-02T03:00:00.000Z' }], total: 1, page: 1, pageSize: 20 })
+    const { wrapper, router } = await mountList()
+    await flushPromises()
+
+    await router.push('/property-affairs/recycle-bin')
+    await flushPromises()
+    staleCounts.forEach((pending, index) => pending.resolve({ items: [], total: 91 + index, page: 1, pageSize: 1 }))
+    await flushPromises()
+
+    await router.push('/property-affairs')
+    await flushPromises()
+    expect(wrapper.text()).toContain('全部事项0')
+    expect(wrapper.text()).not.toContain('全部事项91')
+    wrapper.unmount()
+  })
+
+  it('回收站晚于普通列表完成时忽略回收站的旧结果并保留最新统计', async () => {
+    const recycle = deferred<Awaited<ReturnType<typeof api.listPropertyAffairsRecycleBin>>>()
+    vi.mocked(api.listPropertyAffairsRecycleBin).mockReturnValue(recycle.promise)
+    vi.mocked(api.listPropertyAffairs).mockImplementation(async (query = {}) => {
+      if (query.pageSize === 1) return { items: [], total: countTotals[query.status ?? 'ALL'], page: 1, pageSize: 1 }
+      return { items: [{ ...affair, title: '普通列表最新结果' }], total: 42, page: 1, pageSize: 20 }
+    })
+    const { wrapper, router } = await mountList('/property-affairs/recycle-bin')
+
+    await router.push('/property-affairs')
+    await flushPromises()
+    expect(wrapper.text()).toContain('普通列表最新结果')
+    expect(wrapper.text()).toContain('全部事项42')
+
+    recycle.resolve({ items: [{ ...affair, title: '回收站过时结果', deletedAt: '2026-09-02T03:00:00.000Z' }], total: 99, page: 1, pageSize: 20 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('普通列表最新结果')
+    expect(wrapper.text()).not.toContain('回收站过时结果')
+    expect(wrapper.text()).toContain('全部事项42')
+    expect(wrapper.findComponent(ElPagination).props('total')).toBe(42)
+  })
+
+  it('首次导航和同实例 query 变化均同步合法筛选与页码并发送精确参数', async () => {
+    const { router } = await mountList('/property-affairs?keyword=%20照明%20&category=公共维修&status=IN_PROGRESS&priority=URGENT&responsibleUserId=2&buildingId=3&roomId=88&tenantId=21&contractId=31&page=4')
+    const firstCall = vi.mocked(api.listPropertyAffairs).mock.calls.find(([query]) => query?.pageSize === 20)
+    expect(firstCall?.[0]).toEqual({
+      keyword: '照明', category: '公共维修', status: 'IN_PROGRESS', priority: 'URGENT', responsibleUserId: 2,
+      buildingId: 3, roomId: 88, tenantId: 21, contractId: 31, page: 4, pageSize: 20,
+    })
+
+    await router.push('/property-affairs?roomId=88&page=2')
+    await flushPromises()
+    const latestCall = [...vi.mocked(api.listPropertyAffairs).mock.calls].reverse().find(([query]) => query?.pageSize === 20)
+    expect(latestCall?.[0]).toEqual({ roomId: 88, page: 2, pageSize: 20 })
+  })
+
+  it('query 中未知枚举、非正整数关联 ID 和非法页码均清空且不发送', async () => {
+    await mountList('/property-affairs?keyword=%20%20&status=UNKNOWN&priority=HIGH&responsibleUserId=0&buildingId=-1&roomId=8.5&tenantId=abc&contractId=999999999999999999999&page=0')
+    const call = vi.mocked(api.listPropertyAffairs).mock.calls.find(([query]) => query?.pageSize === 20)
+    expect(call?.[0]).toEqual({ page: 1, pageSize: 20 })
+  })
+
+  it('承租人筛选选项跨页加载，不会截断在前 100 条', async () => {
+    vi.mocked(http.get).mockImplementation(async (url: string, config) => {
+      if (url === '/properties/buildings' || url === '/properties/rooms') return { data: { data: [] } }
+      if (url === '/tenants' && config?.params?.page === 1) {
+        return { data: { data: { items: Array.from({ length: 100 }, (_, index) => ({ id: index + 1, name: `承租人${index + 1}` })), total: 101, page: 1, pageSize: 100 } } }
+      }
+      if (url === '/tenants' && config?.params?.page === 2) {
+        return { data: { data: { items: [{ id: 101, name: '最后一位承租人' }], total: 101, page: 2, pageSize: 100 } } }
+      }
+      throw new Error(`unexpected endpoint ${url}`)
+    })
+
+    const { wrapper } = await mountList()
+
+    expect(http.get).toHaveBeenCalledWith('/tenants', { params: { page: 2, pageSize: 100 } })
+    expect(wrapper.findAllComponents(ElOption).map((option) => option.props('label'))).toContain('最后一位承租人')
   })
 
   it('回收站恢复最后一行时先退一页再刷新，永久删除仅超级管理员可见并要求不可逆确认', async () => {

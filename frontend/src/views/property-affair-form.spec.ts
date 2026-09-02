@@ -8,6 +8,7 @@ import { defineComponent } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { http } from '../services/http'
+import { listContracts } from '../services/contracts'
 import * as api from '../services/property-affairs'
 import type { PropertyAffairDetail, PropertyAffairFormModel } from '../types/property-affairs'
 import PropertyAffairForm, { mergePropertyAffairCategories } from '../components/property-affairs/PropertyAffairForm.vue'
@@ -94,6 +95,9 @@ function installMocks() {
   vi.mocked(api.createPropertyAffair).mockResolvedValue(detail)
   vi.mocked(api.updatePropertyAffair).mockResolvedValue({ ...detail, version: 7 })
   vi.mocked(api.uploadPropertyAffairFile).mockResolvedValue({ id: 9, originalName: '现场.jpg', mimeType: 'image/jpeg', sizeBytes: '10', uploadedAt: '2026-09-02T03:00:00.000Z' })
+  vi.mocked(listContracts).mockResolvedValue([
+    { id: 31, contractNo: 'HT202609020001', room: { fullHouseNo: '1栋101' }, members: [{ memberRole: 'PRIMARY', tenant: { name: '张三' } }] },
+  ] as never)
   vi.mocked(http.get).mockImplementation(async (url: string) => {
     if (url === '/properties/buildings') return { data: { data: [{ id: 1, buildingNo: '1栋' }, { id: 2, buildingNo: '2栋' }] } }
     if (url === '/properties/rooms') return { data: { data: [{ id: 11, fullHouseNo: '1栋101' }, { id: 12, fullHouseNo: '2栋201' }] } }
@@ -156,6 +160,97 @@ describe('物业办事表单与关联选择器', () => {
     expect(wrapper.text()).toContain('1栋101')
     expect(wrapper.text()).toContain('张三')
     expect(wrapper.text()).toContain('HT202609020001')
+  })
+
+  it('网络选项未返回时先展示四类历史快照，不以原始 ID 作为标签', () => {
+    vi.mocked(http.get).mockImplementation(() => new Promise(() => undefined))
+    vi.mocked(listContracts).mockImplementation(() => new Promise(() => undefined))
+
+    const wrapper = mount(PropertyAffairRelationPicker, {
+      props: { modelValue: { buildingIds: [1], roomIds: [11], tenantIds: [21], contractIds: [31] }, initialRelations: detail },
+      global: { plugins: [ElementPlus] },
+    })
+
+    const summary = wrapper.get('[data-test="relation-selection-summary"]').text()
+    expect(summary).toContain('1栋')
+    expect(summary).toContain('1栋101')
+    expect(summary).toContain('张三')
+    expect(summary).toContain('HT202609020001')
+    expect(summary).not.toMatch(/楼栋：1(?:、|$)/)
+    wrapper.unmount()
+  })
+
+  it('单个关联端点失败时保留该类历史标签并合并其他端点的成功选项', async () => {
+    const warning = vi.spyOn(ElMessage, 'warning')
+    vi.mocked(http.get).mockImplementation(async (url: string) => {
+      if (url === '/properties/buildings') return { data: { data: [{ id: 2, buildingNo: '2栋' }] } }
+      if (url === '/properties/rooms') throw new Error('房源端点失败')
+      if (url === '/tenants') return { data: { data: { items: [{ id: 22, name: '李四' }], total: 1, page: 1, pageSize: 100 } } }
+      throw new Error(`unexpected endpoint ${url}`)
+    })
+    const wrapper = mount(PropertyAffairRelationPicker, {
+      props: { modelValue: { buildingIds: [1], roomIds: [11], tenantIds: [21], contractIds: [31] }, initialRelations: detail },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(selectByTest(wrapper, 'relation-buildings').findAllComponents(ElOption).map((item) => item.props('label'))).toEqual(expect.arrayContaining(['1栋', '2栋']))
+    expect(selectByTest(wrapper, 'relation-rooms').findAllComponents(ElOption).map((item) => item.props('label'))).toContain('1栋101')
+    expect(selectByTest(wrapper, 'relation-tenants').findAllComponents(ElOption).map((item) => item.props('label'))).toEqual(expect.arrayContaining(['张三', '李四']))
+    expect(selectByTest(wrapper, 'relation-contracts').findAllComponents(ElOption).map((item) => item.props('label'))).toContain('HT202609020001｜1栋101｜张三')
+    expect(warning).toHaveBeenCalledWith('部分关联对象加载失败，已保留当前关联信息')
+
+    selectByTest(wrapper, 'relation-rooms').vm.$emit('update:modelValue', [11, 999])
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({ buildingIds: [1], roomIds: [11, 999], tenantIds: [21], contractIds: [31] })
+    expect(wrapper.get('[data-test="relation-selection-summary"]').text()).toContain('名称暂不可用')
+    expect(wrapper.get('[data-test="relation-selection-summary"]').text()).not.toContain('999')
+  })
+
+  it('多个关联端点失败时仍保留全部历史 ID 和可读快照，不清空成功的房源选项', async () => {
+    vi.mocked(http.get).mockImplementation(async (url: string) => {
+      if (url === '/properties/buildings' || url === '/tenants') throw new Error(`${url} 失败`)
+      if (url === '/properties/rooms') return { data: { data: [{ id: 12, fullHouseNo: '2栋201' }] } }
+      throw new Error(`unexpected endpoint ${url}`)
+    })
+    vi.mocked(listContracts).mockRejectedValue(new Error('合同端点失败'))
+    const wrapper = mount(PropertyAffairRelationPicker, {
+      props: { modelValue: { buildingIds: [1], roomIds: [11], tenantIds: [21], contractIds: [31] }, initialRelations: detail },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    const summary = wrapper.get('[data-test="relation-selection-summary"]').text()
+    expect(summary).toContain('1栋')
+    expect(summary).toContain('1栋101')
+    expect(summary).toContain('张三')
+    expect(summary).toContain('HT202609020001')
+    expect(selectByTest(wrapper, 'relation-rooms').findAllComponents(ElOption).map((item) => item.props('label'))).toEqual(expect.arrayContaining(['1栋101', '2栋201']))
+
+    selectByTest(wrapper, 'relation-buildings').vm.$emit('update:modelValue', [1])
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({ buildingIds: [1], roomIds: [11], tenantIds: [21], contractIds: [31] })
+  })
+
+  it('关联选择器中的承租人选项跨页加载到 total，而非只取前 100 条', async () => {
+    vi.mocked(http.get).mockImplementation(async (url: string, config) => {
+      if (url === '/properties/buildings' || url === '/properties/rooms') return { data: { data: [] } }
+      if (url === '/tenants' && config?.params?.page === 1) {
+        return { data: { data: { items: Array.from({ length: 100 }, (_, index) => ({ id: index + 1, name: `承租人${index + 1}` })), total: 101, page: 1, pageSize: 100 } } }
+      }
+      if (url === '/tenants' && config?.params?.page === 2) {
+        return { data: { data: { items: [{ id: 101, name: '第101位承租人' }], total: 101, page: 2, pageSize: 100 } } }
+      }
+      throw new Error(`unexpected endpoint ${url}`)
+    })
+    const wrapper = mount(PropertyAffairRelationPicker, {
+      props: { modelValue: { buildingIds: [], roomIds: [], tenantIds: [], contractIds: [] } },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(http.get).toHaveBeenCalledWith('/tenants', { params: { page: 2, pageSize: 100 } })
+    expect(selectByTest(wrapper, 'relation-tenants').findAllComponents(ElOption).map((item) => item.props('label'))).toContain('第101位承租人')
   })
 
   it('编辑时完整回填编号、字段、关联和版本，并只允许终态重新开启', async () => {
@@ -261,5 +356,24 @@ describe('物业办事表单与关联选择器', () => {
     expect(success).toHaveBeenCalledWith('办事事项及附件已创建')
     expect(warning).not.toHaveBeenCalled()
     expect(router.currentRoute.value.name).toBe('property-affair-detail')
+  })
+
+  it('创建附件全部失败时列出全部失败文件且不宣称成功，保留事项并进入详情', async () => {
+    const success = vi.spyOn(ElMessage, 'success')
+    const warning = vi.spyOn(ElMessage, 'warning')
+    vi.mocked(api.uploadPropertyAffairFile).mockRejectedValue(new Error('上传失败'))
+    const { wrapper, router } = await mountView('/property-affairs/new')
+    const first = new File(['a'], '现场.jpg', { type: 'image/jpeg' })
+    const second = new File(['b'], '报价.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+
+    wrapper.findComponent(PropertyAffairForm).vm.$emit('submit', { model: validModel, status: 'PENDING', files: [first, second] })
+    await flushPromises()
+
+    expect(api.createPropertyAffair).toHaveBeenCalledTimes(1)
+    expect(api.uploadPropertyAffairFile).toHaveBeenNthCalledWith(1, 7, first)
+    expect(api.uploadPropertyAffairFile).toHaveBeenNthCalledWith(2, 7, second)
+    expect(warning).toHaveBeenCalledWith('办事事项已创建，但以下附件上传失败：现场.jpg、报价.xlsx。可在详情页重试上传。')
+    expect(success).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.fullPath).toBe('/property-affairs/7')
   })
 })

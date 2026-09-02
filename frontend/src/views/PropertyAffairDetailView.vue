@@ -50,7 +50,7 @@ const nextStatuses = computed<PropertyAffairStatus[]>(() => {
 
 const creatorName = computed(() => {
   if (!affair.value) return '未知管理员'
-  return affair.value.progresses.find((progress) => progress.createdBy === affair.value?.createdBy)?.createdBySnapshot || '管理员'
+  return affair.value.progresses.find((progress) => progress.statusBefore === null)?.createdBySnapshot || '管理员'
 })
 
 function formatDate(value: string | null) {
