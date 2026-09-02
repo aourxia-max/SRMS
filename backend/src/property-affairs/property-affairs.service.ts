@@ -20,6 +20,7 @@ import { ListPropertyAffairsQueryDto } from './dto/list-property-affairs-query.d
 import { PropertyAffairRelationsDto } from './dto/property-affair-relations.dto';
 import { UpdatePropertyAffairDto } from './dto/update-property-affair.dto';
 import { assertPropertyAffairTransition } from './property-affair-policy';
+import type { PropertyAffairRequestContext } from './property-affair-request-context';
 import {
   presentPropertyAffair,
   propertyAffairInclude,
@@ -54,6 +55,18 @@ type ResolvedRelations = {
   rooms: ResolvedRelation[];
   tenants: ResolvedRelation[];
   contracts: ResolvedRelation[];
+};
+
+type RelationChange = {
+  removedIds: number[];
+  added: ResolvedRelation[];
+};
+
+type ResolvedRelationChanges = {
+  buildings?: RelationChange;
+  rooms?: RelationChange;
+  tenants?: RelationChange;
+  contracts?: RelationChange;
 };
 
 type ResponsibleUser = {
@@ -286,7 +299,11 @@ export class PropertyAffairsService {
       .filter((item): item is NonNullable<typeof item> => item !== undefined);
   }
 
-  async create(dto: CreatePropertyAffairDto, user: AuthUser) {
+  async create(
+    dto: CreatePropertyAffairDto,
+    user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
+  ) {
     return this.prisma.db.$transaction(async (tx) => {
       const [relations, responsible] = await Promise.all([
         this.resolveRelations(dto, tx),
@@ -352,6 +369,7 @@ export class PropertyAffairsService {
           afterData,
           operatorId: user.id,
           operatorRole: user.role,
+          ...requestContext,
         },
       });
 
@@ -366,7 +384,12 @@ export class PropertyAffairsService {
     });
   }
 
-  async update(id: number, dto: UpdatePropertyAffairDto, user: AuthUser) {
+  async update(
+    id: number,
+    dto: UpdatePropertyAffairDto,
+    user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
+  ) {
     return this.prisma.db.$transaction(async (tx) => {
       const current = await tx.propertyAffair.findFirst({
         where: { id, deletedAt: null },
@@ -379,8 +402,8 @@ export class PropertyAffairsService {
 
       const nextStatus = dto.status ?? current.status;
       assertPropertyAffairTransition(current.status, nextStatus);
-      const [relations, responsible] = await Promise.all([
-        this.resolveRelations(dto, tx),
+      const [relationChanges, responsible] = await Promise.all([
+        this.resolveRelationChanges(dto, current, tx),
         dto.responsibleUserId === null
           ? Promise.resolve(null)
           : dto.responsibleUserId !== undefined
@@ -432,13 +455,7 @@ export class PropertyAffairsService {
         throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
       }
 
-      await Promise.all([
-        tx.propertyAffairBuilding.deleteMany({ where: { affairId: id } }),
-        tx.propertyAffairRoom.deleteMany({ where: { affairId: id } }),
-        tx.propertyAffairTenant.deleteMany({ where: { affairId: id } }),
-        tx.propertyAffairContract.deleteMany({ where: { affairId: id } }),
-      ]);
-      await this.createRelations(tx, id, relations);
+      await this.applyRelationChanges(tx, id, relationChanges);
 
       if (statusChanged) {
         await tx.propertyAffairProgress.create({
@@ -470,12 +487,11 @@ export class PropertyAffairsService {
           operatorId: user.id,
           operatorRole: user.role,
           occurredAt,
+          ...requestContext,
         },
       });
-      return presentPropertyAffair(
-        updated,
-        this.currentRelationsFromResolved(relations),
-      );
+      const currentRelations = await this.loadCurrentRelations([updated], tx);
+      return presentPropertyAffair(updated, currentRelations);
     });
   }
 
@@ -483,6 +499,7 @@ export class PropertyAffairsService {
     id: number,
     dto: AppendPropertyAffairProgressDto,
     user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
   ) {
     return this.prisma.db.$transaction(async (tx) => {
       const current = await tx.propertyAffair.findFirst({
@@ -563,6 +580,7 @@ export class PropertyAffairsService {
           operatorId: user.id,
           operatorRole: user.role,
           occurredAt,
+          ...requestContext,
         },
       });
       const relations = await this.loadCurrentRelations([updated], tx);
@@ -570,7 +588,12 @@ export class PropertyAffairsService {
     });
   }
 
-  async softDelete(id: number, version: number, user: AuthUser) {
+  async softDelete(
+    id: number,
+    version: number,
+    user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
+  ) {
     return this.prisma.db.$transaction(async (tx) => {
       const current = await tx.propertyAffair.findUnique({
         where: { id },
@@ -612,6 +635,7 @@ export class PropertyAffairsService {
           operatorId: user.id,
           operatorRole: user.role,
           occurredAt,
+          ...requestContext,
         },
       });
       const relations = await this.loadCurrentRelations([updated], tx);
@@ -619,7 +643,12 @@ export class PropertyAffairsService {
     });
   }
 
-  async restore(id: number, version: number, user: AuthUser) {
+  async restore(
+    id: number,
+    version: number,
+    user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
+  ) {
     return this.prisma.db.$transaction(async (tx) => {
       const current = await tx.propertyAffair.findUnique({
         where: { id },
@@ -661,6 +690,7 @@ export class PropertyAffairsService {
           operatorId: user.id,
           operatorRole: user.role,
           occurredAt,
+          ...requestContext,
         },
       });
       const relations = await this.loadCurrentRelations([updated], tx);
@@ -668,7 +698,12 @@ export class PropertyAffairsService {
     });
   }
 
-  async permanentDelete(id: number, version: number, user: AuthUser) {
+  async permanentDelete(
+    id: number,
+    version: number,
+    user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
+  ) {
     if (user.role !== UserRole.SUPER_ADMIN) {
       throw new ForbiddenException('无权操作物业办事事项');
     }
@@ -776,6 +811,7 @@ export class PropertyAffairsService {
           operatorId: user.id,
           operatorRole: user.role,
           occurredAt,
+          ...requestContext,
         },
       });
 
@@ -879,30 +915,223 @@ export class PropertyAffairsService {
         targetLabel: this.buildingLabel(item),
         currentLabel: this.buildingLabel(item),
         currentStatus: item.status,
-        available: true,
+        available: this.isBuildingAvailable(item.status),
       })),
       rooms: rooms.map((item) => ({
         id: item.id,
         targetLabel: item.fullHouseNo,
         currentLabel: item.fullHouseNo,
         currentStatus: item.roomStatus,
-        available: !item.deletedAt,
+        available: this.isRoomAvailable(item.roomStatus, item.deletedAt),
       })),
       tenants: tenants.map((item) => ({
         id: item.id,
         targetLabel: item.name,
         currentLabel: item.name,
         currentStatus: item.status,
-        available: true,
+        available: this.isTenantAvailable(item.status),
       })),
       contracts: contracts.map((item) => ({
         id: item.id,
         targetLabel: item.contractNo,
         currentLabel: item.contractNo,
         currentStatus: item.status,
-        available: true,
+        available: this.isContractAvailable(item.status),
       })),
     };
+  }
+
+  private async resolveRelationChanges(
+    dto: UpdatePropertyAffairDto,
+    current: PropertyAffairLoaded,
+    tx: Prisma.TransactionClient,
+  ): Promise<ResolvedRelationChanges> {
+    const changes: ResolvedRelationChanges = {};
+
+    if (dto.buildingIds !== undefined) {
+      const currentIds = current.buildings.map((item) => item.buildingId);
+      const currentSet = new Set(currentIds);
+      const requestedSet = new Set(dto.buildingIds);
+      const addedIds = dto.buildingIds.filter((id) => !currentSet.has(id));
+      const rows = addedIds.length
+        ? await tx.building.findMany({
+            where: { id: { in: addedIds } },
+            select: {
+              id: true,
+              buildingNo: true,
+              buildingName: true,
+              status: true,
+            },
+          })
+        : [];
+      this.assertAllFound('楼栋', addedIds, rows);
+      changes.buildings = {
+        removedIds: currentIds.filter((id) => !requestedSet.has(id)),
+        added: rows.map((item) => ({
+          id: item.id,
+          targetLabel: this.buildingLabel(item),
+          currentLabel: this.buildingLabel(item),
+          currentStatus: item.status,
+          available: this.isBuildingAvailable(item.status),
+        })),
+      };
+    }
+
+    if (dto.roomIds !== undefined) {
+      const currentIds = current.rooms.map((item) => item.roomId);
+      const currentSet = new Set(currentIds);
+      const requestedSet = new Set(dto.roomIds);
+      const addedIds = dto.roomIds.filter((id) => !currentSet.has(id));
+      const rows = addedIds.length
+        ? await tx.room.findMany({
+            where: { id: { in: addedIds } },
+            select: {
+              id: true,
+              fullHouseNo: true,
+              roomStatus: true,
+              deletedAt: true,
+            },
+          })
+        : [];
+      this.assertAllFound('房源', addedIds, rows);
+      changes.rooms = {
+        removedIds: currentIds.filter((id) => !requestedSet.has(id)),
+        added: rows.map((item) => ({
+          id: item.id,
+          targetLabel: item.fullHouseNo,
+          currentLabel: item.fullHouseNo,
+          currentStatus: item.roomStatus,
+          available: this.isRoomAvailable(item.roomStatus, item.deletedAt),
+        })),
+      };
+    }
+
+    if (dto.tenantIds !== undefined) {
+      const currentIds = current.tenants.map((item) => item.tenantId);
+      const currentSet = new Set(currentIds);
+      const requestedSet = new Set(dto.tenantIds);
+      const addedIds = dto.tenantIds.filter((id) => !currentSet.has(id));
+      const rows = addedIds.length
+        ? await tx.tenant.findMany({
+            where: { id: { in: addedIds } },
+            select: { id: true, name: true, status: true },
+          })
+        : [];
+      this.assertAllFound('承租人', addedIds, rows);
+      changes.tenants = {
+        removedIds: currentIds.filter((id) => !requestedSet.has(id)),
+        added: rows.map((item) => ({
+          id: item.id,
+          targetLabel: item.name,
+          currentLabel: item.name,
+          currentStatus: item.status,
+          available: this.isTenantAvailable(item.status),
+        })),
+      };
+    }
+
+    if (dto.contractIds !== undefined) {
+      const currentIds = current.contracts.map((item) => item.contractId);
+      const currentSet = new Set(currentIds);
+      const requestedSet = new Set(dto.contractIds);
+      const addedIds = dto.contractIds.filter((id) => !currentSet.has(id));
+      const rows = addedIds.length
+        ? await tx.contract.findMany({
+            where: { id: { in: addedIds } },
+            select: { id: true, contractNo: true, status: true },
+          })
+        : [];
+      this.assertAllFound('合同', addedIds, rows);
+      changes.contracts = {
+        removedIds: currentIds.filter((id) => !requestedSet.has(id)),
+        added: rows.map((item) => ({
+          id: item.id,
+          targetLabel: item.contractNo,
+          currentLabel: item.contractNo,
+          currentStatus: item.status,
+          available: this.isContractAvailable(item.status),
+        })),
+      };
+    }
+
+    return changes;
+  }
+
+  private async applyRelationChanges(
+    tx: Prisma.TransactionClient,
+    affairId: number,
+    changes: ResolvedRelationChanges,
+  ) {
+    if (changes.buildings) {
+      if (changes.buildings.removedIds.length) {
+        await tx.propertyAffairBuilding.deleteMany({
+          where: {
+            affairId,
+            buildingId: { in: changes.buildings.removedIds },
+          },
+        });
+      }
+      if (changes.buildings.added.length) {
+        await tx.propertyAffairBuilding.createMany({
+          data: changes.buildings.added.map((item) => ({
+            affairId,
+            buildingId: item.id,
+            targetLabel: item.targetLabel,
+          })),
+        });
+      }
+    }
+    if (changes.rooms) {
+      if (changes.rooms.removedIds.length) {
+        await tx.propertyAffairRoom.deleteMany({
+          where: { affairId, roomId: { in: changes.rooms.removedIds } },
+        });
+      }
+      if (changes.rooms.added.length) {
+        await tx.propertyAffairRoom.createMany({
+          data: changes.rooms.added.map((item) => ({
+            affairId,
+            roomId: item.id,
+            targetLabel: item.targetLabel,
+          })),
+        });
+      }
+    }
+    if (changes.tenants) {
+      if (changes.tenants.removedIds.length) {
+        await tx.propertyAffairTenant.deleteMany({
+          where: { affairId, tenantId: { in: changes.tenants.removedIds } },
+        });
+      }
+      if (changes.tenants.added.length) {
+        await tx.propertyAffairTenant.createMany({
+          data: changes.tenants.added.map((item) => ({
+            affairId,
+            tenantId: item.id,
+            targetLabel: item.targetLabel,
+          })),
+        });
+      }
+    }
+    if (changes.contracts) {
+      if (changes.contracts.removedIds.length) {
+        await tx.propertyAffairContract.deleteMany({
+          where: {
+            affairId,
+            contractId: { in: changes.contracts.removedIds },
+          },
+        });
+      }
+      if (changes.contracts.added.length) {
+        await tx.propertyAffairContract.createMany({
+          data: changes.contracts.added.map((item) => ({
+            affairId,
+            contractId: item.id,
+            targetLabel: item.targetLabel,
+          })),
+        });
+      }
+    }
   }
 
   private assertAllFound(
@@ -1057,7 +1286,7 @@ export class PropertyAffairsService {
           {
             label: this.buildingLabel(item),
             status: item.status,
-            available: true,
+            available: this.isBuildingAvailable(item.status),
           },
         ]),
       ),
@@ -1067,20 +1296,28 @@ export class PropertyAffairsService {
           {
             label: item.fullHouseNo,
             status: item.roomStatus,
-            available: !item.deletedAt,
+            available: this.isRoomAvailable(item.roomStatus, item.deletedAt),
           },
         ]),
       ),
       tenants: new Map(
         tenants.map((item) => [
           item.id,
-          { label: item.name, status: item.status, available: true },
+          {
+            label: item.name,
+            status: item.status,
+            available: this.isTenantAvailable(item.status),
+          },
         ]),
       ),
       contracts: new Map(
         contracts.map((item) => [
           item.id,
-          { label: item.contractNo, status: item.status, available: true },
+          {
+            label: item.contractNo,
+            status: item.status,
+            available: this.isContractAvailable(item.status),
+          },
         ]),
       ),
     };
@@ -1115,5 +1352,21 @@ export class PropertyAffairsService {
     return item.buildingName
       ? `${item.buildingNo}（${item.buildingName}）`
       : item.buildingNo;
+  }
+
+  private isBuildingAvailable(status: string) {
+    return status === 'ACTIVE';
+  }
+
+  private isRoomAvailable(status: string, deletedAt: Date | null | undefined) {
+    return !deletedAt && status !== 'DISABLED';
+  }
+
+  private isTenantAvailable(status: string) {
+    return status === 'ACTIVE';
+  }
+
+  private isContractAvailable(status: string) {
+    return status !== 'ENDED' && status !== 'VOIDED';
   }
 }

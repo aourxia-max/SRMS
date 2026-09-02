@@ -133,6 +133,19 @@ describe('property-affair DTOs', () => {
     );
   });
 
+  it('keeps every update relation field truly optional when omitted', async () => {
+    const dto = plainToInstance(UpdatePropertyAffairDto, {
+      version: 2,
+      title: '只修改标题',
+    });
+
+    expect(dto.buildingIds).toBeUndefined();
+    expect(dto.roomIds).toBeUndefined();
+    expect(dto.tenantIds).toBeUndefined();
+    expect(dto.contractIds).toBeUndefined();
+    await expect(validate(dto)).resolves.toHaveLength(0);
+  });
+
   it('accepts null only for explicitly clearable update fields and keeps blanks as undefined', async () => {
     const clearable = plainToInstance(UpdatePropertyAffairDto, {
       version: 1,

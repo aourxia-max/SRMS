@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { PropertyAffairStatus } from '@prisma/client';
 
 const transitions: Record<
@@ -21,6 +22,6 @@ export function assertPropertyAffairTransition(
   if (from === to) return;
 
   if (!transitions[from].includes(to)) {
-    throw new Error('事项状态不能这样变更');
+    throw new BadRequestException('事项状态不能这样变更');
   }
 }

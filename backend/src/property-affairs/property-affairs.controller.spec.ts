@@ -123,6 +123,13 @@ describe('PropertyAffairsController', () => {
         PropertyAffairsController.prototype.upload,
       ),
     ).toHaveLength(1);
+    const [UploadInterceptor] = Reflect.getMetadata(
+      INTERCEPTORS_METADATA,
+      PropertyAffairsController.prototype.upload,
+    ) as Array<new () => { multer: { limits?: { fileSize?: number } } }>;
+    expect(new UploadInterceptor().multer.limits?.fileSize).toBe(
+      100 * 1024 * 1024,
+    );
   });
 
   it('dispatches static GET routes without colliding with the id route', async () => {
@@ -250,12 +257,116 @@ describe('PropertyAffairsController', () => {
       message: 'success',
       data: { id: 11, version: 4 },
     });
-    expect(propertyAffairs.create).toHaveBeenCalledWith(createDto, admin);
-    expect(propertyAffairs.update).toHaveBeenCalledWith(11, updateDto, admin);
+    expect(propertyAffairs.create).toHaveBeenCalledWith(createDto, admin, {});
+    expect(propertyAffairs.update).toHaveBeenCalledWith(
+      11,
+      updateDto,
+      admin,
+      {},
+    );
     expect(propertyAffairs.appendProgress).toHaveBeenCalledWith(
       11,
       progressDto,
       admin,
+      {},
+    );
+  });
+
+  it('normalizes and forwards request source metadata to every write path', async () => {
+    const requestSource = {
+      ip: '::ffff:127.0.0.1',
+      get: jest.fn().mockReturnValue(`  ${'A'.repeat(520)}  `),
+    } as unknown as import('express').Request;
+    const expected = {
+      ipAddress: '127.0.0.1',
+      userAgent: 'A'.repeat(500),
+    };
+    const dto = { version: 1 } as UpdatePropertyAffairDto;
+    const progress = {
+      version: 1,
+      content: '现场处理',
+    } as AppendPropertyAffairProgressDto;
+    const version: PropertyAffairVersionDto = { version: 1 };
+    const file = {
+      originalname: '现场.png',
+      mimetype: 'image/png',
+      size: 8,
+      buffer: Buffer.alloc(8),
+    };
+    propertyAffairs.create.mockResolvedValue({ id: 11 });
+    propertyAffairs.update.mockResolvedValue({ id: 11 });
+    propertyAffairs.appendProgress.mockResolvedValue({ id: 11 });
+    propertyAffairs.softDelete.mockResolvedValue({ id: 11 });
+    propertyAffairs.restore.mockResolvedValue({ id: 11 });
+    propertyAffairs.permanentDelete.mockResolvedValue([]);
+    files.saveAndLinkPropertyAffairFile.mockResolvedValue({ id: 41 });
+    files.unlinkPropertyAffairFile.mockResolvedValue({ id: 41 });
+
+    const instance = controller();
+    await instance.create(
+      { title: '事项', content: '内容' } as CreatePropertyAffairDto,
+      admin,
+      requestSource,
+    );
+    await instance.update(11, dto, admin, requestSource);
+    await instance.appendProgress(11, progress, admin, requestSource);
+    await instance.softDelete(11, version, admin, requestSource);
+    await instance.restore(11, version, admin, requestSource);
+    await instance.permanentDelete(
+      11,
+      version,
+      { ...admin, role: UserRole.SUPER_ADMIN },
+      requestSource,
+    );
+    await instance.upload(11, file, admin, requestSource);
+    await instance.unlink(11, 41, admin, requestSource);
+
+    expect(propertyAffairs.create).toHaveBeenLastCalledWith(
+      expect.anything(),
+      admin,
+      expected,
+    );
+    expect(propertyAffairs.update).toHaveBeenLastCalledWith(
+      11,
+      dto,
+      admin,
+      expected,
+    );
+    expect(propertyAffairs.appendProgress).toHaveBeenLastCalledWith(
+      11,
+      progress,
+      admin,
+      expected,
+    );
+    expect(propertyAffairs.softDelete).toHaveBeenLastCalledWith(
+      11,
+      1,
+      admin,
+      expected,
+    );
+    expect(propertyAffairs.restore).toHaveBeenLastCalledWith(
+      11,
+      1,
+      admin,
+      expected,
+    );
+    expect(propertyAffairs.permanentDelete).toHaveBeenLastCalledWith(
+      11,
+      1,
+      expect.objectContaining({ role: UserRole.SUPER_ADMIN }),
+      expected,
+    );
+    expect(files.saveAndLinkPropertyAffairFile).toHaveBeenLastCalledWith(
+      11,
+      file,
+      admin,
+      expected,
+    );
+    expect(files.unlinkPropertyAffairFile).toHaveBeenLastCalledWith(
+      11,
+      41,
+      admin,
+      expected,
     );
   });
 
@@ -275,8 +386,8 @@ describe('PropertyAffairsController', () => {
       message: 'success',
       data: { id: 11, version: 7 },
     });
-    expect(propertyAffairs.softDelete).toHaveBeenCalledWith(11, 6, admin);
-    expect(propertyAffairs.restore).toHaveBeenCalledWith(11, 6, admin);
+    expect(propertyAffairs.softDelete).toHaveBeenCalledWith(11, 6, admin, {});
+    expect(propertyAffairs.restore).toHaveBeenCalledWith(11, 6, admin, {});
   });
 
   it('uploads and unlinks attachments with exact affair, file, and user arguments', async () => {
@@ -307,8 +418,14 @@ describe('PropertyAffairsController', () => {
       11,
       file,
       admin,
+      {},
     );
-    expect(files.unlinkPropertyAffairFile).toHaveBeenCalledWith(11, 41, admin);
+    expect(files.unlinkPropertyAffairFile).toHaveBeenCalledWith(
+      11,
+      41,
+      admin,
+      {},
+    );
   });
 
   it.each([
@@ -425,6 +542,7 @@ describe('PropertyAffairsController', () => {
       11,
       8,
       superAdmin,
+      {},
     );
     expect(files.cleanupReleasedPropertyAffairFiles).toHaveBeenCalledWith([
       41, 42,

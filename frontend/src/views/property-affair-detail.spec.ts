@@ -50,7 +50,10 @@ const detail: PropertyAffairDetail = {
   updatedAt: '2026-09-02T03:00:00.000Z',
   buildings: [{ id: 1, snapshotLabel: '旧1栋', currentLabel: '1栋', currentStatus: 'ACTIVE', available: true }],
   rooms: [{ id: 11, snapshotLabel: '旧1栋101', currentLabel: '1栋101', currentStatus: 'RENTED', available: true }],
-  tenants: [{ id: 21, snapshotLabel: '原承租人张三', currentLabel: '张三', currentStatus: null, available: false }],
+  tenants: [
+    { id: 21, snapshotLabel: '原承租人张三', currentLabel: '张三', currentStatus: 'INACTIVE', available: false },
+    { id: 22, snapshotLabel: '已删除承租人', currentLabel: '已删除承租人', currentStatus: null, available: false },
+  ],
   contracts: [{ id: 31, snapshotLabel: '旧合同号', currentLabel: 'HT202609020001', currentStatus: 'ACTIVE', available: true }],
   progresses: [
     { id: 1, affairId: 7, content: '事项已创建', statusBefore: null, statusAfter: 'PENDING', createdBy: 1, createdBySnapshot: '李管理员', createdAt: '2026-09-02T01:00:00.000Z' },
@@ -131,9 +134,12 @@ describe('物业办事详情、进度与附件', () => {
     expect(wrapper.text()).not.toContain('COMPLETED')
     expect(wrapper.text()).toContain('关联时：原承租人张三')
     expect(wrapper.text()).toContain('不可用')
+    expect(wrapper.text()).toContain('当前状态：已停用')
+    expect(wrapper.text()).toContain('当前状态：对象已不存在')
     expect(wrapper.get('[data-test="building-link-1"]').attributes('href')).toContain('/properties?buildingId=1')
     expect(wrapper.get('[data-test="room-link-11"]').attributes('href')).toBe('/properties/11')
     expect(wrapper.get('[data-test="tenant-link-21"]').attributes('href')).toBe('/tenants/21')
+    expect(wrapper.find('[data-test="tenant-link-22"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="contract-link-31"]').attributes('href')).toContain('/contracts?tab=detail&contractId=31')
     expect(wrapper.find('[data-test="edit-affair"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="delete-affair"]').exists()).toBe(true)

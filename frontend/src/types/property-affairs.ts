@@ -12,6 +12,7 @@ export type PropertyAffairRelation<TStatus extends string = string> = {
   snapshotLabel: string
   currentLabel: string
   currentStatus: TStatus | null
+  exists?: boolean
   available: boolean
 }
 

@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { FilesService } from '../src/files/files.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SecurityAuditChainService } from '../src/system/security-audit-chain.service';
+import { propertyAffairUploadBufferLimit } from '../src/property-affairs/property-affairs.controller';
 import {
   collectPropertyAffairCleanupTargets,
   createIsolatedSecurityAuditChain,
@@ -119,9 +120,11 @@ describe('property affairs API workflows and invariants (e2e)', () => {
         canActivate(context: ExecutionContext) {
           const testRequest = context.switchToHttp().getRequest<{
             user?: AuthUser;
+            headers: Record<string, string | string[] | undefined>;
           }>();
           if (!currentUser) return false;
           testRequest.user = currentUser;
+          testRequest.headers['user-agent'] = 'SRMS物业办事E2E';
           return true;
         },
       })
@@ -499,6 +502,112 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     }
   });
 
+  it('preserves relation snapshots on partial edits and accepts a retained deleted target id', async () => {
+    currentUser = superAdmin;
+    const originalName = `${titlePrefix}-历史承租人`;
+    const renamed = `${titlePrefix}-承租人改名`;
+    const tenant = await prisma.db.tenant.create({
+      data: { name: originalName },
+    });
+    const created = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-历史关联`,
+        content: '验证历史关联快照',
+        tenantIds: [tenant.id],
+      })
+      .expect(201);
+    const affairId = created.body.data.id as number;
+    createdAffairIds.add(affairId);
+
+    await prisma.db.tenant.update({
+      where: { id: tenant.id },
+      data: { name: renamed },
+    });
+    const partiallyUpdated = await request(app.getHttpServer())
+      .patch(`/api/property-affairs/${affairId}`)
+      .send({ version: 1, title: `${titlePrefix}-只改标题` })
+      .expect(200);
+    expect(partiallyUpdated.body.data.tenants[0]).toMatchObject({
+      id: tenant.id,
+      snapshotLabel: originalName,
+      currentLabel: renamed,
+    });
+
+    await prisma.db.tenant.delete({ where: { id: tenant.id } });
+    const retainedAfterDelete = await request(app.getHttpServer())
+      .patch(`/api/property-affairs/${affairId}`)
+      .send({
+        version: partiallyUpdated.body.data.version,
+        content: '关联目标删除后仍可编辑事项',
+        tenantIds: [tenant.id],
+      })
+      .expect(200);
+    expect(retainedAfterDelete.body.data.tenants[0]).toMatchObject({
+      id: tenant.id,
+      snapshotLabel: originalName,
+      currentLabel: originalName,
+      currentStatus: null,
+      available: false,
+    });
+  });
+
+  it('returns Chinese HTTP 400 for illegal update and progress transitions', async () => {
+    currentUser = admin;
+    const created = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-非法流转`,
+        content: '验证状态校验',
+      })
+      .expect(201);
+    const affairId = created.body.data.id as number;
+    createdAffairIds.add(affairId);
+    const completed = await request(app.getHttpServer())
+      .patch(`/api/property-affairs/${affairId}`)
+      .send({ version: 1, status: 'COMPLETED' })
+      .expect(200);
+
+    for (const response of [
+      await request(app.getHttpServer())
+        .patch(`/api/property-affairs/${affairId}`)
+        .send({ version: completed.body.data.version, status: 'PENDING' })
+        .expect(400),
+      await request(app.getHttpServer())
+        .post(`/api/property-affairs/${affairId}/progress`)
+        .send({
+          version: completed.body.data.version,
+          content: '非法退回待办理',
+          nextStatus: 'PENDING',
+        })
+        .expect(400),
+    ]) {
+      expect(response.body.message).toBe('事项状态不能这样变更');
+    }
+  });
+
+  it('allocates unique same-day affair numbers under concurrent real-MySQL creates', async () => {
+    currentUser = superAdmin;
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        request(app.getHttpServer())
+          .post('/api/property-affairs')
+          .send({
+            title: `${titlePrefix}-并发编号-${index + 1}`,
+            content: '同日并发编号验证',
+          })
+          .expect(201),
+      ),
+    );
+    const numbers = responses.map((response) => {
+      const data = response.body.data as { id: number; affairNo: string };
+      createdAffairIds.add(data.id);
+      return data.affairNo;
+    });
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect(numbers.every((number) => /^WY\d{12}$/.test(number))).toBe(true);
+  });
+
   it('completes, reopens, cancels, and reopens an affair through appended progress', async () => {
     currentUser = superAdmin;
     const main = workflowAffairs.get(UserRole.SUPER_ADMIN);
@@ -722,6 +831,53 @@ describe('property affairs API workflows and invariants (e2e)', () => {
         (item) => item.id === fileId,
       ),
     ).toBe(false);
+  });
+
+  it('rejects a multipart file over the absolute buffer cap with a Chinese 413 response', async () => {
+    currentUser = admin;
+    const main = workflowAffairs.get(UserRole.ADMIN);
+    if (!main) throw new Error('普通管理员物业办事流程未初始化');
+    const response = await request(app.getHttpServer())
+      .post(`/api/property-affairs/${main.id}/files`)
+      .attach('file', Buffer.alloc(propertyAffairUploadBufferLimit + 1), {
+        filename: '超大附件.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(413);
+    expect(response.body).toEqual({
+      code: 413,
+      message: '附件超过允许大小',
+      data: null,
+    });
+  });
+
+  it('persists normalized request sources for every property-affair write action', async () => {
+    const logs = await prisma.db.operationLog.findMany({
+      where: {
+        module: 'PROPERTY_AFFAIRS',
+        entityId: { in: [...createdAffairIds] },
+      },
+      select: { action: true, ipAddress: true, userAgent: true },
+    });
+    const actions = new Set(logs.map((item) => item.action));
+    for (const action of [
+      'CREATE',
+      'UPDATE',
+      'APPEND_PROGRESS',
+      'SOFT_DELETE',
+      'RESTORE',
+      'PERMANENT_DELETE',
+      'UPLOAD_FILE',
+      'UNLINK_FILE',
+    ]) {
+      expect(actions).toContain(action);
+    }
+    for (const log of logs) {
+      expect(log.ipAddress).toMatch(/^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-f:]+$/i);
+      expect(log.userAgent).toEqual(expect.any(String));
+      expect(log.userAgent?.length).toBeGreaterThan(0);
+      expect(log.userAgent?.length).toBeLessThanOrEqual(500);
+    }
   });
 
   it('returns 403 to a visitor for every property-affair endpoint and no dashboard affairs', async () => {

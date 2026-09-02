@@ -16,6 +16,7 @@ import { AuthUser } from '../auth/auth-user.type';
 import { assertContractNotVoided } from '../contracts/contract-operability';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { PrismaService } from '../prisma/prisma.service';
+import type { PropertyAffairRequestContext } from '../property-affairs/property-affair-request-context';
 
 export type UploadedFile = {
   originalname: string;
@@ -289,6 +290,7 @@ export class FilesService {
     affairId: number,
     file: UploadedFile,
     user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
   ) {
     if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('无权操作物业办事附件');
@@ -366,6 +368,7 @@ export class FilesService {
               operatorId: user.id,
               operatorRole: user.role,
               occurredAt: new Date(),
+              ...requestContext,
             },
           });
           return this.propertyAffairFileResult(asset);
@@ -433,6 +436,7 @@ export class FilesService {
     affairId: number,
     fileId: number,
     user: AuthUser,
+    requestContext: PropertyAffairRequestContext = {},
   ) {
     if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('无权操作物业办事附件');
@@ -481,6 +485,7 @@ export class FilesService {
             operatorId: user.id,
             operatorRole: user.role,
             occurredAt: new Date(),
+            ...requestContext,
           },
         });
       },

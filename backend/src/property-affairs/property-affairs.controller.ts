@@ -1,23 +1,29 @@
 import {
   BadRequestException,
+  ArgumentsHost,
   Body,
+  Catch,
   Controller,
   Delete,
+  ExceptionFilter,
   Get,
   Logger,
   Param,
   ParseIntPipe,
   Patch,
+  PayloadTooLargeException,
   Post,
   Query,
+  Req,
   Res,
   UploadedFile,
   UseGuards,
+  UseFilters,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import type { AuthUser } from '../auth/auth-user.type';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -33,6 +39,20 @@ import { ListPropertyAffairsQueryDto } from './dto/list-property-affairs-query.d
 import { PropertyAffairVersionDto } from './dto/property-affair-version.dto';
 import { UpdatePropertyAffairDto } from './dto/update-property-affair.dto';
 import { PropertyAffairsService } from './property-affairs.service';
+import { propertyAffairRequestContext } from './property-affair-request-context';
+
+export const propertyAffairUploadBufferLimit = 100 * 1024 * 1024;
+
+@Catch(PayloadTooLargeException)
+class PropertyAffairUploadExceptionFilter implements ExceptionFilter {
+  catch(_exception: PayloadTooLargeException, host: ArgumentsHost) {
+    host.switchToHttp().getResponse<Response>().status(413).json({
+      code: 413,
+      message: '附件超过允许大小',
+      data: null,
+    });
+  }
+}
 
 const previewableMimeTypes = new Set([
   'application/pdf',
@@ -81,8 +101,15 @@ export class PropertyAffairsController {
   async create(
     @Body() dto: CreatePropertyAffairDto,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
-    return this.success(await this.propertyAffairs.create(dto, user));
+    return this.success(
+      await this.propertyAffairs.create(
+        dto,
+        user,
+        propertyAffairRequestContext(request),
+      ),
+    );
   }
 
   @Patch(':id')
@@ -90,8 +117,16 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdatePropertyAffairDto,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
-    return this.success(await this.propertyAffairs.update(id, dto, user));
+    return this.success(
+      await this.propertyAffairs.update(
+        id,
+        dto,
+        user,
+        propertyAffairRequestContext(request),
+      ),
+    );
   }
 
   @Post(':id/progress')
@@ -99,9 +134,15 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AppendPropertyAffairProgressDto,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
     return this.success(
-      await this.propertyAffairs.appendProgress(id, dto, user),
+      await this.propertyAffairs.appendProgress(
+        id,
+        dto,
+        user,
+        propertyAffairRequestContext(request),
+      ),
     );
   }
 
@@ -110,9 +151,15 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: PropertyAffairVersionDto,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
     return this.success(
-      await this.propertyAffairs.softDelete(id, dto.version, user),
+      await this.propertyAffairs.softDelete(
+        id,
+        dto.version,
+        user,
+        propertyAffairRequestContext(request),
+      ),
     );
   }
 
@@ -121,9 +168,15 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: PropertyAffairVersionDto,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
     return this.success(
-      await this.propertyAffairs.restore(id, dto.version, user),
+      await this.propertyAffairs.restore(
+        id,
+        dto.version,
+        user,
+        propertyAffairRequestContext(request),
+      ),
     );
   }
 
@@ -133,11 +186,13 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: PropertyAffairVersionDto,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
     const releasedFileIds = await this.propertyAffairs.permanentDelete(
       id,
       dto.version,
       user,
+      propertyAffairRequestContext(request),
     );
     try {
       await this.files.cleanupReleasedPropertyAffairFiles(releasedFileIds);
@@ -148,14 +203,25 @@ export class PropertyAffairsController {
   }
 
   @Post(':id/files')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseFilters(PropertyAffairUploadExceptionFilter)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: propertyAffairUploadBufferLimit },
+    }),
+  )
   async upload(
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile() file: PropertyAffairUploadedFile,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
     return this.success(
-      await this.files.saveAndLinkPropertyAffairFile(id, file, user),
+      await this.files.saveAndLinkPropertyAffairFile(
+        id,
+        file,
+        user,
+        propertyAffairRequestContext(request),
+      ),
     );
   }
 
@@ -193,9 +259,15 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Param('fileId', ParseIntPipe) fileId: number,
     @CurrentUser() user: AuthUser,
+    @Req() request?: Request,
   ) {
     return this.success(
-      await this.files.unlinkPropertyAffairFile(id, fileId, user),
+      await this.files.unlinkPropertyAffairFile(
+        id,
+        fileId,
+        user,
+        propertyAffairRequestContext(request),
+      ),
     );
   }
 

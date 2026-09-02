@@ -23,9 +23,9 @@
 | `npm --prefix backend run prisma:validate` | 通过，Prisma schema 有效 |
 | `npm --prefix backend run prisma:generate` | 通过，Prisma Client 7.8.0 生成成功 |
 | `npm --prefix backend run lint:check` | 通过，0 错误 |
-| `npm --prefix backend test -- --runInBand` | 100 个套件、855 项测试全部通过 |
+| `npm --prefix backend test -- --runInBand` | 100 个套件、859 项测试全部通过 |
 | `npm --prefix backend run build` | 通过 |
-| `npm --prefix frontend run test:unit` | 63 个测试文件、443 项测试全部通过 |
+| `npm --prefix frontend run test:unit` | 63 个测试文件、448 项测试全部通过 |
 | `npm --prefix frontend run build` | 通过，1794 个模块完成构建 |
 
 额外聚焦验证：
@@ -34,7 +34,9 @@
 |---|---|
 | multipart 中文附件名回归测试 | 1/1 通过 |
 | 物业办事前端角色、页面和交互聚焦测试 | 10 个文件、97 项全部通过 |
-| `property-affairs.e2e-spec.ts` | 1 个套件、10 项真实 MySQL E2E 全部通过 |
+| 物业办事后端修复聚焦测试 | 4 个套件、194 项全部通过 |
+| 物业办事前端修复聚焦测试 | 2 个测试文件、27 项全部通过 |
+| `property-affairs.e2e-spec.ts` | 1 个套件、15 项真实 MySQL E2E 全部通过 |
 
 前端构建仍有既有的单块文件超过 500 kB 提示，不影响构建成功；建议后续单独规划路由级拆包，不在本功能中扩项。
 
@@ -45,6 +47,19 @@
 3. multipart 解析器会把 UTF-8 中文附件名按 Latin-1 解码，导致附件名乱码。先增加聚焦失败测试，再仅在物业办事附件入口做可逆 UTF-8 规范化；本来就是 Unicode、ASCII 或无法无损转换的文件名保持原值。
 4. 计划引用的 `deploy/docker-compose.test.yml` 在仓库中不存在。按仓库现行方式改用 `deploy/docker-compose.yml`，并以项目名 `srms_test`、独立测试配置和固定本机端口完成隔离。
 5. 测试配置不直接提供 `DATABASE_URL`。E2E 包装脚本在确认数据库名和本机端口后，仅在子进程内由现有 MySQL 分项派生连接串；所有导入变量都先保存“是否存在”和原值，并在 `finally` 中精确还原。连接串和凭据未输出、记录或提交。
+
+### 代码审查修复轮
+
+独立审查提出的 6 项 Important 已按先失败测试、后最小实现的方式修复：
+
+1. 编辑 DTO 的四类关联字段改为真正可选；只处理请求明确提交的关联类型，并按新增/移除 ID 做差量更新，未移除的关联行与 `targetLabel` 历史快照不再被覆盖。
+2. 只校验本次新增的关联对象；历史关联目标被删除后，保留原关系和快照的事项仍可修改主字段。
+3. 非法状态流转统一返回中文 HTTP 400；更新接口和追加进度接口均有真实 HTTP 断言。
+4. 上传入口增加 100 MiB 进程内存绝对硬上限，同时保留业务层动态限制；Multer 超限统一返回中文 HTTP 413。
+5. 创建、编辑、追加进度/状态、软删除、恢复、永久删除、附件上传和附件解除等全部写操作，均通过统一请求上下文记录规范化 IP 与 User-Agent，不记录敏感值。
+6. 楼栋、房源、承租人、合同统一按业务状态区分“存在”与“可用”；详情显示中文当前状态，目标不存在时仅展示历史快照且不可点击。
+
+修复轮中先观察到的失败包括：旧断言误用 Jest 匹配器、Multer 超限实际异常类型与预期不符、superagent 默认请求未携带 User-Agent。修复后相关聚焦测试、全量回归和真实 MySQL E2E 均已转绿，失败证据未通过放宽业务断言规避。
 
 ## 4. 测试数据库备份与迁移
 
@@ -72,6 +87,17 @@
 
 备份位于隔离工作区的 `deploy/test-data/backups`，该目录被 Git 忽略。未记录任何数据库密码或连接串。
 
+代码审查修复轮在再次迁移和真实 E2E 前生成并校验了新的逻辑备份：
+
+| 字段 | 值 |
+|---|---|
+| 文件名 | `pre-property-affairs-repair1-20260903-015249.sql` |
+| 字节数 | `1921044` |
+| SHA256 | `626967F333C558EDF9770017BE58227FB3293C2185EA4ADC85000F148F03601A` |
+| 容器完成标记 | 通过 |
+| 主机文件非空 | 通过 |
+| Git 忽略检查 | 通过 |
+
 ### 迁移结果
 
 先构建隔离分支的 `srms_test-api` 镜像，再用同一 Compose 项目的一次性 API 容器执行：
@@ -80,7 +106,7 @@
 docker compose -p srms_test --env-file $TEST_ENV -f deploy/docker-compose.yml run --rm --no-deps api npx prisma migrate deploy
 ```
 
-结果：发现 29 个 migration，仅新应用 `20260902110000_property_affairs`。最终 `prisma migrate status` 返回 `Database schema is up to date!`。没有 DROP、重建或清空数据库。
+结果：首次验证发现 29 个 migration，仅新应用 `20260902110000_property_affairs`；修复轮再次执行时无待应用迁移。最终 `prisma migrate status` 返回 `Database schema is up to date!`。没有 DROP、重建或清空数据库。
 
 ## 5. 真实 E2E 覆盖
 
@@ -90,7 +116,7 @@ docker compose -p srms_test --env-file $TEST_ENV -f deploy/docker-compose.yml ru
 npm --prefix backend run test:e2e -- --runInBand property-affairs.e2e-spec.ts
 ```
 
-连接由受保护的 PowerShell 包装层限制到 `127.0.0.1:13306/srms_docker`，环境变量在 `finally` 中恢复。最终 1 个套件、10 项全部通过，覆盖：
+连接由受保护的 PowerShell 包装层限制到 `127.0.0.1:13306/srms_docker`，环境变量在 `finally` 中精确恢复。最终 1 个套件、15 项全部通过，覆盖：
 
 - 超级管理员和普通管理员新增、查询、编辑、追加进度、软删除及恢复。
 - 楼栋、房源、承租人、合同混合关联及四类反向筛选。
@@ -101,6 +127,12 @@ npm --prefix backend run test:e2e -- --runInBand property-affairs.e2e-spec.ts
 - 图片实际上传、详情展示、在线预览、下载、跨事项隔离和解除关联。
 - 游客访问所有物业办事接口均返回 403，驾驶舱事项为空。
 - 关联业务记录与实际财务总览接口在生命周期前后字节/值等价。
+- 部分 PATCH 不清空其他关联；关联对象改名、删除后再次编辑仍保留历史快照。
+- 同一业务日期 6 个并发创建获得互不重复的连续编号。
+- 非法编辑状态与非法进度状态均返回中文 HTTP 400。
+- 超过绝对缓冲上限的真实 multipart 上传返回中文 HTTP 413。
+- 8 类物业办事写日志均持久化规范化 IP 和 User-Agent。
+- 失效业务对象显示真实当前状态并标记不可用；不存在对象与可用对象明确区分。
 
 ## 6. 业务隔离前后对比
 
@@ -129,7 +161,7 @@ npm --prefix backend run test:e2e -- --runInBand property-affairs.e2e-spec.ts
 
 ## 7. 角色与页面验收矩阵
 
-浏览器自动控制在读取页面前连续两次因 Windows 沙箱 `deny-read ACLs` 退出，未读取 cookie、local storage、密码或会话文件，也未切换到其他未经批准的控制方式。可自动验证的边界由真实 E2E 和前端聚焦测试补足：
+浏览器自动控制在首次验证时连续两次因 Windows 沙箱 `deny-read ACLs` 退出；修复轮按 Browser 技能要求重新连接一次，仍在页面连接前因受信 Node 运行时内核重置退出。所有尝试均未读取 cookie、local storage、密码或会话文件，也未切换到其他未经批准的控制方式。可自动验证的边界由真实 E2E 和前端聚焦测试补足：
 
 | 场景 | SUPER_ADMIN | ADMIN | VISITOR | 证据 |
 |---|---|---|---|---|
@@ -151,3 +183,5 @@ npm --prefix backend run test:e2e -- --runInBand property-affairs.e2e-spec.ts
 1. 项目负责人使用现有测试账号完成上述三项人工浏览器验收。
 2. 验收通过后，再单独决定是否合并本地 `main`、推送 GitHub 和部署生产；这些动作不属于本次验证。
 3. 前端大块文件拆包为非阻塞性能优化项，建议另立任务处理。
+4. 永久删除的真实 MySQL E2E 已证明事项删除后 `OperationLog` 仍持久存在；测试为了不向共享且追加式的安全审计链写入不可清理的测试事件，仍使用隔离的链实现。真实链的哈希、链头锁和持久化已有独立单元覆盖；若以后建立可回滚的专用审计测试库，可再补不替换链服务的端到端测试。
+5. 文件落盘成功但数据库事务随后失败时的通用物理孤儿文件重试，属于跨模块基础设施能力，未在本次修复中扩建；当前上传失败路径和已释放附件清理逻辑保持原有行为。

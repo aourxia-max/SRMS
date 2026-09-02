@@ -3,6 +3,7 @@ import {
   propertyAffairAvailabilityLabel,
   propertyAffairPriorityLabel,
   propertyAffairRelationTypeLabel,
+  propertyAffairRelationStatusLabel,
   propertyAffairStatusLabel,
 } from './property-affair-labels'
 
@@ -38,6 +39,16 @@ describe('物业办事标签', () => {
     expect(propertyAffairRelationTypeLabel('contract')).toBe('合同')
     expect(propertyAffairAvailabilityLabel(true)).toBe('可用')
     expect(propertyAffairAvailabilityLabel(false)).toBe('不可用')
+  })
+
+  it.each([
+    ['building', 'DISABLED', '已停用'],
+    ['room', 'PENDING_CHECKOUT', '待退租'],
+    ['tenant', 'INACTIVE', '已停用'],
+    ['contract', 'ENDED', '已结束'],
+    ['contract', null, '对象已不存在'],
+  ])('将%s当前状态%s集中显示为中文%s', (type, status, expected) => {
+    expect(propertyAffairRelationStatusLabel(type, status)).toBe(expected)
   })
 
   it('将原型状态键视为未知状态并始终返回中文字符串', () => {

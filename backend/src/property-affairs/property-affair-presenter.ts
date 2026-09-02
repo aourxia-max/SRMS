@@ -36,6 +36,7 @@ function presentRelation(
     snapshotLabel,
     currentLabel: current?.label ?? snapshotLabel,
     currentStatus: current?.status ?? null,
+    exists: current !== undefined,
     available: current?.available ?? false,
   };
 }

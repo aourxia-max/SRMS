@@ -1,6 +1,8 @@
 import { PropertyAffairPriority, PropertyAffairStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayUnique,
+  IsArray,
   IsEnum,
   IsInt,
   IsString,
@@ -11,7 +13,6 @@ import {
 } from 'class-validator';
 import {
   isDefined,
-  PropertyAffairRelationsDto,
   trimOptionalString,
   trimRequiredString,
 } from './property-affair-relations.dto';
@@ -19,11 +20,43 @@ import {
 const isNonNullDefined = (_object: object, value: unknown) =>
   value !== undefined && value !== null;
 
-export class UpdatePropertyAffairDto extends PropertyAffairRelationsDto {
+export class UpdatePropertyAffairDto {
   @Type(() => Number)
   @IsInt({ message: '版本号必须为整数' })
   @Min(1, { message: '版本号必须为正整数' })
   version!: number;
+
+  @ValidateIf(isDefined)
+  @IsArray({ message: '楼栋编号必须为数组' })
+  @ArrayUnique({ message: '楼栋编号不能重复' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: '楼栋编号必须为整数' })
+  @Min(1, { each: true, message: '楼栋编号必须为正整数' })
+  buildingIds?: number[];
+
+  @ValidateIf(isDefined)
+  @IsArray({ message: '房源编号必须为数组' })
+  @ArrayUnique({ message: '房源编号不能重复' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: '房源编号必须为整数' })
+  @Min(1, { each: true, message: '房源编号必须为正整数' })
+  roomIds?: number[];
+
+  @ValidateIf(isDefined)
+  @IsArray({ message: '租客编号必须为数组' })
+  @ArrayUnique({ message: '租客编号不能重复' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: '租客编号必须为整数' })
+  @Min(1, { each: true, message: '租客编号必须为正整数' })
+  tenantIds?: number[];
+
+  @ValidateIf(isDefined)
+  @IsArray({ message: '合同编号必须为数组' })
+  @ArrayUnique({ message: '合同编号不能重复' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: '合同编号必须为整数' })
+  @Min(1, { each: true, message: '合同编号必须为正整数' })
+  contractIds?: number[];
 
   @Transform(trimRequiredString)
   @ValidateIf(isDefined)

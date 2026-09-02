@@ -539,6 +539,7 @@ describe('PropertyAffairsService', () => {
             snapshotLabel: '旧1栋',
             currentLabel: '1栋（东区）',
             currentStatus: 'ACTIVE',
+            exists: true,
             available: true,
           },
         ],
@@ -548,6 +549,7 @@ describe('PropertyAffairsService', () => {
             snapshotLabel: '旧1栋101',
             currentLabel: '1栋101',
             currentStatus: 'MAINTENANCE',
+            exists: true,
             available: true,
           },
         ],
@@ -570,8 +572,10 @@ describe('PropertyAffairsService', () => {
       ...baseAffair,
       buildings: [{ id: 1, affairId: 41, buildingId: 1, targetLabel: '旧1栋' }],
       rooms: [{ id: 2, affairId: 41, roomId: 11, targetLabel: '旧1栋101' }],
-      tenants: [],
-      contracts: [],
+      tenants: [{ id: 3, affairId: 41, tenantId: 21, targetLabel: '旧住户' }],
+      contracts: [
+        { id: 4, affairId: 41, contractId: 31, targetLabel: '旧合同' },
+      ],
       progresses: [
         {
           id: 8,
@@ -609,8 +613,18 @@ describe('PropertyAffairsService', () => {
         ]),
       },
       room: { findMany: jest.fn().mockResolvedValue([]) },
-      tenant: { findMany: jest.fn().mockResolvedValue([]) },
-      contract: { findMany: jest.fn().mockResolvedValue([]) },
+      tenant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 21, name: '张三', status: 'INACTIVE' }]),
+      },
+      contract: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 31, contractNo: 'HT-31', status: 'ENDED' },
+          ]),
+      },
     };
     const service = new PropertyAffairsService({ db } as never);
 
@@ -629,15 +643,31 @@ describe('PropertyAffairsService', () => {
       snapshotLabel: '旧1栋',
       currentLabel: '1栋',
       currentStatus: 'DISABLED',
-      available: true,
+      exists: true,
+      available: false,
     });
     expect(ordinary.rooms[0]).toEqual({
       id: 11,
       snapshotLabel: '旧1栋101',
       currentLabel: '旧1栋101',
       currentStatus: null,
+      exists: false,
       available: false,
     });
+    expect(ordinary.tenants[0]).toEqual(
+      expect.objectContaining({
+        currentStatus: 'INACTIVE',
+        exists: true,
+        available: false,
+      }),
+    );
+    expect(ordinary.contracts[0]).toEqual(
+      expect.objectContaining({
+        currentStatus: 'ENDED',
+        exists: true,
+        available: false,
+      }),
+    );
 
     await service.get(41, true);
     expect(db.propertyAffair.findFirst.mock.calls[1][0]).toEqual(
@@ -816,6 +846,78 @@ describe('PropertyAffairsService', () => {
     contractIds: [32],
   };
 
+  it('preserves omitted relations and their original snapshots on a partial update', async () => {
+    const { service, tx, current } = updateFixture(
+      PropertyAffairStatus.PENDING,
+    );
+    tx.propertyAffair.findUniqueOrThrow.mockResolvedValue({
+      ...current,
+      title: '只修改标题',
+      version: 4,
+    });
+    tx.building.findMany.mockResolvedValue([
+      {
+        id: 1,
+        buildingNo: '1栋（改名后）',
+        buildingName: null,
+        status: 'ACTIVE',
+      },
+    ]);
+
+    const result = await service.update(
+      41,
+      { version: 3, title: '只修改标题' },
+      admin,
+    );
+
+    expect(tx.building.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] } } }),
+    );
+    expect(tx.propertyAffairBuilding.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairRoom.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairTenant.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairContract.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairBuilding.createMany).not.toHaveBeenCalled();
+    expect(result.buildings[0]).toEqual(
+      expect.objectContaining({
+        snapshotLabel: '旧1栋',
+        currentLabel: '1栋（改名后）',
+      }),
+    );
+  });
+
+  it('validates only newly added relation ids and retains a missing historical target', async () => {
+    const { service, tx, current } = updateFixture(
+      PropertyAffairStatus.PENDING,
+    );
+    tx.propertyAffair.findUniqueOrThrow.mockResolvedValue({
+      ...current,
+      title: '历史对象已删除后仍可编辑',
+      version: 4,
+    });
+    tx.tenant.findMany.mockResolvedValue([]);
+
+    const result = await service.update(
+      41,
+      {
+        version: 3,
+        title: '历史对象已删除后仍可编辑',
+        tenantIds: [21],
+      },
+      admin,
+    );
+
+    expect(tx.propertyAffairTenant.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairTenant.createMany).not.toHaveBeenCalled();
+    expect(result.tenants[0]).toEqual(
+      expect.objectContaining({
+        snapshotLabel: '旧住户',
+        currentStatus: null,
+        available: false,
+      }),
+    );
+  });
+
   it('optimistically updates main fields, lifecycle, every relation, automatic progress and audit in one transaction', async () => {
     jest.useFakeTimers().setSystemTime(createdAt);
     const { service, db, tx } = updateFixture(
@@ -855,14 +957,15 @@ describe('PropertyAffairsService', () => {
         version: { increment: 1 },
       }),
     });
-    for (const delegate of [
-      tx.propertyAffairBuilding,
-      tx.propertyAffairRoom,
-      tx.propertyAffairTenant,
-      tx.propertyAffairContract,
-    ]) {
+    const removedRelations = [
+      [tx.propertyAffairBuilding, 'buildingId', 1],
+      [tx.propertyAffairRoom, 'roomId', 11],
+      [tx.propertyAffairTenant, 'tenantId', 21],
+      [tx.propertyAffairContract, 'contractId', 31],
+    ] as const;
+    for (const [delegate, relationKey, relationId] of removedRelations) {
       expect(delegate.deleteMany).toHaveBeenCalledWith({
-        where: { affairId: 41 },
+        where: { affairId: 41, [relationKey]: { in: [relationId] } },
       });
       expect(
         tx.propertyAffair.updateMany.mock.invocationCallOrder[0],
@@ -1169,6 +1272,7 @@ describe('PropertyAffairsService', () => {
       snapshotLabel: '旧1栋101',
       currentLabel: '1栋101',
       currentStatus: 'DISABLED',
+      exists: true,
       available: false,
     });
   });
