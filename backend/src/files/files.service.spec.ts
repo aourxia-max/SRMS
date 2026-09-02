@@ -1,4 +1,4 @@
-import { readFile, unlink, writeFile } from 'fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import {
   BadRequestException,
@@ -1207,8 +1207,9 @@ describe('FilesService property-affair attachments', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.mocked(writeFile).mockResolvedValue(undefined);
-    jest.mocked(unlink).mockResolvedValue(undefined);
+    jest.mocked(mkdir).mockReset().mockResolvedValue(undefined);
+    jest.mocked(writeFile).mockReset().mockResolvedValue(undefined);
+    jest.mocked(unlink).mockReset().mockResolvedValue(undefined);
   });
 
   it.each(acceptedFiles)(
@@ -1406,6 +1407,69 @@ describe('FilesService property-affair attachments', () => {
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
+  it('maps mkdir failure to a Chinese service error and compensates a possible path', async () => {
+    const { service, db } = uploadFixture();
+    jest
+      .mocked(mkdir)
+      .mockRejectedValue(
+        Object.assign(new Error('denied'), { code: 'EACCES' }),
+      );
+    jest
+      .mocked(unlink)
+      .mockRejectedValue(
+        Object.assign(new Error('missing'), { code: 'ENOENT' }),
+      );
+    const buffer = Buffer.from('%PDF-1.7\n');
+
+    await expect(
+      save(service, 41, {
+        originalname: '证明.pdf',
+        mimetype: 'application/pdf',
+        size: buffer.length,
+        buffer,
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '附件保存失败，请稍后重试',
+        status: 503,
+      }),
+    );
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans a possibly partial file up to three times after write failure without masking the service error', async () => {
+    const { service, db } = uploadFixture();
+    const writeError = Object.assign(new Error('partial write'), {
+      code: 'EIO',
+    });
+    const cleanupError = Object.assign(new Error('busy'), { code: 'EBUSY' });
+    jest.mocked(writeFile).mockRejectedValue(writeError);
+    jest
+      .mocked(unlink)
+      .mockRejectedValueOnce(cleanupError)
+      .mockRejectedValueOnce(cleanupError)
+      .mockResolvedValueOnce(undefined);
+    const buffer = Buffer.from('%PDF-1.7\n');
+
+    await expect(
+      save(service, 41, {
+        originalname: '证明.pdf',
+        mimetype: 'application/pdf',
+        size: buffer.length,
+        buffer,
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '附件保存失败，请稍后重试',
+        status: 503,
+      }),
+    );
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(unlink).toHaveBeenCalledTimes(3);
+  });
+
   it('rechecks the active affair in the link transaction and retries compensation three times', async () => {
     const { service, tx } = uploadFixture({ txAffair: null });
     const cleanupFailure = Object.assign(new Error('busy'), { code: 'EBUSY' });
@@ -1463,8 +1527,8 @@ describe('FilesService property-affair attachments', () => {
     link?: Record<string, unknown> | null;
     transactionError?: Error;
     cleanupAsset?: Record<string, unknown> | null;
-    claimCount?: number;
-    remainingReferences?: number;
+    deleteCount?: number;
+    deleteError?: Error;
     sharedPhysical?: number;
   }) {
     const affair =
@@ -1489,44 +1553,49 @@ describe('FilesService property-affair attachments', () => {
       options && 'link' in options
         ? options.link
         : { affairId: 41, fileAssetId: 71, createdAt: uploadedAt, fileAsset };
+    const fileAssetDelegate = {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue(
+          options && 'cleanupAsset' in options
+            ? options.cleanupAsset
+            : fileAsset,
+        ),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      count: jest.fn().mockResolvedValue(options?.sharedPhysical ?? 0),
+      deleteMany: jest
+        .fn()
+        .mockImplementation(() =>
+          options?.deleteError
+            ? Promise.reject(options.deleteError)
+            : Promise.resolve({ count: options?.deleteCount ?? 1 }),
+        ),
+    };
     const tx = {
       propertyAffair: { findFirst: jest.fn().mockResolvedValue(affair) },
       propertyAffairFile: {
         findFirst: jest.fn().mockResolvedValue(link),
         deleteMany: jest.fn().mockResolvedValue({ count: link ? 1 : 0 }),
       },
+      fileAsset: fileAssetDelegate,
       operationLog: { create: jest.fn().mockResolvedValue({ id: 1 }) },
     };
+    const transactionCommit = jest.fn();
     const db = {
       propertyAffair: { findFirst: jest.fn().mockResolvedValue(affair) },
       propertyAffairFile: {
         findMany: jest.fn().mockResolvedValue(link ? [link] : []),
         findFirst: jest.fn().mockResolvedValue(link),
       },
-      fileAsset: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue(
-            options && 'cleanupAsset' in options
-              ? options.cleanupAsset
-              : fileAsset,
-          ),
-        updateMany: jest
-          .fn()
-          .mockResolvedValue({ count: options?.claimCount ?? 1 }),
-        count: jest
-          .fn()
-          .mockResolvedValueOnce(options?.remainingReferences ?? 0)
-          .mockResolvedValueOnce(options?.sharedPhysical ?? 0),
-        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
+      fileAsset: fileAssetDelegate,
       $transaction: jest
         .fn()
         .mockImplementation(
-          (callback: (client: typeof tx) => Promise<unknown>) => {
-            if (options?.transactionError)
-              return Promise.reject(options.transactionError);
-            return callback(tx);
+          async (callback: (client: typeof tx) => Promise<unknown>) => {
+            if (options?.transactionError) throw options.transactionError;
+            const result = await callback(tx);
+            transactionCommit();
+            return result;
           },
         ),
     };
@@ -1535,6 +1604,7 @@ describe('FilesService property-affair attachments', () => {
       db,
       tx,
       fileAsset,
+      transactionCommit,
     };
   }
 
@@ -1572,7 +1642,11 @@ describe('FilesService property-affair attachments', () => {
     ]);
     expect(() => JSON.stringify(result)).not.toThrow();
     expect(db.propertyAffairFile.findMany).toHaveBeenCalledWith({
-      where: { affairId: 41, fileAsset: { category: 'PROPERTY_AFFAIR' } },
+      where: {
+        affairId: 41,
+        affair: { deletedAt: null },
+        fileAsset: { category: 'PROPERTY_AFFAIR' },
+      },
       include: { fileAsset: true },
       orderBy: [{ createdAt: 'desc' }, { fileAssetId: 'desc' }],
     });
@@ -1601,6 +1675,7 @@ describe('FilesService property-affair attachments', () => {
       where: {
         affairId: 41,
         fileAssetId: 71,
+        affair: { deletedAt: null },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
@@ -1669,7 +1744,7 @@ describe('FilesService property-affair attachments', () => {
   );
 
   it('unlinks and audits in a transaction before cleaning the released asset', async () => {
-    const { service, db, tx } = accessFixture();
+    const { service, tx, transactionCommit } = accessFixture();
 
     const result = await propertyMethods(service).unlinkPropertyAffairFile(
       41,
@@ -1686,12 +1761,18 @@ describe('FilesService property-affair attachments', () => {
       where: {
         affairId: 41,
         fileAssetId: 71,
+        affair: { deletedAt: null },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
     });
     expect(tx.propertyAffairFile.deleteMany).toHaveBeenCalledWith({
-      where: { affairId: 41, fileAssetId: 71 },
+      where: {
+        affairId: 41,
+        fileAssetId: 71,
+        affair: { deletedAt: null },
+        fileAsset: { category: 'PROPERTY_AFFAIR' },
+      },
     });
     expect(tx.operationLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -1705,11 +1786,11 @@ describe('FilesService property-affair attachments', () => {
         operatorRole: admin.role,
       }),
     });
-    expect(db.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
-      db.fileAsset.findUnique.mock.invocationCallOrder[0],
+    expect(tx.fileAsset.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      transactionCommit.mock.invocationCallOrder[1],
     );
-    expect(unlink.mock.invocationCallOrder[0]).toBeLessThan(
-      db.fileAsset.deleteMany.mock.invocationCallOrder[0],
+    expect(transactionCommit.mock.invocationCallOrder[1]).toBeLessThan(
+      unlink.mock.invocationCallOrder[0],
     );
   });
 
@@ -1748,6 +1829,28 @@ describe('FilesService property-affair attachments', () => {
       propertyMethods(service).unlinkPropertyAffairFile(41, 71, admin),
     ).rejects.toBe(transactionError);
     expect(db.fileAsset.findUnique).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('returns the common 404 when concurrent soft deletion defeats the protected unlink delete', async () => {
+    const { service, db, tx } = accessFixture();
+    tx.propertyAffairFile.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      propertyMethods(service).unlinkPropertyAffairFile(41, 71, admin),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '物业办事附件不存在', status: 404 }),
+    );
+    expect(tx.propertyAffairFile.deleteMany).toHaveBeenCalledWith({
+      where: {
+        affairId: 41,
+        fileAssetId: 71,
+        affair: { deletedAt: null },
+        fileAsset: { category: 'PROPERTY_AFFAIR' },
+      },
+    });
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
     expect(unlink).not.toHaveBeenCalled();
   });
 
@@ -1831,42 +1934,128 @@ describe('FilesService property-affair attachments', () => {
     expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('leaves an asset and physical file untouched when the atomic no-reference claim loses a race', async () => {
-    const { service, db } = accessFixture({ claimCount: 0 });
+  const allReferenceFilters = {
+    tenantFiles: { none: {} },
+    pricingRebateFiles: { none: {} },
+    depositRefundFiles: { none: {} },
+    checkoutSettlementItemFiles: { none: {} },
+    paymentFiles: { none: {} },
+    contractFiles: { none: {} },
+    exportTasks: { none: {} },
+    propertyAffairFiles: { none: {} },
+    contractVoidRequestFiles: { none: {} },
+  };
 
-    await propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]);
+  it('deletes metadata with every relation guard in one transaction before physical cleanup', async () => {
+    const { service, db, tx, transactionCommit } = accessFixture();
 
-    expect(db.fileAsset.updateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        id: 71,
-        category: 'PROPERTY_AFFAIR',
-        lockedAt: null,
-        propertyAffairFiles: { none: {} },
-      }),
-      data: { lockedAt: expect.any(Date) },
+    const result = await propertyMethods(
+      service,
+    ).cleanupReleasedPropertyAffairFiles([71]);
+
+    expect(result).toEqual({ deletedFileIds: [71] });
+    expect(tx.fileAsset.findUnique).toHaveBeenCalledWith({
+      where: { id: 71 },
+      select: {
+        id: true,
+        category: true,
+        storageKey: true,
+        storedName: true,
+      },
     });
-    expect(unlink).not.toHaveBeenCalled();
-    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
-  });
-
-  it('rechecks references after claiming and releases the claim when a reference appears', async () => {
-    const { service, db } = accessFixture({ remainingReferences: 1 });
-
-    await propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]);
-
-    expect(db.fileAsset.count).toHaveBeenNthCalledWith(1, {
-      where: expect.objectContaining({ id: 71, OR: expect.any(Array) }),
-    });
-    expect(db.fileAsset.updateMany).toHaveBeenLastCalledWith({
+    expect(tx.fileAsset.deleteMany).toHaveBeenCalledWith({
       where: {
         id: 71,
         category: 'PROPERTY_AFFAIR',
-        lockedAt: expect.any(Date),
+        storageKey: 'property-affairs/stored.pdf',
+        storedName: 'stored.pdf',
+        ...allReferenceFilters,
       },
-      data: { lockedAt: null },
     });
+    expect(tx.fileAsset.updateMany).not.toHaveBeenCalled();
+    expect(tx.fileAsset.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      transactionCommit.mock.invocationCallOrder[0],
+    );
+    expect(transactionCommit.mock.invocationCallOrder[0]).toBeLessThan(
+      unlink.mock.invocationCallOrder[0],
+    );
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'tenantFiles',
+    'pricingRebateFiles',
+    'depositRefundFiles',
+    'checkoutSettlementItemFiles',
+    'paymentFiles',
+    'contractFiles',
+    'exportTasks',
+    'contractVoidRequestFiles',
+  ] as const)(
+    'does not delete metadata or physical content when %s gains a reference',
+    async (relationName) => {
+      const { service, tx } = accessFixture();
+      tx.fileAsset.deleteMany.mockImplementation(({ where }) =>
+        Promise.resolve({
+          count:
+            JSON.stringify((where as Record<string, unknown>)[relationName]) ===
+            JSON.stringify(allReferenceFilters[relationName])
+              ? 0
+              : 1,
+        }),
+      );
+
+      const result = await propertyMethods(
+        service,
+      ).cleanupReleasedPropertyAffairFiles([71]);
+
+      expect(result).toEqual({ deletedFileIds: [] });
+      expect(tx.fileAsset.deleteMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          [relationName]: { none: {} },
+        }),
+      });
+      expect(tx.fileAsset.updateMany).not.toHaveBeenCalled();
+      expect(unlink).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps metadata unlocked and supports retry when guarded delete returns count zero', async () => {
+    const { service, tx } = accessFixture();
+    tx.fileAsset.deleteMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await expect(
+      propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]),
+    ).resolves.toEqual({ deletedFileIds: [] });
     expect(unlink).not.toHaveBeenCalled();
-    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+    expect(tx.fileAsset.updateMany).not.toHaveBeenCalled();
+
+    await expect(
+      propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]),
+    ).resolves.toEqual({ deletedFileIds: [71] });
+    expect(tx.fileAsset.deleteMany).toHaveBeenCalledTimes(2);
+    expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not touch physical content after a database error and supports retry', async () => {
+    const { service, tx } = accessFixture();
+    const databaseError = new Error('forced metadata delete failure');
+    tx.fileAsset.deleteMany
+      .mockRejectedValueOnce(databaseError)
+      .mockResolvedValueOnce({ count: 1 });
+
+    await expect(
+      propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]),
+    ).rejects.toBe(databaseError);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(tx.fileAsset.updateMany).not.toHaveBeenCalled();
+
+    await expect(
+      propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]),
+    ).resolves.toEqual({ deletedFileIds: [71] });
+    expect(unlink).toHaveBeenCalledTimes(1);
   });
 
   it('retains a shared physical file while deleting only the unreferenced candidate row', async () => {
@@ -1906,30 +2095,35 @@ describe('FilesService property-affair attachments', () => {
       ),
     );
     expect(db.fileAsset.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.fileAsset.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      unlink.mock.invocationCallOrder[0],
+    );
   });
 
-  it('unlocks and preserves metadata when physical cleanup fails', async () => {
-    const { service, db } = accessFixture();
+  it('retries physical cleanup three times after committed metadata deletion and logs without a path', async () => {
+    const { service, db, transactionCommit } = accessFixture();
+    const loggerError = jest
+      .spyOn(
+        (service as unknown as { logger: { error: () => void } }).logger,
+        'error',
+      )
+      .mockImplementation();
     jest
       .mocked(unlink)
       .mockRejectedValue(Object.assign(new Error('busy'), { code: 'EBUSY' }));
 
     await expect(
       propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]),
-    ).rejects.toEqual(
-      expect.objectContaining({
-        message: '物业办事附件清理失败，请稍后重试',
-        status: 503,
-      }),
+    ).resolves.toEqual({ deletedFileIds: [71] });
+    expect(db.fileAsset.deleteMany).toHaveBeenCalledTimes(1);
+    expect(transactionCommit.mock.invocationCallOrder[0]).toBeLessThan(
+      unlink.mock.invocationCallOrder[0],
     );
-    expect(db.fileAsset.updateMany).toHaveBeenLastCalledWith({
-      where: {
-        id: 71,
-        category: 'PROPERTY_AFFAIR',
-        lockedAt: expect.any(Date),
-      },
-      data: { lockedAt: null },
-    });
-    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+    expect(unlink).toHaveBeenCalledTimes(3);
+    expect(db.fileAsset.updateMany).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(
+      '物业办事附件物理文件清理失败（错误代码：EBUSY）',
+    );
+    expect(loggerError.mock.calls.flat().join(' ')).not.toContain('stored.pdf');
   });
 });

@@ -90,18 +90,6 @@ const noFileAssetReferences = {
   propertyAffairFiles: { none: {} },
   contractVoidRequestFiles: { none: {} },
 } satisfies Prisma.FileAssetWhereInput;
-const anyFileAssetReference = [
-  { tenantFiles: { some: {} } },
-  { pricingRebateFiles: { some: {} } },
-  { depositRefundFiles: { some: {} } },
-  { checkoutSettlementItemFiles: { some: {} } },
-  { paymentFiles: { some: {} } },
-  { contractFiles: { some: {} } },
-  { exportTasks: { some: {} } },
-  { propertyAffairFiles: { some: {} } },
-  { contractVoidRequestFiles: { some: {} } },
-] satisfies Prisma.FileAssetWhereInput[];
-
 export const CONTRACT_VOID_PROOF_STAGED_TTL_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
@@ -252,6 +240,23 @@ export class FilesService {
     );
   }
 
+  private async cleanupReleasedPhysicalPropertyAffairFile(path: string) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await unlink(path);
+        return;
+      } catch (error) {
+        if ((error as { code?: unknown })?.code === 'ENOENT') return;
+        lastError = error;
+      }
+    }
+    const code = (lastError as { code?: unknown })?.code;
+    this.logger.error(
+      `物业办事附件物理文件清理失败（错误代码：${typeof code === 'string' ? code : 'UNKNOWN'}）`,
+    );
+  }
+
   private propertyAffairFileResult(asset: {
     id: number;
     originalName: string;
@@ -300,8 +305,13 @@ export class FilesService {
     const storedName = `${randomUUID()}${extension}`;
     const storageKey = `property-affairs/${storedName}`;
     const path = this.propertyAffairPath(storedName);
-    await mkdir(this.propertyAffairFolder(), { recursive: true });
-    await writeFile(path, file.buffer, { flag: 'wx' });
+    try {
+      await mkdir(this.propertyAffairFolder(), { recursive: true });
+      await writeFile(path, file.buffer, { flag: 'wx' });
+    } catch {
+      await this.cleanupFailedPropertyAffairFile(path);
+      throw new ServiceUnavailableException('附件保存失败，请稍后重试');
+    }
     const data = {
       storageKey,
       originalName,
@@ -363,7 +373,11 @@ export class FilesService {
       throw new NotFoundException('办事事项不存在');
     return (
       await this.prisma.db.propertyAffairFile.findMany({
-        where: { affairId, fileAsset: { category: 'PROPERTY_AFFAIR' } },
+        where: {
+          affairId,
+          affair: { deletedAt: null },
+          fileAsset: { category: 'PROPERTY_AFFAIR' },
+        },
         include: { fileAsset: true },
         orderBy: [{ createdAt: 'desc' }, { fileAssetId: 'desc' }],
       })
@@ -381,6 +395,7 @@ export class FilesService {
       where: {
         affairId,
         fileAssetId: fileId,
+        affair: { deletedAt: null },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
@@ -420,13 +435,19 @@ export class FilesService {
           where: {
             affairId,
             fileAssetId: fileId,
+            affair: { deletedAt: null },
             fileAsset: { category: 'PROPERTY_AFFAIR' },
           },
           include: { fileAsset: true },
         });
         if (!link) throw new NotFoundException('物业办事附件不存在');
         const deleted = await tx.propertyAffairFile.deleteMany({
-          where: { affairId, fileAssetId: fileId },
+          where: {
+            affairId,
+            fileAssetId: fileId,
+            affair: { deletedAt: null },
+            fileAsset: { category: 'PROPERTY_AFFAIR' },
+          },
         });
         if (deleted.count !== 1)
           throw new NotFoundException('物业办事附件不存在');
@@ -458,80 +479,56 @@ export class FilesService {
   async cleanupReleasedPropertyAffairFiles(fileIds: number[]) {
     const deletedFileIds: number[] = [];
     for (const fileId of new Set(fileIds)) {
-      const candidate = await this.prisma.db.fileAsset.findUnique({
-        where: { id: fileId },
-        select: {
-          id: true,
-          category: true,
-          storageKey: true,
-          storedName: true,
-          lockedAt: true,
-        },
-      });
-      if (!candidate || candidate.category !== 'PROPERTY_AFFAIR') continue;
-      const safeStoredName = basename(candidate.storedName);
-      if (
-        safeStoredName !== candidate.storedName ||
-        candidate.storageKey !== `property-affairs/${safeStoredName}`
-      ) {
-        continue;
-      }
-
-      const lockedAt = new Date();
-      const claimed = await this.prisma.db.fileAsset.updateMany({
-        where: {
-          id: fileId,
-          category: 'PROPERTY_AFFAIR',
-          lockedAt: null,
-          ...noFileAssetReferences,
-        },
-        data: { lockedAt },
-      });
-      if (claimed.count !== 1) continue;
-
-      const remainingReferences = await this.prisma.db.fileAsset.count({
-        where: { id: fileId, OR: anyFileAssetReference },
-      });
-      if (remainingReferences > 0) {
-        await this.prisma.db.fileAsset.updateMany({
-          where: { id: fileId, category: 'PROPERTY_AFFAIR', lockedAt },
-          data: { lockedAt: null },
-        });
-        continue;
-      }
-
-      const sharedPhysical = await this.prisma.db.fileAsset.count({
-        where: {
-          id: { not: fileId },
-          storedName: safeStoredName,
-          storageKey: { startsWith: 'property-affairs/' },
-        },
-      });
-      if (sharedPhysical === 0) {
-        try {
-          await unlink(this.propertyAffairPath(safeStoredName));
-        } catch (error) {
-          if ((error as { code?: unknown })?.code !== 'ENOENT') {
-            await this.prisma.db.fileAsset.updateMany({
-              where: { id: fileId, category: 'PROPERTY_AFFAIR', lockedAt },
-              data: { lockedAt: null },
-            });
-            throw new ServiceUnavailableException(
-              '物业办事附件清理失败，请稍后重试',
-            );
+      const released = await this.prisma.db.$transaction(
+        async (tx) => {
+          const candidate = await tx.fileAsset.findUnique({
+            where: { id: fileId },
+            select: {
+              id: true,
+              category: true,
+              storageKey: true,
+              storedName: true,
+            },
+          });
+          if (!candidate || candidate.category !== 'PROPERTY_AFFAIR')
+            return null;
+          const safeStoredName = basename(candidate.storedName);
+          if (
+            safeStoredName !== candidate.storedName ||
+            candidate.storageKey !== `property-affairs/${safeStoredName}`
+          ) {
+            return null;
           }
-        }
-      }
 
-      const deleted = await this.prisma.db.fileAsset.deleteMany({
-        where: {
-          id: fileId,
-          category: 'PROPERTY_AFFAIR',
-          lockedAt,
-          ...noFileAssetReferences,
+          const sharedPhysical = await tx.fileAsset.count({
+            where: {
+              id: { not: fileId },
+              storedName: safeStoredName,
+              storageKey: { startsWith: 'property-affairs/' },
+            },
+          });
+          const deleted = await tx.fileAsset.deleteMany({
+            where: {
+              id: fileId,
+              category: 'PROPERTY_AFFAIR',
+              storageKey: `property-affairs/${safeStoredName}`,
+              storedName: safeStoredName,
+              ...noFileAssetReferences,
+            },
+          });
+          if (deleted.count !== 1) return null;
+          return {
+            path: this.propertyAffairPath(safeStoredName),
+            removePhysical: sharedPhysical === 0,
+          };
         },
-      });
-      if (deleted.count === 1) deletedFileIds.push(fileId);
+        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+      );
+      if (!released) continue;
+      deletedFileIds.push(fileId);
+      if (released.removePhysical) {
+        await this.cleanupReleasedPhysicalPropertyAffairFile(released.path);
+      }
     }
     return { deletedFileIds };
   }
