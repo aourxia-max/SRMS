@@ -13,7 +13,11 @@ import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { FilesService } from '../src/files/files.service';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { SecurityAuditChainService } from '../src/system/security-audit-chain.service';
+import { PropertyAffairsService } from '../src/property-affairs/property-affairs.service';
+import {
+  hashSecurityAuditRecord,
+  SecurityAuditChainService,
+} from '../src/system/security-audit-chain.service';
 import { propertyAffairUploadBufferLimit } from '../src/property-affairs/property-affairs.controller';
 import {
   collectPropertyAffairCleanupTargets,
@@ -41,6 +45,28 @@ function collectBinaryResponse(
   });
   response.on('end', () => callback(null, Buffer.concat(chunks)));
   response.on('error', (error: Error) => callback(error, Buffer.alloc(0)));
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function shanghaiDateKey(at = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .formatToParts(at)
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}${parts.month}${parts.day}`;
 }
 
 describe('property affairs API workflows and invariants (e2e)', () => {
@@ -102,6 +128,29 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     return (response.body.data.items as Array<{ id: number }>).some(
       (item) => item.id === affairId,
     );
+  }
+
+  async function waitForTenantRowLock(id: number) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        await prisma.db.$transaction(async (tx) => {
+          await tx.$queryRaw<Array<{ id: number }>>`
+            SELECT id FROM tenants WHERE id = ${id} FOR UPDATE NOWAIT
+          `;
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2010'
+        ) {
+          return;
+        }
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('更新事务未锁定新增承租人');
   }
 
   function reverseRelationQueries(): Array<Record<string, number>> {
@@ -552,6 +601,124 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     });
   });
 
+  it('serializes relation saving before target deletion and keeps the committed snapshot as history', async () => {
+    currentUser = superAdmin;
+    const tenant = await prisma.db.tenant.create({
+      data: { name: `${titlePrefix}-保存先提交` },
+    });
+    const created = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-保存删除竞态一`,
+        content: '验证保存先提交时关系快照合法',
+      })
+      .expect(201);
+    const affairId = created.body.data.id as number;
+    createdAffairIds.add(affairId);
+    const blockerReady = deferred();
+    const blockerRelease = deferred();
+    const blocker = prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT id FROM property_affairs WHERE id = ${affairId} FOR UPDATE
+      `;
+      blockerReady.resolve();
+      await blockerRelease.promise;
+    });
+    await blockerReady.promise;
+    let updatePromise: Promise<SuperAgentResponse> | undefined;
+    let deletionPromise: Promise<unknown> | undefined;
+
+    try {
+      updatePromise = Promise.resolve(
+        request(app.getHttpServer())
+          .patch(`/api/property-affairs/${affairId}`)
+          .send({ version: 1, tenantIds: [tenant.id] })
+          .expect(200),
+      );
+      await waitForTenantRowLock(tenant.id);
+
+      let deletionSettled = false;
+      deletionPromise = Promise.resolve(
+        prisma.db.tenant.delete({ where: { id: tenant.id } }),
+      ).finally(() => {
+        deletionSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(deletionSettled).toBe(false);
+
+      blockerRelease.resolve();
+      const updated = await updatePromise;
+      await blocker;
+      await deletionPromise;
+      expect(updated.body.data.tenants[0]).toMatchObject({
+        id: tenant.id,
+        snapshotLabel: `${titlePrefix}-保存先提交`,
+      });
+      const detail = await request(app.getHttpServer())
+        .get(`/api/property-affairs/${affairId}`)
+        .expect(200);
+      expect(detail.body.data.tenants[0]).toMatchObject({
+        id: tenant.id,
+        snapshotLabel: `${titlePrefix}-保存先提交`,
+        currentStatus: null,
+        available: false,
+      });
+    } finally {
+      blockerRelease.resolve();
+      await blocker.catch(() => undefined);
+      await updatePromise?.catch(() => undefined);
+      await deletionPromise?.catch(() => undefined);
+      await prisma.db.tenant.deleteMany({ where: { id: tenant.id } });
+    }
+  }, 30000);
+
+  it('rejects a newly linked target when its deletion transaction commits first', async () => {
+    currentUser = superAdmin;
+    const tenant = await prisma.db.tenant.create({
+      data: { name: `${titlePrefix}-删除先提交` },
+    });
+    const created = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-保存删除竞态二`,
+        content: '验证删除先提交时不能新增悬空关系',
+      })
+      .expect(201);
+    const affairId = created.body.data.id as number;
+    createdAffairIds.add(affairId);
+    const deleteReady = deferred();
+    const deleteRelease = deferred();
+    const deleting = prisma.db.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT id FROM tenants WHERE id = ${tenant.id} FOR UPDATE
+      `;
+      deleteReady.resolve();
+      await deleteRelease.promise;
+      await tx.tenant.delete({ where: { id: tenant.id } });
+    });
+    await deleteReady.promise;
+
+    try {
+      const updating = Promise.resolve(
+        request(app.getHttpServer())
+          .patch(`/api/property-affairs/${affairId}`)
+          .send({ version: 1, tenantIds: [tenant.id] }),
+      );
+      deleteRelease.resolve();
+      await deleting;
+      const response = await updating;
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe(`承租人 ${tenant.id} 不存在`);
+      await expect(
+        prisma.db.propertyAffairTenant.count({ where: { affairId } }),
+      ).resolves.toBe(0);
+    } finally {
+      deleteRelease.resolve();
+      await deleting.catch(() => undefined);
+      await prisma.db.tenant.deleteMany({ where: { id: tenant.id } });
+    }
+  }, 30000);
+
   it('returns Chinese HTTP 400 for illegal update and progress transitions', async () => {
     currentUser = admin;
     const created = await request(app.getHttpServer())
@@ -588,6 +755,13 @@ describe('property affairs API workflows and invariants (e2e)', () => {
 
   it('allocates unique same-day affair numbers under concurrent real-MySQL creates', async () => {
     currentUser = superAdmin;
+    const dateKey = shanghaiDateKey();
+    const previousSequence =
+      await prisma.db.propertyAffairDailySequence.findUnique({
+        where: { dateKey },
+        select: { currentValue: true },
+      });
+    const previousMaximumSequence = previousSequence?.currentValue ?? 0;
     const responses = await Promise.all(
       Array.from({ length: 6 }, (_, index) =>
         request(app.getHttpServer())
@@ -604,8 +778,19 @@ describe('property affairs API workflows and invariants (e2e)', () => {
       createdAffairIds.add(data.id);
       return data.affairNo;
     });
-    expect(new Set(numbers).size).toBe(numbers.length);
-    expect(numbers.every((number) => /^WY\d{12}$/.test(number))).toBe(true);
+    const expectedPrefix = `WY${dateKey}`;
+    expect(numbers.every((number) => number.startsWith(expectedPrefix))).toBe(
+      true,
+    );
+    const actualSequences = numbers
+      .map((number) => Number(number.slice(expectedPrefix.length)))
+      .sort((left, right) => left - right);
+    expect(actualSequences).toEqual(
+      Array.from(
+        { length: 6 },
+        (_, index) => previousMaximumSequence + index + 1,
+      ),
+    );
   });
 
   it('completes, reopens, cancels, and reopens an affair through appended progress', async () => {
@@ -739,6 +924,105 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     await request(app.getHttpServer())
       .get(`/api/property-affairs/${affairId}`)
       .expect(404);
+  });
+
+  it('persists a real permanent-delete audit successor and safely restores the isolated chain tail', async () => {
+    const affair = await prisma.db.propertyAffair.create({
+      data: {
+        affairNo: `WYAUD${marker}`,
+        title: `${titlePrefix}-真实审计链`,
+        content: '验证永久删除后安全审计仍持久存在',
+        createdBy: superAdmin.id,
+        updatedBy: superAdmin.id,
+        deletedAt: new Date(),
+        deletedBy: superAdmin.id,
+      },
+    });
+    createdAffairIds.add(affair.id);
+    const headBefore = await prisma.db.securityAuditChainHead.findUniqueOrThrow(
+      {
+        where: { id: 1 },
+      },
+    );
+    let auditId: number | undefined;
+    let auditHash: string | undefined;
+
+    try {
+      const service = new PropertyAffairsService(
+        prisma,
+        new SecurityAuditChainService(),
+      );
+      await service.permanentDelete(affair.id, affair.version, superAdmin, {
+        ipAddress: '127.0.0.1',
+        userAgent: 'SRMS物业办事真实审计E2E',
+      });
+
+      await expect(
+        prisma.db.propertyAffair.findUnique({ where: { id: affair.id } }),
+      ).resolves.toBeNull();
+      const audit = await prisma.db.securityAuditLog.findFirstOrThrow({
+        where: {
+          eventType: 'PROPERTY_AFFAIR_PERMANENT_DELETE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: affair.id,
+        },
+      });
+      auditId = audit.id;
+      auditHash = audit.recordHash ?? undefined;
+      expect(audit.previousHash).toBe(headBefore.latestRecordHash);
+      expect(audit.recordHash).toBe(
+        hashSecurityAuditRecord({
+          eventType: audit.eventType,
+          entityType: audit.entityType,
+          entityId: audit.entityId,
+          operatorId: audit.operatorId,
+          eventData: audit.eventData,
+          reason: audit.reason,
+          occurredAt: audit.occurredAt,
+          previousHash: audit.previousHash,
+        }),
+      );
+      await expect(
+        prisma.db.securityAuditChainHead.findUniqueOrThrow({
+          where: { id: 1 },
+        }),
+      ).resolves.toMatchObject({ latestRecordHash: audit.recordHash });
+      await expect(
+        prisma.db.operationLog.count({
+          where: {
+            module: 'PROPERTY_AFFAIRS',
+            action: 'PERMANENT_DELETE',
+            entityId: affair.id,
+          },
+        }),
+      ).resolves.toBe(1);
+    } finally {
+      if (auditId && auditHash) {
+        await prisma.db.$transaction(async (tx) => {
+          const [lockedHead] = await tx.$queryRaw<
+            Array<{ latestRecordHash: string | null }>
+          >`
+            SELECT latest_record_hash AS latestRecordHash
+            FROM security_audit_chain_heads WHERE id = 1 FOR UPDATE
+          `;
+          if (lockedHead?.latestRecordHash !== auditHash) {
+            throw new Error('安全审计链已出现其他后继事件，拒绝清理测试链尾');
+          }
+          await tx.operationLog.deleteMany({
+            where: { module: 'PROPERTY_AFFAIRS', entityId: affair.id },
+          });
+          await tx.securityAuditLog.delete({ where: { id: auditId } });
+          await tx.securityAuditChainHead.update({
+            where: { id: 1 },
+            data: { latestRecordHash: headBefore.latestRecordHash },
+          });
+        });
+      }
+      await prisma.db.operationLog.deleteMany({
+        where: { module: 'PROPERTY_AFFAIRS', entityId: affair.id },
+      });
+      await prisma.db.propertyAffair.deleteMany({ where: { id: affair.id } });
+    }
   });
 
   it('uploads, lists in detail, previews, downloads, isolates, and unlinks an attachment', async () => {

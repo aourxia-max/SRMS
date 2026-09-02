@@ -48,7 +48,29 @@ const baseAffair = {
 function createFixture() {
   const tx = {
     $executeRaw: jest.fn().mockResolvedValue(1),
-    $queryRaw: jest.fn().mockResolvedValue([{ currentValue: 1 }]),
+    $queryRaw: jest.fn().mockImplementation((strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (sql.includes('FROM buildings'))
+        return Promise.resolve([
+          { id: 1, buildingNo: '1栋', buildingName: '东区', status: 'ACTIVE' },
+        ]);
+      if (sql.includes('FROM rooms'))
+        return Promise.resolve([
+          {
+            id: 11,
+            fullHouseNo: '1栋101',
+            roomStatus: 'MAINTENANCE',
+            deletedAt: null,
+          },
+        ]);
+      if (sql.includes('FROM tenants'))
+        return Promise.resolve([{ id: 21, name: '张三', status: 'ACTIVE' }]);
+      if (sql.includes('FROM contracts'))
+        return Promise.resolve([
+          { id: 31, contractNo: 'HT-31', status: 'ACTIVE' },
+        ]);
+      return Promise.resolve([{ currentValue: 1 }]);
+    }),
     building: {
       findMany: jest
         .fn()
@@ -174,38 +196,21 @@ describe('PropertyAffairsService', () => {
       'ON DUPLICATE KEY UPDATE current_value = current_value + 1',
     );
     expect(sequenceUpsert.slice(1)).toEqual(['20260902']);
-    const sequenceLock = tx.$queryRaw.mock.calls[0];
+    const sequenceLock = tx.$queryRaw.mock.calls.find(
+      ([strings]: [TemplateStringsArray]) =>
+        strings.join('?').includes('current_value AS currentValue'),
+    );
+    expect(sequenceLock).toBeDefined();
+    if (!sequenceLock) throw new Error('未执行事项编号行锁');
     expect((sequenceLock[0] as TemplateStringsArray).join('?')).toContain(
       'FOR UPDATE',
     );
     expect(sequenceLock.slice(1)).toEqual(['20260902']);
 
-    expect(tx.building.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [1] } },
-      select: {
-        id: true,
-        buildingNo: true,
-        buildingName: true,
-        status: true,
-      },
-    });
-    expect(tx.room.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [11] } },
-      select: {
-        id: true,
-        fullHouseNo: true,
-        roomStatus: true,
-        deletedAt: true,
-      },
-    });
-    expect(tx.tenant.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [21] } },
-      select: { id: true, name: true, status: true },
-    });
-    expect(tx.contract.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [31] } },
-      select: { id: true, contractNo: true, status: true },
-    });
+    expect(tx.building.findMany).not.toHaveBeenCalled();
+    expect(tx.room.findMany).not.toHaveBeenCalled();
+    expect(tx.tenant.findMany).not.toHaveBeenCalled();
+    expect(tx.contract.findMany).not.toHaveBeenCalled();
     expect(tx.user.findFirst).toHaveBeenCalledWith({
       where: {
         id: 9,
@@ -353,7 +358,20 @@ describe('PropertyAffairsService', () => {
     'rejects the whole transaction before affair writes when a requested %s is missing',
     async (relation, message) => {
       const { service, tx } = createFixture();
-      tx[relation].findMany.mockResolvedValue([]);
+      const missingTable = `${relation}s`;
+      const defaultQuery = tx.$queryRaw.getMockImplementation() as
+        | ((
+            strings: TemplateStringsArray,
+            ...values: unknown[]
+          ) => Promise<unknown>)
+        | undefined;
+      if (!defaultQuery) throw new Error('关系锁查询夹具未初始化');
+      tx.$queryRaw.mockImplementation(
+        (strings: TemplateStringsArray, ...values: unknown[]) =>
+          strings.join('?').includes(`FROM ${missingTable}`)
+            ? Promise.resolve([])
+            : defaultQuery(strings, ...values),
+      );
 
       await expect(
         service.create(
@@ -766,6 +784,38 @@ describe('PropertyAffairsService', () => {
       ],
     };
     const tx = {
+      $queryRaw: jest
+        .fn()
+        .mockImplementation((strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.includes('FROM buildings'))
+            return Promise.resolve([
+              {
+                id: 2,
+                buildingNo: '2栋',
+                buildingName: null,
+                status: 'ACTIVE',
+              },
+            ]);
+          if (sql.includes('FROM rooms'))
+            return Promise.resolve([
+              {
+                id: 12,
+                fullHouseNo: '2栋201',
+                roomStatus: 'RENTED',
+                deletedAt: null,
+              },
+            ]);
+          if (sql.includes('FROM tenants'))
+            return Promise.resolve([
+              { id: 22, name: '李四', status: 'ACTIVE' },
+            ]);
+          if (sql.includes('FROM contracts'))
+            return Promise.resolve([
+              { id: 32, contractNo: 'HT-32', status: 'ACTIVE' },
+            ]);
+          return Promise.resolve([]);
+        }),
       propertyAffair: {
         findFirst: jest.fn().mockResolvedValue(current),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -845,6 +895,68 @@ describe('PropertyAffairsService', () => {
     tenantIds: [22],
     contractIds: [32],
   };
+
+  it('locks every newly linked target in fixed relation-type order before reading snapshots', async () => {
+    const { service, tx } = updateFixture(PropertyAffairStatus.PENDING);
+    tx.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (sql.includes('FROM buildings')) {
+        return Promise.resolve([
+          { id: 2, buildingNo: '2栋', buildingName: null, status: 'ACTIVE' },
+          { id: 3, buildingNo: '3栋', buildingName: null, status: 'ACTIVE' },
+        ]);
+      }
+      if (sql.includes('FROM rooms'))
+        return Promise.resolve([
+          {
+            id: 12,
+            fullHouseNo: '2栋201',
+            roomStatus: 'RENTED',
+            deletedAt: null,
+          },
+        ]);
+      if (sql.includes('FROM tenants'))
+        return Promise.resolve([{ id: 22, name: '李四', status: 'ACTIVE' }]);
+      if (sql.includes('FROM contracts'))
+        return Promise.resolve([
+          { id: 32, contractNo: 'HT-32', status: 'ACTIVE' },
+        ]);
+      return Promise.resolve([]);
+    });
+    tx.building.findMany.mockResolvedValue([
+      { id: 2, buildingNo: '2栋', buildingName: null, status: 'ACTIVE' },
+      { id: 3, buildingNo: '3栋', buildingName: null, status: 'ACTIVE' },
+    ]);
+
+    await service.update(
+      41,
+      {
+        version: 3,
+        title: '按固定顺序锁定新增关系',
+        ...replacementRelations,
+        buildingIds: [3, 2],
+      },
+      admin,
+    );
+
+    const lockSql = tx.$queryRaw.mock.calls.map(
+      ([strings]: [TemplateStringsArray]) => strings.join('?'),
+    );
+    expect(lockSql).toHaveLength(4);
+    expect(lockSql[0]).toContain('FROM buildings');
+    expect(lockSql[1]).toContain('FROM rooms');
+    expect(lockSql[2]).toContain('FROM tenants');
+    expect(lockSql[3]).toContain('FROM contracts');
+    expect(lockSql.every((sql: string) => sql.includes('FOR UPDATE'))).toBe(
+      true,
+    );
+    expect(
+      (tx.$queryRaw.mock.calls[0][1] as { values: unknown[] }).values,
+    ).toEqual([2, 3]);
+    expect(tx.building.findMany.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.$queryRaw.mock.invocationCallOrder[3],
+    );
+  });
 
   it('preserves omitted relations and their original snapshots on a partial update', async () => {
     const { service, tx, current } = updateFixture(

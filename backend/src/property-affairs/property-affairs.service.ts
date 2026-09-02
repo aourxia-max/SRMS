@@ -875,69 +875,26 @@ export class PropertyAffairsService {
     dto: PropertyAffairRelationsDto,
     tx: Prisma.TransactionClient,
   ): Promise<ResolvedRelations> {
-    const [buildings, rooms, tenants, contracts] = await Promise.all([
-      tx.building.findMany({
-        where: { id: { in: dto.buildingIds } },
-        select: {
-          id: true,
-          buildingNo: true,
-          buildingName: true,
-          status: true,
-        },
-      }),
-      tx.room.findMany({
-        where: { id: { in: dto.roomIds } },
-        select: {
-          id: true,
-          fullHouseNo: true,
-          roomStatus: true,
-          deletedAt: true,
-        },
-      }),
-      tx.tenant.findMany({
-        where: { id: { in: dto.tenantIds } },
-        select: { id: true, name: true, status: true },
-      }),
-      tx.contract.findMany({
-        where: { id: { in: dto.contractIds } },
-        select: { id: true, contractNo: true, status: true },
-      }),
-    ]);
-
-    this.assertAllFound('楼栋', dto.buildingIds, buildings);
-    this.assertAllFound('房源', dto.roomIds, rooms);
-    this.assertAllFound('承租人', dto.tenantIds, tenants);
-    this.assertAllFound('合同', dto.contractIds, contracts);
-
     return {
-      buildings: buildings.map((item) => ({
-        id: item.id,
-        targetLabel: this.buildingLabel(item),
-        currentLabel: this.buildingLabel(item),
-        currentStatus: item.status,
-        available: this.isBuildingAvailable(item.status),
-      })),
-      rooms: rooms.map((item) => ({
-        id: item.id,
-        targetLabel: item.fullHouseNo,
-        currentLabel: item.fullHouseNo,
-        currentStatus: item.roomStatus,
-        available: this.isRoomAvailable(item.roomStatus, item.deletedAt),
-      })),
-      tenants: tenants.map((item) => ({
-        id: item.id,
-        targetLabel: item.name,
-        currentLabel: item.name,
-        currentStatus: item.status,
-        available: this.isTenantAvailable(item.status),
-      })),
-      contracts: contracts.map((item) => ({
-        id: item.id,
-        targetLabel: item.contractNo,
-        currentLabel: item.contractNo,
-        currentStatus: item.status,
-        available: this.isContractAvailable(item.status),
-      })),
+      buildings: await this.lockRelationTargets(
+        tx,
+        '楼栋',
+        'buildings',
+        dto.buildingIds,
+      ),
+      rooms: await this.lockRelationTargets(tx, '房源', 'rooms', dto.roomIds),
+      tenants: await this.lockRelationTargets(
+        tx,
+        '承租人',
+        'tenants',
+        dto.tenantIds,
+      ),
+      contracts: await this.lockRelationTargets(
+        tx,
+        '合同',
+        'contracts',
+        dto.contractIds,
+      ),
     };
   }
 
@@ -953,27 +910,14 @@ export class PropertyAffairsService {
       const currentSet = new Set(currentIds);
       const requestedSet = new Set(dto.buildingIds);
       const addedIds = dto.buildingIds.filter((id) => !currentSet.has(id));
-      const rows = addedIds.length
-        ? await tx.building.findMany({
-            where: { id: { in: addedIds } },
-            select: {
-              id: true,
-              buildingNo: true,
-              buildingName: true,
-              status: true,
-            },
-          })
-        : [];
-      this.assertAllFound('楼栋', addedIds, rows);
       changes.buildings = {
         removedIds: currentIds.filter((id) => !requestedSet.has(id)),
-        added: rows.map((item) => ({
-          id: item.id,
-          targetLabel: this.buildingLabel(item),
-          currentLabel: this.buildingLabel(item),
-          currentStatus: item.status,
-          available: this.isBuildingAvailable(item.status),
-        })),
+        added: await this.lockRelationTargets(
+          tx,
+          '楼栋',
+          'buildings',
+          addedIds,
+        ),
       };
     }
 
@@ -982,27 +926,9 @@ export class PropertyAffairsService {
       const currentSet = new Set(currentIds);
       const requestedSet = new Set(dto.roomIds);
       const addedIds = dto.roomIds.filter((id) => !currentSet.has(id));
-      const rows = addedIds.length
-        ? await tx.room.findMany({
-            where: { id: { in: addedIds } },
-            select: {
-              id: true,
-              fullHouseNo: true,
-              roomStatus: true,
-              deletedAt: true,
-            },
-          })
-        : [];
-      this.assertAllFound('房源', addedIds, rows);
       changes.rooms = {
         removedIds: currentIds.filter((id) => !requestedSet.has(id)),
-        added: rows.map((item) => ({
-          id: item.id,
-          targetLabel: item.fullHouseNo,
-          currentLabel: item.fullHouseNo,
-          currentStatus: item.roomStatus,
-          available: this.isRoomAvailable(item.roomStatus, item.deletedAt),
-        })),
+        added: await this.lockRelationTargets(tx, '房源', 'rooms', addedIds),
       };
     }
 
@@ -1011,22 +937,14 @@ export class PropertyAffairsService {
       const currentSet = new Set(currentIds);
       const requestedSet = new Set(dto.tenantIds);
       const addedIds = dto.tenantIds.filter((id) => !currentSet.has(id));
-      const rows = addedIds.length
-        ? await tx.tenant.findMany({
-            where: { id: { in: addedIds } },
-            select: { id: true, name: true, status: true },
-          })
-        : [];
-      this.assertAllFound('承租人', addedIds, rows);
       changes.tenants = {
         removedIds: currentIds.filter((id) => !requestedSet.has(id)),
-        added: rows.map((item) => ({
-          id: item.id,
-          targetLabel: item.name,
-          currentLabel: item.name,
-          currentStatus: item.status,
-          available: this.isTenantAvailable(item.status),
-        })),
+        added: await this.lockRelationTargets(
+          tx,
+          '承租人',
+          'tenants',
+          addedIds,
+        ),
       };
     }
 
@@ -1035,26 +953,141 @@ export class PropertyAffairsService {
       const currentSet = new Set(currentIds);
       const requestedSet = new Set(dto.contractIds);
       const addedIds = dto.contractIds.filter((id) => !currentSet.has(id));
-      const rows = addedIds.length
-        ? await tx.contract.findMany({
-            where: { id: { in: addedIds } },
-            select: { id: true, contractNo: true, status: true },
-          })
-        : [];
-      this.assertAllFound('合同', addedIds, rows);
       changes.contracts = {
         removedIds: currentIds.filter((id) => !requestedSet.has(id)),
-        added: rows.map((item) => ({
-          id: item.id,
-          targetLabel: item.contractNo,
-          currentLabel: item.contractNo,
-          currentStatus: item.status,
-          available: this.isContractAvailable(item.status),
-        })),
+        added: await this.lockRelationTargets(
+          tx,
+          '合同',
+          'contracts',
+          addedIds,
+        ),
       };
     }
 
     return changes;
+  }
+
+  private async lockRelationTargets(
+    tx: Prisma.TransactionClient,
+    label: string,
+    table: 'buildings' | 'rooms' | 'tenants' | 'contracts',
+    ids: number[],
+  ): Promise<ResolvedRelation[]> {
+    const sortedIds = [...ids].sort((left, right) => left - right);
+    if (!sortedIds.length) return [];
+
+    switch (table) {
+      case 'buildings': {
+        const rows = await tx.$queryRaw<
+          Array<{
+            id: number | bigint;
+            buildingNo: string;
+            buildingName: string | null;
+            status: string;
+          }>
+        >`
+          SELECT id, building_no AS buildingNo,
+                 building_name AS buildingName, status
+          FROM buildings
+          WHERE id IN (${Prisma.join(sortedIds)})
+          ORDER BY id FOR UPDATE
+        `;
+        this.assertAllFound(
+          label,
+          sortedIds,
+          rows.map((row) => ({ id: Number(row.id) })),
+        );
+        return rows.map((row) => {
+          const id = Number(row.id);
+          const targetLabel = this.buildingLabel(row);
+          return {
+            id,
+            targetLabel,
+            currentLabel: targetLabel,
+            currentStatus: row.status,
+            available: this.isBuildingAvailable(row.status),
+          };
+        });
+      }
+      case 'rooms': {
+        const rows = await tx.$queryRaw<
+          Array<{
+            id: number | bigint;
+            fullHouseNo: string;
+            roomStatus: string;
+            deletedAt: Date | null;
+          }>
+        >`
+          SELECT id, full_house_no AS fullHouseNo,
+                 room_status AS roomStatus, deleted_at AS deletedAt
+          FROM rooms
+          WHERE id IN (${Prisma.join(sortedIds)})
+          ORDER BY id FOR UPDATE
+        `;
+        this.assertAllFound(
+          label,
+          sortedIds,
+          rows.map((row) => ({ id: Number(row.id) })),
+        );
+        return rows.map((row) => ({
+          id: Number(row.id),
+          targetLabel: row.fullHouseNo,
+          currentLabel: row.fullHouseNo,
+          currentStatus: row.roomStatus,
+          available: this.isRoomAvailable(row.roomStatus, row.deletedAt),
+        }));
+      }
+      case 'tenants': {
+        const rows = await tx.$queryRaw<
+          Array<{
+            id: number | bigint;
+            name: string;
+            status: string;
+          }>
+        >`
+          SELECT id, name, status FROM tenants
+          WHERE id IN (${Prisma.join(sortedIds)})
+          ORDER BY id FOR UPDATE
+        `;
+        this.assertAllFound(
+          label,
+          sortedIds,
+          rows.map((row) => ({ id: Number(row.id) })),
+        );
+        return rows.map((row) => ({
+          id: Number(row.id),
+          targetLabel: row.name,
+          currentLabel: row.name,
+          currentStatus: row.status,
+          available: this.isTenantAvailable(row.status),
+        }));
+      }
+      case 'contracts': {
+        const rows = await tx.$queryRaw<
+          Array<{
+            id: number | bigint;
+            contractNo: string;
+            status: string;
+          }>
+        >`
+          SELECT id, contract_no AS contractNo, status FROM contracts
+          WHERE id IN (${Prisma.join(sortedIds)})
+          ORDER BY id FOR UPDATE
+        `;
+        this.assertAllFound(
+          label,
+          sortedIds,
+          rows.map((row) => ({ id: Number(row.id) })),
+        );
+        return rows.map((row) => ({
+          id: Number(row.id),
+          targetLabel: row.contractNo,
+          currentLabel: row.contractNo,
+          currentStatus: row.status,
+          available: this.isContractAvailable(row.status),
+        }));
+      }
+    }
   }
 
   private async applyRelationChanges(
