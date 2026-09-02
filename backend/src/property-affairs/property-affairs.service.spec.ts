@@ -294,6 +294,7 @@ describe('PropertyAffairsService', () => {
   });
 
   it('allows the final four-digit daily sequence value 9999', async () => {
+    jest.useFakeTimers().setSystemTime(createdAt);
     const { service, tx } = createFixture();
     tx.$queryRaw.mockResolvedValue([{ currentValue: 9999 }]);
 

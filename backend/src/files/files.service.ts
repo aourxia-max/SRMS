@@ -79,6 +79,18 @@ const propertyAffairExtensions: Record<string, string[]> = {
     '.xlsx',
   ],
 };
+
+function normalizeMultipartFilename(value: string) {
+  if ([...value].some((character) => character.charCodeAt(0) > 0xff)) {
+    return value;
+  }
+  const decoded = Buffer.from(value, 'latin1').toString('utf8');
+  return decoded.includes('\uFFFD') ||
+    Buffer.from(decoded, 'utf8').toString('latin1') !== value
+    ? value
+    : decoded;
+}
+
 const noFileAssetReferences = {
   tenantFiles: { none: {} },
   pricingRebateFiles: { none: {} },
@@ -293,7 +305,9 @@ export class FilesService {
     if (file.size > limit || file.buffer.length > limit) {
       throw new BadRequestException('附件超过允许大小');
     }
-    const originalName = basename(file.originalname);
+    const originalName = basename(
+      normalizeMultipartFilename(file.originalname),
+    );
     const extension = extname(originalName).toLowerCase();
     if (
       !propertyAffairExtensions[file.mimetype]?.includes(extension) ||

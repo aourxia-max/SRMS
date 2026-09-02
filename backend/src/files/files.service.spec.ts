@@ -1276,6 +1276,28 @@ describe('FilesService property-affair attachments', () => {
     },
   );
 
+  it('restores a UTF-8 filename decoded as Latin-1 by the multipart parser', async () => {
+    const { service, tx } = uploadFixture();
+    const buffer = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const multipartName = Buffer.from('现场 照片.png', 'utf8').toString(
+      'latin1',
+    );
+
+    const result = await save(service, 41, {
+      originalname: multipartName,
+      mimetype: 'image/png',
+      size: buffer.length,
+      buffer,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ originalName: '现场 照片.png' }),
+    );
+    expect(tx.fileAsset.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ originalName: '现场 照片.png' }),
+    });
+  });
+
   it('rejects a visitor before affair, transaction, or physical-file work', async () => {
     const { service, db } = uploadFixture();
     const buffer = Buffer.from('%PDF-1.7\n');

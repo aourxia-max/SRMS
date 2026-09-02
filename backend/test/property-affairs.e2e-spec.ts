@@ -488,14 +488,40 @@ describe('property affairs API workflows and invariants (e2e)', () => {
       .get(`/api/property-affairs/${main.id}`)
       .expect(200);
     expect(detail.body.data).toMatchObject({
-      buildingIds: [buildingId],
-      roomIds: [roomId],
-      tenantIds: [tenantId],
-      contractIds: [contractId],
+      buildings: [expect.objectContaining({ id: buildingId })],
+      rooms: [expect.objectContaining({ id: roomId })],
+      tenants: [expect.objectContaining({ id: tenantId })],
+      contracts: [expect.objectContaining({ id: contractId })],
     });
 
     for (const query of reverseRelationQueries()) {
       expect(await listContains(main.id, query)).toBe(true);
+    }
+  });
+
+  it('completes, reopens, cancels, and reopens an affair through appended progress', async () => {
+    currentUser = superAdmin;
+    const main = workflowAffairs.get(UserRole.SUPER_ADMIN);
+    if (!main) throw new Error('超级管理员物业办事流程未初始化');
+
+    const transitions = [
+      ['COMPLETED', '办理完成'],
+      ['IN_PROGRESS', '重新开启继续办理'],
+      ['CANCELLED', '确认取消'],
+      ['IN_PROGRESS', '取消后重新开启'],
+    ] as const;
+
+    for (const [nextStatus, content] of transitions) {
+      const response = await request(app.getHttpServer())
+        .post(`/api/property-affairs/${main.id}/progress`)
+        .send({ version: main.version, content, nextStatus })
+        .expect(201);
+      expect(response.body.data).toMatchObject({
+        id: main.id,
+        status: nextStatus,
+        version: main.version + 1,
+      });
+      main.version = response.body.data.version as number;
     }
   });
 
