@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElMessageBox, ElOption, ElPagination, ElSelect } from 'element-plus'
 import { createPinia } from 'pinia'
 import { defineComponent } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../services/property-affairs'
 import { http } from '../services/http'
 import { useSessionStore, type SessionUser } from '../stores/session'
@@ -28,6 +28,8 @@ vi.mock('../services/property-affairs', async (importOriginal) => {
 
 vi.mock('../services/http', () => ({ http: { get: vi.fn() } }))
 vi.mock('../services/contracts', () => ({ listContracts: vi.fn().mockResolvedValue([]) }))
+
+enableAutoUnmount(afterEach)
 
 const Page = defineComponent({ template: '<div />' })
 const affair: PropertyAffairSummary = {
