@@ -1394,6 +1394,7 @@ model PropertyAffairProgress {
 model PropertyAffairFile {
   affairId    Int            @map("affair_id") @db.UnsignedInt
   fileAssetId Int            @map("file_asset_id") @db.UnsignedInt
+  createdBy   Int            @map("created_by") @db.UnsignedInt
   createdAt   DateTime       @default(now()) @map("created_at") @db.DateTime(3)
   affair      PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
   fileAsset   FileAsset      @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)

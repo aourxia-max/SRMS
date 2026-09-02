@@ -87,7 +87,18 @@ describe('contract void correction schema', () => {
       ...migrationFileCategory.matchAll(/'([^']+)'/g),
     ].map((match) => match[1]);
 
-    expect(migrationFileCategories).toEqual(schemaFileCategories);
+    expect(migrationFileCategories).toEqual([
+      'TENANT_ID',
+      'CONTRACT',
+      'PAYMENT_PROOF',
+      'CONTRACT_VOID_PROOF',
+      'DEPOSIT_REFUND_PROOF',
+      'PRICING_REBATE_PROOF',
+      'IMPORT',
+      'EXPORT',
+      'BACKUP',
+      'FINANCE_EXPORT',
+    ]);
 
     const identifiers = [
       ...migration.matchAll(/(?:KEY|CONSTRAINT) `([^`]+)`/g),

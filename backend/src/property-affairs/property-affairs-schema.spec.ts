@@ -34,11 +34,23 @@ describe('property-affairs schema', () => {
     ]) {
       expect(modelBlock(schema, name)).not.toBe('');
     }
+    expect(modelBlock(schema, 'PropertyAffairFile')).toContain('createdBy');
     const migration = readFileSync(migrationPath, 'utf8');
     expect(migration).toMatch(/CREATE TABLE `property_affairs`/);
     expect(migration).toMatch(/CREATE TABLE `property_affair_progresses`/);
-    expect(migration).not.toMatch(
-      /^\s*(?:UPDATE|DELETE)\s+`?(?:rooms|contracts|tenants|rent_bills|payments)`?/im,
-    );
+    expect(migration).toMatch(/`created_by` INT UNSIGNED NOT NULL/);
+    for (const table of [
+      'buildings', 'rooms', 'tenants', 'contracts', 'contract_members',
+      'rent_bills', 'payments', 'payment_allocations', 'payment_refunds',
+      'prepayment_transactions', 'deposit_transactions', 'checkout_settlements',
+      'checkout_settlement_items', 'bill_adjustments', 'pricing_rebates',
+    ]) {
+      expect(migration).not.toMatch(
+        new RegExp(
+          `^\\s*(?:UPDATE|DELETE(?:\\s+FROM)?|TRUNCATE(?:\\s+TABLE)?)\\s+\\x60?${table}\\x60?\\b`,
+          'im',
+        ),
+      );
+    }
   });
 });

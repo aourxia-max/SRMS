@@ -107,6 +107,7 @@ CREATE TABLE `property_affair_progresses` (
 CREATE TABLE `property_affair_files` (
   `affair_id` INT UNSIGNED NOT NULL,
   `file_asset_id` INT UNSIGNED NOT NULL,
+  `created_by` INT UNSIGNED NOT NULL,
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`affair_id`, `file_asset_id`),
   CONSTRAINT `property_affair_files_affair_id_fkey`
