@@ -5,15 +5,15 @@ const priorityLabels: Record<PropertyAffairPriority, string> = { NORMAL: '普通
 const relationTypeLabels: Record<PropertyAffairRelationType, string> = { building: '楼栋', room: '房源', tenant: '承租人', contract: '合同' }
 
 export function propertyAffairStatusLabel(value?: string | null) {
-  return value && value in statusLabels ? statusLabels[value as PropertyAffairStatus] : '未知状态'
+  return value && Object.hasOwn(statusLabels, value) ? statusLabels[value as PropertyAffairStatus] : '未知状态'
 }
 
 export function propertyAffairPriorityLabel(value?: string | null) {
-  return value && value in priorityLabels ? priorityLabels[value as PropertyAffairPriority] : '未知优先级'
+  return value && Object.hasOwn(priorityLabels, value) ? priorityLabels[value as PropertyAffairPriority] : '未知优先级'
 }
 
 export function propertyAffairRelationTypeLabel(value?: string | null) {
-  return value && value in relationTypeLabels ? relationTypeLabels[value as PropertyAffairRelationType] : '未知关联'
+  return value && Object.hasOwn(relationTypeLabels, value) ? relationTypeLabels[value as PropertyAffairRelationType] : '未知关联'
 }
 
 export function propertyAffairAvailabilityLabel(available?: boolean | null) {

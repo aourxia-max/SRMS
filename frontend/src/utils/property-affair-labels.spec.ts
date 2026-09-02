@@ -39,4 +39,19 @@ describe('物业办事标签', () => {
     expect(propertyAffairAvailabilityLabel(true)).toBe('可用')
     expect(propertyAffairAvailabilityLabel(false)).toBe('不可用')
   })
+
+  it('将原型状态键视为未知状态并始终返回中文字符串', () => {
+    expect(propertyAffairStatusLabel('toString')).toBe('未知状态')
+    expect(typeof propertyAffairStatusLabel('constructor')).toBe('string')
+  })
+
+  it('将原型优先级键视为未知优先级并始终返回中文字符串', () => {
+    expect(propertyAffairPriorityLabel('toString')).toBe('未知优先级')
+    expect(typeof propertyAffairPriorityLabel('constructor')).toBe('string')
+  })
+
+  it('将原型关联类型键视为未知关联并始终返回中文字符串', () => {
+    expect(propertyAffairRelationTypeLabel('toString')).toBe('未知关联')
+    expect(typeof propertyAffairRelationTypeLabel('constructor')).toBe('string')
+  })
 })
