@@ -1,14 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { FinanceService } from '../finance/finance.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PropertyAffairsService } from '../property-affairs/property-affairs.service';
 import { currentMonthPeriod } from './rent-collection-overview';
 @Injectable()
 export class DashboardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly finance: FinanceService,
+    @Optional()
+    private readonly propertyAffairs?: PropertyAffairsService,
   ) {}
   async summary(
     user: AuthUser,
@@ -112,6 +115,7 @@ export class DashboardService {
       rentCollection,
       monthlyMoveInCount,
       monthlyCheckoutCount,
+      propertyAffairs,
     ] = await Promise.all([
       this.prisma.db.rentBill.findMany({
         where: {
@@ -192,6 +196,9 @@ export class DashboardService {
           },
         },
       }),
+      canViewRoomRent && this.propertyAffairs
+        ? this.propertyAffairs.dashboardItems(8)
+        : Promise.resolve([]),
     ]);
     const result: Record<string, unknown> = {
       roomSummary: {
@@ -216,6 +223,7 @@ export class DashboardService {
       longVacancyDays,
       monthlyMoveInCount,
       monthlyCheckoutCount,
+      propertyAffairs,
     };
     if (user.role === UserRole.SUPER_ADMIN) {
       result['arrearsTotal'] = arrears.reduce(

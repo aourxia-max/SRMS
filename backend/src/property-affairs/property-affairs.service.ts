@@ -247,6 +247,45 @@ export class PropertyAffairsService {
     });
   }
 
+  async dashboardItems(limit: number) {
+    const safeLimit = Math.max(0, Math.min(100, Math.trunc(limit)));
+    if (safeLimit === 0) return [];
+    const rows = await this.prisma.db.$queryRaw<Array<{ id: number | bigint }>>`
+      SELECT id FROM property_affairs
+      WHERE deleted_at IS NULL
+        AND status IN ('PENDING', 'IN_PROGRESS')
+      ORDER BY CASE priority
+        WHEN 'URGENT' THEN 0
+        WHEN 'IMPORTANT' THEN 1
+        ELSE 2
+      END, updated_at DESC, id DESC
+      LIMIT ${safeLimit}
+    `;
+    const orderedIds = rows.map((row) => Number(row.id));
+    if (!orderedIds.length) return [];
+
+    const affairs = await this.prisma.db.propertyAffair.findMany({
+      where: {
+        id: { in: orderedIds },
+        deletedAt: null,
+        status: {
+          in: [PropertyAffairStatus.PENDING, PropertyAffairStatus.IN_PROGRESS],
+        },
+      },
+      include: propertyAffairInclude,
+    });
+    const current = await this.loadCurrentRelations(affairs, this.prisma.db);
+    const byId = new Map(
+      affairs.map((affair) => [
+        affair.id,
+        presentPropertyAffair(affair, current),
+      ]),
+    );
+    return orderedIds
+      .map((id) => byId.get(id))
+      .filter((item): item is NonNullable<typeof item> => item !== undefined);
+  }
+
   async create(dto: CreatePropertyAffairDto, user: AuthUser) {
     return this.prisma.db.$transaction(async (tx) => {
       const [relations, responsible] = await Promise.all([

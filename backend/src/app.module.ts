@@ -18,6 +18,7 @@ import { SystemModule } from './system/system.module';
 import { RentBillsModule } from './rent-bills/rent-bills.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 import { ApprovalTasksModule } from './approval-tasks/approval-tasks.module';
+import { PropertyAffairsModule } from './property-affairs/property-affairs.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ApprovalTasksModule } from './approval-tasks/approval-tasks.module';
     RentBillsModule,
     MaintenanceModule,
     ApprovalTasksModule,
+    PropertyAffairsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
