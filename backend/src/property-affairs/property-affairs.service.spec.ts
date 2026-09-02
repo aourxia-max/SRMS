@@ -1395,11 +1395,7 @@ describe('PropertyAffairsService', () => {
     };
     const current = {
       ...fixture.current,
-      files: [
-        fixture.current.files[0],
-        secondFile,
-        { ...fixture.current.files[0] },
-      ],
+      files: [fixture.current.files[0], secondFile],
     };
     fixture.tx.propertyAffair.findUnique.mockResolvedValue(current);
     const audit = {
@@ -1484,6 +1480,33 @@ describe('PropertyAffairsService', () => {
       }),
     );
   });
+
+  it.each([501, 2000])(
+    'keeps full %i-character Chinese progress in JSON while limiting log reason to 500 characters',
+    async (length) => {
+      jest.useFakeTimers().setSystemTime(createdAt);
+      const { service, tx } = progressFixture(PropertyAffairStatus.PENDING);
+      const content = '进'.repeat(length);
+
+      await service.appendProgress(41, { version: 3, content }, admin);
+
+      const logData = tx.operationLog.create.mock.calls[0][0].data;
+      expect(Array.from(logData.reason)).toHaveLength(500);
+      expect(logData.reason).toBe('进'.repeat(500));
+      expect(logData.afterData).toEqual(
+        expect.objectContaining({
+          appendedProgress: {
+            content,
+            statusBefore: PropertyAffairStatus.PENDING,
+            statusAfter: PropertyAffairStatus.PENDING,
+            createdBy: admin.id,
+            createdBySnapshot: admin.displayName,
+            createdAt: createdAt.toISOString(),
+          },
+        }),
+      );
+    },
+  );
 
   it.each([
     [PropertyAffairStatus.COMPLETED, 'completedAt'],
@@ -1704,6 +1727,10 @@ describe('PropertyAffairsService', () => {
         { externalHandlerName: { contains: '漏水' } },
         { externalPhone: { contains: '漏水' } },
         { externalContact: { contains: '漏水' } },
+        { buildings: { some: { targetLabel: { contains: '漏水' } } } },
+        { rooms: { some: { targetLabel: { contains: '漏水' } } } },
+        { tenants: { some: { targetLabel: { contains: '漏水' } } } },
+        { contracts: { some: { targetLabel: { contains: '漏水' } } } },
       ]),
     );
     expect(db.propertyAffair.count).toHaveBeenCalledWith({
@@ -2088,6 +2115,94 @@ describe('PropertyAffairsService', () => {
     expect(tx.payment.updateMany).not.toHaveBeenCalled();
   });
 
+  it('stores complete JSON-serializable pre-delete evidence without file contents', async () => {
+    const { service, audit } = permanentDeleteFixture();
+
+    await service.permanentDelete(41, 3, superAdmin);
+
+    const eventData = audit.appendInTransaction.mock.calls[0][1].eventData;
+    expect(eventData).toEqual({
+      affairNo: 'WY202609020001',
+      preDeleteSnapshot: expect.objectContaining({
+        id: 41,
+        affairNo: 'WY202609020001',
+        title: baseAffair.title,
+        category: baseAffair.category,
+        priority: PropertyAffairPriority.NORMAL,
+        status: PropertyAffairStatus.COMPLETED,
+        content: baseAffair.content,
+        responsibleUserId: 9,
+        responsibleSnapshot: '管理员乙',
+        externalHandlerName: '维修公司',
+        externalPhone: '021-12345678',
+        externalContact: '工作日上午联系',
+        completedAt: createdAt.toISOString(),
+        cancelledAt: null,
+        createdBy: admin.id,
+        updatedBy: admin.id,
+        deletedAt: createdAt.toISOString(),
+        deletedBy: admin.id,
+        version: 3,
+        createdAt: createdAt.toISOString(),
+        updatedAt: createdAt.toISOString(),
+        buildings: [{ buildingId: 1, targetLabel: '1栋' }],
+        rooms: [{ roomId: 11, targetLabel: '1栋101' }],
+        tenants: [{ tenantId: 21, targetLabel: '张三' }],
+        contracts: [{ contractId: 31, targetLabel: 'HT-31' }],
+        progresses: [
+          {
+            id: 5,
+            content: '事项已完成',
+            statusBefore: PropertyAffairStatus.IN_PROGRESS,
+            statusAfter: PropertyAffairStatus.COMPLETED,
+            createdBy: admin.id,
+            createdBySnapshot: admin.displayName,
+            createdAt: createdAt.toISOString(),
+          },
+        ],
+        files: [
+          {
+            fileAssetId: 71,
+            createdBy: admin.id,
+            createdAt: createdAt.toISOString(),
+            fileAsset: {
+              id: 71,
+              storageKey: 'property-affairs/71.pdf',
+              originalName: '维修单.pdf',
+              storedName: '71.pdf',
+              mimeType: 'application/pdf',
+              extension: '.pdf',
+              sizeBytes: '42',
+              sha256: 'a'.repeat(64),
+              category: 'PROPERTY_AFFAIR',
+              uploadedBy: admin.id,
+              uploadedAt: createdAt.toISOString(),
+              lockedAt: null,
+            },
+          },
+          {
+            fileAssetId: 72,
+            createdBy: admin.id,
+            createdAt: createdAt.toISOString(),
+            fileAsset: expect.objectContaining({
+              id: 72,
+              storageKey: 'property-affairs/72.docx',
+              originalName: '维修记录.docx',
+              storedName: '72.docx',
+              sha256: 'a'.repeat(64),
+              sizeBytes: '42',
+            }),
+          },
+        ],
+      }),
+    });
+    expect(() => JSON.stringify(eventData)).not.toThrow();
+    for (const file of eventData.preDeleteSnapshot.files) {
+      expect(file.fileAsset).not.toHaveProperty('content');
+      expect(file.fileAsset).not.toHaveProperty('buffer');
+    }
+  });
+
   it('propagates security-audit failure before ordinary log or destructive calls', async () => {
     const { service, tx, audit } = permanentDeleteFixture();
     audit.appendInTransaction.mockRejectedValue(
@@ -2102,6 +2217,99 @@ describe('PropertyAffairsService', () => {
     expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();
     expect(tx.propertyAffairProgress.deleteMany).not.toHaveBeenCalled();
     expect(tx.propertyAffair.delete).not.toHaveBeenCalled();
+  });
+
+  it('propagates a child-delete failure and transactionally restores the affair and every child collection', async () => {
+    const fixture = permanentDeleteFixture();
+    type StoredState = {
+      affair: { id: number; version: number } | null;
+      fileLinks: number[];
+      progresses: number[];
+      buildingLinks: number[];
+      roomLinks: number[];
+      tenantLinks: number[];
+      contractLinks: number[];
+      operationLogs: string[];
+      securityAudits: string[];
+    };
+    const cloneState = (source: StoredState): StoredState => ({
+      affair: source.affair ? { ...source.affair } : null,
+      fileLinks: [...source.fileLinks],
+      progresses: [...source.progresses],
+      buildingLinks: [...source.buildingLinks],
+      roomLinks: [...source.roomLinks],
+      tenantLinks: [...source.tenantLinks],
+      contractLinks: [...source.contractLinks],
+      operationLogs: [...source.operationLogs],
+      securityAudits: [...source.securityAudits],
+    });
+    let state: StoredState = {
+      affair: { id: 41, version: 3 },
+      fileLinks: [71, 72],
+      progresses: [5],
+      buildingLinks: [1],
+      roomLinks: [2],
+      tenantLinks: [3],
+      contractLinks: [4],
+      operationLogs: [],
+      securityAudits: [],
+    };
+    const initialState = cloneState(state);
+    const childFailure = new Error('forced room-link delete failure');
+
+    fixture.tx.propertyAffair.updateMany.mockImplementation(() => {
+      state.affair = { id: 41, version: 4 };
+      return Promise.resolve({ count: 1 });
+    });
+    fixture.audit.appendInTransaction.mockImplementation(() => {
+      state.securityAudits.push('PROPERTY_AFFAIR_PERMANENT_DELETE');
+      return Promise.resolve({ id: 90 });
+    });
+    fixture.tx.operationLog.create.mockImplementation(() => {
+      state.operationLogs.push('PERMANENT_DELETE');
+      return Promise.resolve({ id: 73 });
+    });
+    fixture.tx.propertyAffairFile.deleteMany.mockImplementation(() => {
+      state.fileLinks = [];
+      return Promise.resolve({ count: 2 });
+    });
+    fixture.tx.propertyAffairProgress.deleteMany.mockImplementation(() => {
+      state.progresses = [];
+      return Promise.resolve({ count: 1 });
+    });
+    fixture.tx.propertyAffairBuilding.deleteMany.mockImplementation(() => {
+      state.buildingLinks = [];
+      return Promise.resolve({ count: 1 });
+    });
+    fixture.tx.propertyAffairRoom.deleteMany.mockImplementation(() =>
+      Promise.reject(childFailure),
+    );
+    fixture.db.$transaction.mockImplementation(async (callback) => {
+      const beforeTransaction = cloneState(state);
+      try {
+        return await callback(fixture.tx);
+      } catch (error) {
+        state = cloneState(beforeTransaction);
+        throw error;
+      }
+    });
+
+    await expect(
+      fixture.service.permanentDelete(41, 3, superAdmin),
+    ).rejects.toBe(childFailure);
+
+    expect(state).toEqual(initialState);
+    expect(fixture.tx.propertyAffairFile.deleteMany).toHaveBeenCalledTimes(1);
+    expect(fixture.tx.propertyAffairProgress.deleteMany).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(fixture.tx.propertyAffairBuilding.deleteMany).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(fixture.tx.propertyAffairRoom.deleteMany).toHaveBeenCalledTimes(1);
+    expect(fixture.tx.propertyAffairTenant.deleteMany).not.toHaveBeenCalled();
+    expect(fixture.tx.propertyAffairContract.deleteMany).not.toHaveBeenCalled();
+    expect(fixture.tx.propertyAffair.delete).not.toHaveBeenCalled();
   });
 
   it('returns Chinese 404 when the permanent-delete target no longer exists', async () => {

@@ -499,6 +499,14 @@ export class PropertyAffairsService {
         where: { id },
         include: propertyAffairInclude,
       });
+      const appendedProgress = {
+        content: dto.content,
+        statusBefore: current.status,
+        statusAfter: nextStatus,
+        createdBy: user.id,
+        createdBySnapshot: user.displayName,
+        createdAt: occurredAt.toISOString(),
+      } satisfies Prisma.InputJsonObject;
       await tx.operationLog.create({
         data: {
           module: 'PROPERTY_AFFAIRS',
@@ -508,8 +516,11 @@ export class PropertyAffairsService {
           entityNo: current.affairNo,
           summary: `追加物业办事进度 ${current.affairNo}`,
           beforeData: this.auditSnapshot(current),
-          afterData: this.auditSnapshot(updated),
-          reason: dto.content,
+          afterData: {
+            ...this.auditSnapshot(updated),
+            appendedProgress,
+          },
+          reason: Array.from(dto.content).slice(0, 500).join(''),
           operatorId: user.id,
           operatorRole: user.role,
           occurredAt,
@@ -654,6 +665,50 @@ export class PropertyAffairsService {
         ...this.auditSnapshot(current),
         fileAssetIds: releasedFileAssetIds,
         progressCount: current.progresses.length,
+        buildings: current.buildings.map((link) => ({
+          buildingId: link.buildingId,
+          targetLabel: link.targetLabel,
+        })),
+        rooms: current.rooms.map((link) => ({
+          roomId: link.roomId,
+          targetLabel: link.targetLabel,
+        })),
+        tenants: current.tenants.map((link) => ({
+          tenantId: link.tenantId,
+          targetLabel: link.targetLabel,
+        })),
+        contracts: current.contracts.map((link) => ({
+          contractId: link.contractId,
+          targetLabel: link.targetLabel,
+        })),
+        progresses: current.progresses.map((progress) => ({
+          id: progress.id,
+          content: progress.content,
+          statusBefore: progress.statusBefore,
+          statusAfter: progress.statusAfter,
+          createdBy: progress.createdBy,
+          createdBySnapshot: progress.createdBySnapshot,
+          createdAt: progress.createdAt.toISOString(),
+        })),
+        files: current.files.map((link) => ({
+          fileAssetId: link.fileAssetId,
+          createdBy: link.createdBy,
+          createdAt: link.createdAt.toISOString(),
+          fileAsset: {
+            id: link.fileAsset.id,
+            storageKey: link.fileAsset.storageKey,
+            originalName: link.fileAsset.originalName,
+            storedName: link.fileAsset.storedName,
+            mimeType: link.fileAsset.mimeType,
+            extension: link.fileAsset.extension,
+            sizeBytes: link.fileAsset.sizeBytes.toString(),
+            sha256: link.fileAsset.sha256,
+            category: link.fileAsset.category,
+            uploadedBy: link.fileAsset.uploadedBy,
+            uploadedAt: link.fileAsset.uploadedAt.toISOString(),
+            lockedAt: link.fileAsset.lockedAt?.toISOString() ?? null,
+          },
+        })),
       } satisfies Prisma.InputJsonObject;
       await auditChain.appendInTransaction(tx, {
         eventType: 'PROPERTY_AFFAIR_PERMANENT_DELETE',
@@ -870,6 +925,7 @@ export class PropertyAffairsService {
 
   private auditSnapshot(affair: PropertyAffairLoaded): Prisma.InputJsonObject {
     return {
+      id: affair.id,
       affairNo: affair.affairNo,
       title: affair.title,
       category: affair.category,
@@ -883,8 +939,12 @@ export class PropertyAffairsService {
       externalContact: affair.externalContact,
       completedAt: affair.completedAt?.toISOString() ?? null,
       cancelledAt: affair.cancelledAt?.toISOString() ?? null,
+      createdBy: affair.createdBy,
+      updatedBy: affair.updatedBy,
       deletedAt: affair.deletedAt?.toISOString() ?? null,
       deletedBy: affair.deletedBy,
+      createdAt: affair.createdAt.toISOString(),
+      updatedAt: affair.updatedAt.toISOString(),
       buildingIds: affair.buildings.map((link) => link.buildingId),
       roomIds: affair.rooms.map((link) => link.roomId),
       tenantIds: affair.tenants.map((link) => link.tenantId),
