@@ -1098,3 +1098,838 @@ describe('FilesService contract void proofs', () => {
     );
   });
 });
+
+describe('FilesService property-affair attachments', () => {
+  const admin = {
+    id: 7,
+    username: 'admin',
+    displayName: '管理员',
+    role: UserRole.ADMIN,
+  };
+  const visitor = { ...admin, id: 8, role: UserRole.VISITOR };
+  const uploadedAt = new Date('2026-09-02T01:02:03.000Z');
+  const acceptedFiles = [
+    ['image/jpeg', '.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0])],
+    ['image/jpeg', '.jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xe0])],
+    ['image/png', '.png', Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])],
+    [
+      'image/webp',
+      '.webp',
+      Buffer.concat([
+        Buffer.from('RIFF'),
+        Buffer.alloc(4),
+        Buffer.from('WEBP'),
+      ]),
+    ],
+    ['application/pdf', '.pdf', Buffer.from('%PDF-1.7\n')],
+    [
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.docx',
+      Buffer.from('PK\u0003\u0004word'),
+    ],
+    [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.xlsx',
+      Buffer.from('PK\u0003\u0004xl'),
+    ],
+  ] as const;
+
+  function uploadFixture(options?: {
+    affair?: { id: number; affairNo: string; deletedAt: Date | null } | null;
+    txAffair?: { id: number; affairNo: string; deletedAt: Date | null } | null;
+    transactionError?: Error;
+    maxBytes?: string;
+  }) {
+    const affair =
+      options && 'affair' in options
+        ? options.affair
+        : { id: 41, affairNo: 'WY202609020001', deletedAt: null };
+    const txAffair =
+      options && 'txAffair' in options ? options.txAffair : affair;
+    const tx = {
+      propertyAffair: { findFirst: jest.fn().mockResolvedValue(txAffair) },
+      fileAsset: {
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 71,
+            originalName: data.originalName,
+            mimeType: data.mimeType,
+            sizeBytes: data.sizeBytes,
+            uploadedAt,
+          }),
+        ),
+      },
+      propertyAffairFile: { create: jest.fn().mockResolvedValue({}) },
+      operationLog: { create: jest.fn().mockResolvedValue({ id: 1 }) },
+    };
+    const db = {
+      systemSetting: { findUnique: jest.fn().mockResolvedValue(null) },
+      propertyAffair: { findFirst: jest.fn().mockResolvedValue(affair) },
+      $transaction: jest
+        .fn()
+        .mockImplementation(
+          (callback: (client: typeof tx) => Promise<unknown>) => {
+            if (options?.transactionError)
+              return Promise.reject(options.transactionError);
+            return callback(tx);
+          },
+        ),
+    };
+    const service = new FilesService(
+      { db } as never,
+      {
+        get: jest.fn((key: string) =>
+          key === 'TENANT_FILE_MAX_SIZE_BYTES'
+            ? (options?.maxBytes ?? '10485760')
+            : undefined,
+        ),
+      } as never,
+    );
+    return { service, db, tx };
+  }
+
+  function save(
+    service: FilesService,
+    affairId: number,
+    file: unknown,
+    user = admin,
+  ) {
+    return (
+      service as unknown as {
+        saveAndLinkPropertyAffairFile: (
+          affairId: number,
+          file: unknown,
+          user: typeof admin,
+        ) => Promise<unknown>;
+      }
+    ).saveAndLinkPropertyAffairFile(affairId, file, user);
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(writeFile).mockResolvedValue(undefined);
+    jest.mocked(unlink).mockResolvedValue(undefined);
+  });
+
+  it.each(acceptedFiles)(
+    'accepts exact %s + %s + magic and transactionally stores and audits the link',
+    async (mimetype, extension, buffer) => {
+      const { service, db, tx } = uploadFixture();
+
+      const result = await save(service, 41, {
+        originalname: `../证明${extension}`,
+        mimetype,
+        size: buffer.length,
+        buffer,
+      });
+
+      expect(result).toEqual({
+        id: 71,
+        originalName: `证明${extension}`,
+        mimeType: mimetype,
+        sizeBytes: String(buffer.length),
+        uploadedAt,
+      });
+      expect(() => JSON.stringify(result)).not.toThrow();
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
+        where: { id: 41, deletedAt: null },
+        select: { id: true, affairNo: true, deletedAt: true },
+      });
+      expect(tx.fileAsset.create).toHaveBeenCalledWith({
+        data: {
+          storageKey: expect.stringMatching(/^property-affairs\//),
+          originalName: `证明${extension}`,
+          storedName: expect.stringMatching(new RegExp(`.+\\${extension}$`)),
+          mimeType: mimetype,
+          extension,
+          sizeBytes: BigInt(buffer.length),
+          sha256:
+            mimetype === 'application/pdf'
+              ? '0716f9264c9fe19f5d7455276107f3ddcc1d3497f63d60689a73558ae8a1bf5e'
+              : expect.stringMatching(/^[a-f0-9]{64}$/),
+          category: 'PROPERTY_AFFAIR',
+          uploadedBy: admin.id,
+        },
+      });
+      expect(tx.propertyAffairFile.create).toHaveBeenCalledWith({
+        data: { affairId: 41, fileAssetId: 71, createdBy: admin.id },
+      });
+      expect(tx.operationLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          module: 'PROPERTY_AFFAIRS',
+          action: 'UPLOAD_FILE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: 41,
+          entityNo: 'WY202609020001',
+          summary: `上传物业办事附件 WY202609020001：证明${extension}`,
+          operatorId: admin.id,
+          operatorRole: admin.role,
+        }),
+      });
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/[\\/]uploads[\\/]property-affairs[\\/][^\\/]+$/),
+        buffer,
+        { flag: 'wx' },
+      );
+    },
+  );
+
+  it('rejects a visitor before affair, transaction, or physical-file work', async () => {
+    const { service, db } = uploadFixture();
+    const buffer = Buffer.from('%PDF-1.7\n');
+
+    await expect(
+      save(
+        service,
+        41,
+        {
+          originalname: '证明.pdf',
+          mimetype: 'application/pdf',
+          size: buffer.length,
+          buffer,
+        },
+        visitor,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '无权操作物业办事附件', status: 403 }),
+    );
+    expect(db.propertyAffair.findFirst).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', null],
+    [
+      'soft-deleted',
+      { id: 41, affairNo: 'WY202609020001', deletedAt: new Date() },
+    ],
+  ])('rejects a %s affair before physical-file work', async (_case, affair) => {
+    const { service, db } = uploadFixture({ affair });
+    const buffer = Buffer.from('%PDF-1.7\n');
+
+    await expect(
+      save(service, 41, {
+        originalname: '证明.pdf',
+        mimetype: 'application/pdf',
+        size: buffer.length,
+        buffer,
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+    );
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'absent buffer',
+      { originalname: 'a.pdf', mimetype: 'application/pdf', size: 1 },
+    ],
+    [
+      'absent original name',
+      {
+        mimetype: 'application/pdf',
+        size: 9,
+        buffer: Buffer.from('%PDF-1.7\n'),
+      },
+    ],
+    [
+      'MIME/extension mismatch',
+      {
+        originalname: 'a.jpg',
+        mimetype: 'image/png',
+        size: 8,
+        buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      },
+    ],
+    [
+      'bad signature',
+      {
+        originalname: 'a.png',
+        mimetype: 'image/png',
+        size: 4,
+        buffer: Buffer.from('nope'),
+      },
+    ],
+    [
+      'renamed executable',
+      {
+        originalname: 'evil.pdf',
+        mimetype: 'application/pdf',
+        size: 8,
+        buffer: Buffer.from('MZ\u0090\u0000evil'),
+      },
+    ],
+    [
+      'legacy doc',
+      {
+        originalname: 'a.doc',
+        mimetype: 'application/msword',
+        size: 4,
+        buffer: Buffer.from('PK\u0003\u0004'),
+      },
+    ],
+    [
+      'legacy xls',
+      {
+        originalname: 'a.xls',
+        mimetype: 'application/vnd.ms-excel',
+        size: 4,
+        buffer: Buffer.from('PK\u0003\u0004'),
+      },
+    ],
+  ])('rejects %s without writing a physical file', async (_case, file) => {
+    const { service, db } = uploadFixture();
+
+    await expect(save(service, 41, file)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects declared or actual content larger than the configured limit', async () => {
+    const { service, db } = uploadFixture({ maxBytes: '8' });
+
+    await expect(
+      save(service, 41, {
+        originalname: 'a.pdf',
+        mimetype: 'application/pdf',
+        size: 7,
+        buffer: Buffer.from('%PDF-1234'),
+      }),
+    ).rejects.toThrow('附件超过允许大小');
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the active affair in the link transaction and retries compensation three times', async () => {
+    const { service, tx } = uploadFixture({ txAffair: null });
+    const cleanupFailure = Object.assign(new Error('busy'), { code: 'EBUSY' });
+    jest
+      .mocked(unlink)
+      .mockRejectedValueOnce(cleanupFailure)
+      .mockRejectedValueOnce(cleanupFailure)
+      .mockResolvedValueOnce(undefined);
+    const buffer = Buffer.from('%PDF-1.7\n');
+
+    await expect(
+      save(service, 41, {
+        originalname: '证明.pdf',
+        mimetype: 'application/pdf',
+        size: buffer.length,
+        buffer,
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+    );
+    expect(tx.fileAsset.create).not.toHaveBeenCalled();
+    expect(unlink).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries physical compensation exactly three times when the link transaction fails', async () => {
+    const transactionError = new Error('forced transaction failure');
+    const { service } = uploadFixture({ transactionError });
+    const loggerError = jest
+      .spyOn(
+        (service as unknown as { logger: { error: () => void } }).logger,
+        'error',
+      )
+      .mockImplementation();
+    jest
+      .mocked(unlink)
+      .mockRejectedValue(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+    const buffer = Buffer.from('%PDF-1.7\n');
+
+    await expect(
+      save(service, 41, {
+        originalname: '证明.pdf',
+        mimetype: 'application/pdf',
+        size: buffer.length,
+        buffer,
+      }),
+    ).rejects.toBe(transactionError);
+    expect(unlink).toHaveBeenCalledTimes(3);
+    expect(loggerError).toHaveBeenCalledWith(
+      '物业办事附件物理文件补偿清理失败（错误代码：EBUSY）',
+    );
+  });
+
+  function accessFixture(options?: {
+    affair?: { id: number; affairNo: string; deletedAt: Date | null } | null;
+    link?: Record<string, unknown> | null;
+    transactionError?: Error;
+    cleanupAsset?: Record<string, unknown> | null;
+    claimCount?: number;
+    remainingReferences?: number;
+    sharedPhysical?: number;
+  }) {
+    const affair =
+      options && 'affair' in options
+        ? options.affair
+        : { id: 41, affairNo: 'WY202609020001', deletedAt: null };
+    const fileAsset = {
+      id: 71,
+      storageKey: 'property-affairs/stored.pdf',
+      storedName: 'stored.pdf',
+      originalName: '维修单.pdf',
+      mimeType: 'application/pdf',
+      extension: '.pdf',
+      sizeBytes: 9n,
+      sha256: 'a'.repeat(64),
+      category: 'PROPERTY_AFFAIR',
+      uploadedBy: admin.id,
+      uploadedAt,
+      lockedAt: null,
+    };
+    const link =
+      options && 'link' in options
+        ? options.link
+        : { affairId: 41, fileAssetId: 71, createdAt: uploadedAt, fileAsset };
+    const tx = {
+      propertyAffair: { findFirst: jest.fn().mockResolvedValue(affair) },
+      propertyAffairFile: {
+        findFirst: jest.fn().mockResolvedValue(link),
+        deleteMany: jest.fn().mockResolvedValue({ count: link ? 1 : 0 }),
+      },
+      operationLog: { create: jest.fn().mockResolvedValue({ id: 1 }) },
+    };
+    const db = {
+      propertyAffair: { findFirst: jest.fn().mockResolvedValue(affair) },
+      propertyAffairFile: {
+        findMany: jest.fn().mockResolvedValue(link ? [link] : []),
+        findFirst: jest.fn().mockResolvedValue(link),
+      },
+      fileAsset: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(
+            options && 'cleanupAsset' in options
+              ? options.cleanupAsset
+              : fileAsset,
+          ),
+        updateMany: jest
+          .fn()
+          .mockResolvedValue({ count: options?.claimCount ?? 1 }),
+        count: jest
+          .fn()
+          .mockResolvedValueOnce(options?.remainingReferences ?? 0)
+          .mockResolvedValueOnce(options?.sharedPhysical ?? 0),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $transaction: jest
+        .fn()
+        .mockImplementation(
+          (callback: (client: typeof tx) => Promise<unknown>) => {
+            if (options?.transactionError)
+              return Promise.reject(options.transactionError);
+            return callback(tx);
+          },
+        ),
+    };
+    return {
+      service: new FilesService({ db } as never, {} as never),
+      db,
+      tx,
+      fileAsset,
+    };
+  }
+
+  function propertyMethods(service: FilesService) {
+    return service as unknown as {
+      listPropertyAffairFiles: (affairId: number) => Promise<unknown>;
+      readPropertyAffairFile: (
+        affairId: number,
+        fileId: number,
+      ) => Promise<{ asset: Record<string, unknown>; content: Buffer }>;
+      unlinkPropertyAffairFile: (
+        affairId: number,
+        fileId: number,
+        user: typeof admin,
+      ) => Promise<unknown>;
+      cleanupReleasedPropertyAffairFiles: (
+        fileIds: number[],
+      ) => Promise<unknown>;
+    };
+  }
+
+  it('lists only category-matching joins newest first as JSON-safe summaries', async () => {
+    const { service, db } = accessFixture();
+
+    const result = await propertyMethods(service).listPropertyAffairFiles(41);
+
+    expect(result).toEqual([
+      {
+        id: 71,
+        originalName: '维修单.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: '9',
+        uploadedAt,
+      },
+    ]);
+    expect(() => JSON.stringify(result)).not.toThrow();
+    expect(db.propertyAffairFile.findMany).toHaveBeenCalledWith({
+      where: { affairId: 41, fileAsset: { category: 'PROPERTY_AFFAIR' } },
+      include: { fileAsset: true },
+      orderBy: [{ createdAt: 'desc' }, { fileAssetId: 'desc' }],
+    });
+  });
+
+  it('reads only the requested affair join and confines a hostile stored name to the property folder', async () => {
+    const fixture = accessFixture();
+    const hostileLink = {
+      affairId: 41,
+      fileAssetId: 71,
+      createdAt: uploadedAt,
+      fileAsset: {
+        ...fixture.fileAsset,
+        storedName: '..\\..\\outside.pdf',
+        storageKey: 'property-affairs/outside.pdf',
+      },
+    };
+    fixture.db.propertyAffairFile.findFirst.mockResolvedValue(hostileLink);
+    jest.mocked(readFile).mockResolvedValue(Buffer.from('preview'));
+
+    const result = await propertyMethods(
+      fixture.service,
+    ).readPropertyAffairFile(41, 71);
+
+    expect(fixture.db.propertyAffairFile.findFirst).toHaveBeenCalledWith({
+      where: {
+        affairId: 41,
+        fileAssetId: 71,
+        fileAsset: { category: 'PROPERTY_AFFAIR' },
+      },
+      include: { fileAsset: true },
+    });
+    expect(readFile).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /[\\/]uploads[\\/]property-affairs[\\/]outside\.pdf$/,
+      ),
+    );
+    expect(result).toEqual({
+      asset: hostileLink.fileAsset,
+      content: Buffer.from('preview'),
+    });
+  });
+
+  it('makes a cross-affair file ID look nonexistent without touching disk', async () => {
+    const { service, db } = accessFixture({ link: null });
+
+    await expect(
+      propertyMethods(service).readPropertyAffairFile(41, 99),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '物业办事附件不存在', status: 404 }),
+    );
+    expect(db.propertyAffairFile.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ affairId: 41, fileAssetId: 99 }),
+      }),
+    );
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['listPropertyAffairFiles', null],
+    ['readPropertyAffairFile', null],
+    [
+      'listPropertyAffairFiles',
+      {
+        id: 41,
+        affairNo: 'WY202609020001',
+        deletedAt: new Date(),
+      },
+    ],
+    [
+      'readPropertyAffairFile',
+      {
+        id: 41,
+        affairNo: 'WY202609020001',
+        deletedAt: new Date(),
+      },
+    ],
+  ] as const)(
+    'rejects a missing or soft-deleted affair before %s file lookup',
+    async (method, affair) => {
+      const { service, db } = accessFixture({ affair });
+
+      await expect(
+        method === 'listPropertyAffairFiles'
+          ? propertyMethods(service)[method](41)
+          : propertyMethods(service)[method](41, 71),
+      ).rejects.toEqual(
+        expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+      );
+      expect(db.propertyAffairFile.findMany).not.toHaveBeenCalled();
+      expect(db.propertyAffairFile.findFirst).not.toHaveBeenCalled();
+    },
+  );
+
+  it('unlinks and audits in a transaction before cleaning the released asset', async () => {
+    const { service, db, tx } = accessFixture();
+
+    const result = await propertyMethods(service).unlinkPropertyAffairFile(
+      41,
+      71,
+      admin,
+    );
+
+    expect(result).toEqual({ id: 71 });
+    expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
+      where: { id: 41, deletedAt: null },
+      select: { id: true, affairNo: true, deletedAt: true },
+    });
+    expect(tx.propertyAffairFile.findFirst).toHaveBeenCalledWith({
+      where: {
+        affairId: 41,
+        fileAssetId: 71,
+        fileAsset: { category: 'PROPERTY_AFFAIR' },
+      },
+      include: { fileAsset: true },
+    });
+    expect(tx.propertyAffairFile.deleteMany).toHaveBeenCalledWith({
+      where: { affairId: 41, fileAssetId: 71 },
+    });
+    expect(tx.operationLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        module: 'PROPERTY_AFFAIRS',
+        action: 'UNLINK_FILE',
+        entityType: 'PROPERTY_AFFAIR',
+        entityId: 41,
+        entityNo: 'WY202609020001',
+        summary: '移除物业办事附件 WY202609020001：维修单.pdf',
+        operatorId: admin.id,
+        operatorRole: admin.role,
+      }),
+    });
+    expect(db.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      db.fileAsset.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(unlink.mock.invocationCallOrder[0]).toBeLessThan(
+      db.fileAsset.deleteMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('rejects visitor unlink before transaction and physical cleanup', async () => {
+    const { service, db } = accessFixture();
+
+    await expect(
+      propertyMethods(service).unlinkPropertyAffairFile(41, 71, visitor),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '无权操作物业办事附件', status: 403 }),
+    );
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(db.fileAsset.findUnique).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('makes a cross-affair unlink ID look nonexistent and leaves its asset untouched', async () => {
+    const { service, db, tx } = accessFixture({ link: null });
+
+    await expect(
+      propertyMethods(service).unlinkPropertyAffairFile(41, 99, admin),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '物业办事附件不存在', status: 404 }),
+    );
+    expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+    expect(db.fileAsset.findUnique).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('does not start physical cleanup when the unlink transaction fails', async () => {
+    const transactionError = new Error('forced unlink transaction failure');
+    const { service, db } = accessFixture({ transactionError });
+
+    await expect(
+      propertyMethods(service).unlinkPropertyAffairFile(41, 71, admin),
+    ).rejects.toBe(transactionError);
+    expect(db.fileAsset.findUnique).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('rejects unlinking from a soft-deleted affair before touching its join', async () => {
+    const affair = {
+      id: 41,
+      affairNo: 'WY202609020001',
+      deletedAt: new Date(),
+    };
+    const { service, db, tx } = accessFixture({ affair });
+
+    await expect(
+      propertyMethods(service).unlinkPropertyAffairFile(41, 71, admin),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+    );
+    expect(tx.propertyAffairFile.findFirst).not.toHaveBeenCalled();
+    expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();
+    expect(db.fileAsset.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates released IDs and treats missing assets as idempotent', async () => {
+    const { service, db } = accessFixture({ cleanupAsset: null });
+
+    const result = await propertyMethods(
+      service,
+    ).cleanupReleasedPropertyAffairFiles([71, 71, 72]);
+
+    expect(result).toEqual({ deletedFileIds: [] });
+    expect(db.fileAsset.findUnique).toHaveBeenCalledTimes(2);
+    expect(db.fileAsset.findUnique).toHaveBeenNthCalledWith(1, {
+      where: { id: 71 },
+      select: expect.any(Object),
+    });
+    expect(db.fileAsset.findUnique).toHaveBeenNthCalledWith(2, {
+      where: { id: 72 },
+      select: expect.any(Object),
+    });
+    expect(unlink).not.toHaveBeenCalled();
+    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'another category',
+      {
+        id: 71,
+        category: 'CONTRACT',
+        storageKey: 'property-affairs/stored.pdf',
+        storedName: 'stored.pdf',
+        lockedAt: null,
+      },
+    ],
+    [
+      'an out-of-folder storage key',
+      {
+        id: 71,
+        category: 'PROPERTY_AFFAIR',
+        storageKey: 'contract-files/stored.pdf',
+        storedName: 'stored.pdf',
+        lockedAt: null,
+      },
+    ],
+    [
+      'a non-basename storage key',
+      {
+        id: 71,
+        category: 'PROPERTY_AFFAIR',
+        storageKey: 'property-affairs/subdir/stored.pdf',
+        storedName: 'stored.pdf',
+        lockedAt: null,
+      },
+    ],
+  ])('never deletes %s candidate', async (_case, cleanupAsset) => {
+    const { service, db } = accessFixture({ cleanupAsset });
+
+    await propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]);
+
+    expect(db.fileAsset.updateMany).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('leaves an asset and physical file untouched when the atomic no-reference claim loses a race', async () => {
+    const { service, db } = accessFixture({ claimCount: 0 });
+
+    await propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]);
+
+    expect(db.fileAsset.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: 71,
+        category: 'PROPERTY_AFFAIR',
+        lockedAt: null,
+        propertyAffairFiles: { none: {} },
+      }),
+      data: { lockedAt: expect.any(Date) },
+    });
+    expect(unlink).not.toHaveBeenCalled();
+    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('rechecks references after claiming and releases the claim when a reference appears', async () => {
+    const { service, db } = accessFixture({ remainingReferences: 1 });
+
+    await propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]);
+
+    expect(db.fileAsset.count).toHaveBeenNthCalledWith(1, {
+      where: expect.objectContaining({ id: 71, OR: expect.any(Array) }),
+    });
+    expect(db.fileAsset.updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: 71,
+        category: 'PROPERTY_AFFAIR',
+        lockedAt: expect.any(Date),
+      },
+      data: { lockedAt: null },
+    });
+    expect(unlink).not.toHaveBeenCalled();
+    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('retains a shared physical file while deleting only the unreferenced candidate row', async () => {
+    const { service, db } = accessFixture({ sharedPhysical: 1 });
+
+    const result = await propertyMethods(
+      service,
+    ).cleanupReleasedPropertyAffairFiles([71]);
+
+    expect(result).toEqual({ deletedFileIds: [71] });
+    expect(unlink).not.toHaveBeenCalled();
+    expect(db.fileAsset.deleteMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: 71,
+        category: 'PROPERTY_AFFAIR',
+        propertyAffairFiles: { none: {} },
+      }),
+    });
+  });
+
+  it('treats a missing physical file as idempotent and still removes its unreferenced asset row', async () => {
+    const { service, db } = accessFixture();
+    jest
+      .mocked(unlink)
+      .mockRejectedValue(
+        Object.assign(new Error('missing'), { code: 'ENOENT' }),
+      );
+
+    const result = await propertyMethods(
+      service,
+    ).cleanupReleasedPropertyAffairFiles([71]);
+
+    expect(result).toEqual({ deletedFileIds: [71] });
+    expect(unlink).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /[\\/]uploads[\\/]property-affairs[\\/]stored\.pdf$/,
+      ),
+    );
+    expect(db.fileAsset.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('unlocks and preserves metadata when physical cleanup fails', async () => {
+    const { service, db } = accessFixture();
+    jest
+      .mocked(unlink)
+      .mockRejectedValue(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+
+    await expect(
+      propertyMethods(service).cleanupReleasedPropertyAffairFiles([71]),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '物业办事附件清理失败，请稍后重试',
+        status: 503,
+      }),
+    );
+    expect(db.fileAsset.updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: 71,
+        category: 'PROPERTY_AFFAIR',
+        lockedAt: expect.any(Date),
+      },
+      data: { lockedAt: null },
+    });
+    expect(db.fileAsset.deleteMany).not.toHaveBeenCalled();
+  });
+});

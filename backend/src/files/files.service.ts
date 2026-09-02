@@ -55,6 +55,52 @@ const contractExtensions: Record<string, string[]> = {
   'image/webp': ['.webp'],
   'image/gif': ['.gif'],
 };
+const propertyAffairSignatures: Record<string, (content: Buffer) => boolean> = {
+  'application/pdf': signatures['application/pdf'],
+  'image/jpeg': signatures['image/jpeg'],
+  'image/png': signatures['image/png'],
+  'image/webp': signatures['image/webp'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': (
+    content,
+  ) => content.length >= 4 && content.subarray(0, 2).toString() === 'PK',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': (
+    content,
+  ) => content.length >= 4 && content.subarray(0, 2).toString() === 'PK',
+};
+const propertyAffairExtensions: Record<string, string[]> = {
+  'application/pdf': ['.pdf'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/webp': ['.webp'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [
+    '.docx',
+  ],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': [
+    '.xlsx',
+  ],
+};
+const noFileAssetReferences = {
+  tenantFiles: { none: {} },
+  pricingRebateFiles: { none: {} },
+  depositRefundFiles: { none: {} },
+  checkoutSettlementItemFiles: { none: {} },
+  paymentFiles: { none: {} },
+  contractFiles: { none: {} },
+  exportTasks: { none: {} },
+  propertyAffairFiles: { none: {} },
+  contractVoidRequestFiles: { none: {} },
+} satisfies Prisma.FileAssetWhereInput;
+const anyFileAssetReference = [
+  { tenantFiles: { some: {} } },
+  { pricingRebateFiles: { some: {} } },
+  { depositRefundFiles: { some: {} } },
+  { checkoutSettlementItemFiles: { some: {} } },
+  { paymentFiles: { some: {} } },
+  { contractFiles: { some: {} } },
+  { exportTasks: { some: {} } },
+  { propertyAffairFiles: { some: {} } },
+  { contractVoidRequestFiles: { some: {} } },
+] satisfies Prisma.FileAssetWhereInput[];
 
 export const CONTRACT_VOID_PROOF_STAGED_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -165,6 +211,12 @@ export class FilesService {
   private contractFileFolder() {
     return resolve(process.cwd(), '..', 'uploads', 'contract-files');
   }
+  private propertyAffairFolder() {
+    return resolve(process.cwd(), '..', 'uploads', 'property-affairs');
+  }
+  private propertyAffairPath(storedName: string) {
+    return resolve(this.propertyAffairFolder(), basename(storedName));
+  }
 
   private async cleanupFailedContractFile(path: string) {
     let lastError: unknown;
@@ -181,6 +233,307 @@ export class FilesService {
     this.logger.error(
       `合同附件物理文件补偿清理失败（错误代码：${typeof code === 'string' ? code : 'UNKNOWN'}）`,
     );
+  }
+
+  private async cleanupFailedPropertyAffairFile(path: string) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await unlink(path);
+        return;
+      } catch (error) {
+        if ((error as { code?: unknown })?.code === 'ENOENT') return;
+        lastError = error;
+      }
+    }
+    const code = (lastError as { code?: unknown })?.code;
+    this.logger.error(
+      `物业办事附件物理文件补偿清理失败（错误代码：${typeof code === 'string' ? code : 'UNKNOWN'}）`,
+    );
+  }
+
+  private propertyAffairFileResult(asset: {
+    id: number;
+    originalName: string;
+    mimeType: string;
+    sizeBytes: bigint;
+    uploadedAt: Date;
+  }) {
+    return {
+      id: asset.id,
+      originalName: asset.originalName,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes.toString(),
+      uploadedAt: asset.uploadedAt,
+    };
+  }
+
+  async saveAndLinkPropertyAffairFile(
+    affairId: number,
+    file: UploadedFile,
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('无权操作物业办事附件');
+    }
+    const affair = await this.prisma.db.propertyAffair.findFirst({
+      where: { id: affairId, deletedAt: null },
+      select: { id: true, affairNo: true, deletedAt: true },
+    });
+    if (!affair || affair.deletedAt)
+      throw new NotFoundException('办事事项不存在');
+    if (!file || !file.buffer || !file.originalname)
+      throw new BadRequestException('请上传物业办事附件');
+    const limit = await this.configLimit();
+    if (file.size > limit || file.buffer.length > limit) {
+      throw new BadRequestException('附件超过允许大小');
+    }
+    const originalName = basename(file.originalname);
+    const extension = extname(originalName).toLowerCase();
+    if (
+      !propertyAffairExtensions[file.mimetype]?.includes(extension) ||
+      !propertyAffairSignatures[file.mimetype]?.(file.buffer)
+    ) {
+      throw new BadRequestException('附件类型或内容不符合限制');
+    }
+
+    const storedName = `${randomUUID()}${extension}`;
+    const storageKey = `property-affairs/${storedName}`;
+    const path = this.propertyAffairPath(storedName);
+    await mkdir(this.propertyAffairFolder(), { recursive: true });
+    await writeFile(path, file.buffer, { flag: 'wx' });
+    const data = {
+      storageKey,
+      originalName,
+      storedName,
+      mimeType: file.mimetype,
+      extension,
+      sizeBytes: BigInt(file.buffer.length),
+      sha256: createHash('sha256').update(file.buffer).digest('hex'),
+      category: 'PROPERTY_AFFAIR',
+      uploadedBy: user.id,
+    } satisfies Prisma.FileAssetUncheckedCreateInput;
+
+    try {
+      return await this.prisma.db.$transaction(
+        async (tx) => {
+          const current = await tx.propertyAffair.findFirst({
+            where: { id: affairId, deletedAt: null },
+            select: { id: true, affairNo: true, deletedAt: true },
+          });
+          if (!current || current.deletedAt)
+            throw new NotFoundException('办事事项不存在');
+          const asset = await tx.fileAsset.create({ data });
+          await tx.propertyAffairFile.create({
+            data: { affairId, fileAssetId: asset.id, createdBy: user.id },
+          });
+          await tx.operationLog.create({
+            data: {
+              module: 'PROPERTY_AFFAIRS',
+              action: 'UPLOAD_FILE',
+              entityType: 'PROPERTY_AFFAIR',
+              entityId: affairId,
+              entityNo: current.affairNo,
+              summary: `上传物业办事附件 ${current.affairNo}：${originalName}`,
+              afterData: {
+                fileAssetId: asset.id,
+                originalName,
+              },
+              operatorId: user.id,
+              operatorRole: user.role,
+              occurredAt: new Date(),
+            },
+          });
+          return this.propertyAffairFileResult(asset);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+      );
+    } catch (error) {
+      await this.cleanupFailedPropertyAffairFile(path);
+      throw error;
+    }
+  }
+
+  async listPropertyAffairFiles(affairId: number) {
+    const affair = await this.prisma.db.propertyAffair.findFirst({
+      where: { id: affairId, deletedAt: null },
+      select: { id: true, affairNo: true, deletedAt: true },
+    });
+    if (!affair || affair.deletedAt)
+      throw new NotFoundException('办事事项不存在');
+    return (
+      await this.prisma.db.propertyAffairFile.findMany({
+        where: { affairId, fileAsset: { category: 'PROPERTY_AFFAIR' } },
+        include: { fileAsset: true },
+        orderBy: [{ createdAt: 'desc' }, { fileAssetId: 'desc' }],
+      })
+    ).map(({ fileAsset }) => this.propertyAffairFileResult(fileAsset));
+  }
+
+  async readPropertyAffairFile(affairId: number, fileId: number) {
+    const affair = await this.prisma.db.propertyAffair.findFirst({
+      where: { id: affairId, deletedAt: null },
+      select: { id: true, affairNo: true, deletedAt: true },
+    });
+    if (!affair || affair.deletedAt)
+      throw new NotFoundException('办事事项不存在');
+    const item = await this.prisma.db.propertyAffairFile.findFirst({
+      where: {
+        affairId,
+        fileAssetId: fileId,
+        fileAsset: { category: 'PROPERTY_AFFAIR' },
+      },
+      include: { fileAsset: true },
+    });
+    if (!item) throw new NotFoundException('物业办事附件不存在');
+    let content: Buffer;
+    try {
+      content = await readFile(
+        this.propertyAffairPath(item.fileAsset.storedName),
+      );
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'ENOENT') {
+        throw new NotFoundException('物业办事附件文件不存在');
+      }
+      throw new ServiceUnavailableException('物业办事附件读取失败，请稍后重试');
+    }
+    return { asset: item.fileAsset, content };
+  }
+
+  async unlinkPropertyAffairFile(
+    affairId: number,
+    fileId: number,
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('无权操作物业办事附件');
+    }
+    await this.prisma.db.$transaction(
+      async (tx) => {
+        const affair = await tx.propertyAffair.findFirst({
+          where: { id: affairId, deletedAt: null },
+          select: { id: true, affairNo: true, deletedAt: true },
+        });
+        if (!affair || affair.deletedAt)
+          throw new NotFoundException('办事事项不存在');
+        const link = await tx.propertyAffairFile.findFirst({
+          where: {
+            affairId,
+            fileAssetId: fileId,
+            fileAsset: { category: 'PROPERTY_AFFAIR' },
+          },
+          include: { fileAsset: true },
+        });
+        if (!link) throw new NotFoundException('物业办事附件不存在');
+        const deleted = await tx.propertyAffairFile.deleteMany({
+          where: { affairId, fileAssetId: fileId },
+        });
+        if (deleted.count !== 1)
+          throw new NotFoundException('物业办事附件不存在');
+        await tx.operationLog.create({
+          data: {
+            module: 'PROPERTY_AFFAIRS',
+            action: 'UNLINK_FILE',
+            entityType: 'PROPERTY_AFFAIR',
+            entityId: affairId,
+            entityNo: affair.affairNo,
+            summary: `移除物业办事附件 ${affair.affairNo}：${link.fileAsset.originalName}`,
+            beforeData: {
+              fileAssetId: fileId,
+              originalName: link.fileAsset.originalName,
+            },
+            afterData: { unlinked: true },
+            operatorId: user.id,
+            operatorRole: user.role,
+            occurredAt: new Date(),
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+    );
+    await this.cleanupReleasedPropertyAffairFiles([fileId]);
+    return { id: fileId };
+  }
+
+  async cleanupReleasedPropertyAffairFiles(fileIds: number[]) {
+    const deletedFileIds: number[] = [];
+    for (const fileId of new Set(fileIds)) {
+      const candidate = await this.prisma.db.fileAsset.findUnique({
+        where: { id: fileId },
+        select: {
+          id: true,
+          category: true,
+          storageKey: true,
+          storedName: true,
+          lockedAt: true,
+        },
+      });
+      if (!candidate || candidate.category !== 'PROPERTY_AFFAIR') continue;
+      const safeStoredName = basename(candidate.storedName);
+      if (
+        safeStoredName !== candidate.storedName ||
+        candidate.storageKey !== `property-affairs/${safeStoredName}`
+      ) {
+        continue;
+      }
+
+      const lockedAt = new Date();
+      const claimed = await this.prisma.db.fileAsset.updateMany({
+        where: {
+          id: fileId,
+          category: 'PROPERTY_AFFAIR',
+          lockedAt: null,
+          ...noFileAssetReferences,
+        },
+        data: { lockedAt },
+      });
+      if (claimed.count !== 1) continue;
+
+      const remainingReferences = await this.prisma.db.fileAsset.count({
+        where: { id: fileId, OR: anyFileAssetReference },
+      });
+      if (remainingReferences > 0) {
+        await this.prisma.db.fileAsset.updateMany({
+          where: { id: fileId, category: 'PROPERTY_AFFAIR', lockedAt },
+          data: { lockedAt: null },
+        });
+        continue;
+      }
+
+      const sharedPhysical = await this.prisma.db.fileAsset.count({
+        where: {
+          id: { not: fileId },
+          storedName: safeStoredName,
+          storageKey: { startsWith: 'property-affairs/' },
+        },
+      });
+      if (sharedPhysical === 0) {
+        try {
+          await unlink(this.propertyAffairPath(safeStoredName));
+        } catch (error) {
+          if ((error as { code?: unknown })?.code !== 'ENOENT') {
+            await this.prisma.db.fileAsset.updateMany({
+              where: { id: fileId, category: 'PROPERTY_AFFAIR', lockedAt },
+              data: { lockedAt: null },
+            });
+            throw new ServiceUnavailableException(
+              '物业办事附件清理失败，请稍后重试',
+            );
+          }
+        }
+      }
+
+      const deleted = await this.prisma.db.fileAsset.deleteMany({
+        where: {
+          id: fileId,
+          category: 'PROPERTY_AFFAIR',
+          lockedAt,
+          ...noFileAssetReferences,
+        },
+      });
+      if (deleted.count === 1) deletedFileIds.push(fileId);
+    }
+    return { deletedFileIds };
   }
 
   private async writeContractFile(file: UploadedFile, user: AuthUser) {
