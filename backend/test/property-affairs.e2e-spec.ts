@@ -778,12 +778,12 @@ describe('property affairs API workflows and invariants (e2e)', () => {
       createdAffairIds.add(data.id);
       return data.affairNo;
     });
-    const expectedPrefix = `WY${dateKey}`;
-    expect(numbers.every((number) => number.startsWith(expectedPrefix))).toBe(
-      true,
-    );
+    const strictNumberPattern = new RegExp(`^WY${dateKey}\\d{4}$`);
+    for (const number of numbers) {
+      expect(number).toMatch(strictNumberPattern);
+    }
     const actualSequences = numbers
-      .map((number) => Number(number.slice(expectedPrefix.length)))
+      .map((number) => Number(number.slice(-4)))
       .sort((left, right) => left - right);
     expect(actualSequences).toEqual(
       Array.from(

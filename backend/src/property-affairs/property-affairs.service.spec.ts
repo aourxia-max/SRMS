@@ -274,7 +274,7 @@ describe('PropertyAffairsService', () => {
     );
   });
 
-  it('uses the Asia/Shanghai business date across the UTC day boundary', async () => {
+  it('uses the Asia/Shanghai business date and zero-pads the daily sequence to four digits', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-09-01T16:30:00.000Z'));
     const { service, tx } = createFixture();
 
