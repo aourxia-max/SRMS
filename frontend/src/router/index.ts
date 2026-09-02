@@ -18,6 +18,24 @@ import SystemManagementView from '../views/SystemManagementView.vue'
 import RoomDetailView from '../views/RoomDetailView.vue'
 import RentBillsView from '../views/RentBillsView.vue'
 
+type RouteAccessTarget = {
+  fullPath: string
+  name: string | symbol | null | undefined
+  meta: Record<string, unknown>
+}
+
+type RouteAccessSession = {
+  isAuthenticated: boolean
+  user: { role: string } | null
+}
+
+export function resolveRouteAccess(to: RouteAccessTarget, session: RouteAccessSession) {
+  if (to.meta.requiresAuth && !session.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } }
+  if (to.name === 'login' && session.isAuthenticated) return { name: 'session' }
+  const roles = to.meta.roles as string[] | undefined
+  if (roles && !roles.includes(session.user?.role ?? '')) return { name: 'session' }
+  return true
+}
 export const routes: RouteRecordRaw[] = [
     {
       path: '/',
@@ -64,7 +82,5 @@ export const router = createRouter({
 router.beforeEach(async (to) => {
   const session = useSessionStore()
   await session.restore()
-  if (to.meta.requiresAuth && !session.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } }
-  if (to.name === 'login' && session.isAuthenticated) return { name: 'session' }
-  return true
+  return resolveRouteAccess(to, session)
 })
