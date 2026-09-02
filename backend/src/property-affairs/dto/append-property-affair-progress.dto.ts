@@ -3,25 +3,25 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
-  IsOptional,
   IsString,
   Length,
   Min,
+  ValidateIf,
 } from 'class-validator';
-import { trimRequiredString } from './property-affair-relations.dto';
+import { isDefined, trimRequiredString } from './property-affair-relations.dto';
 
 export class AppendPropertyAffairProgressDto {
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @IsInt({ message: '版本号必须为整数' })
+  @Min(1, { message: '版本号必须为正整数' })
   version!: number;
 
   @Transform(trimRequiredString)
-  @IsString()
-  @Length(1, 2000)
+  @IsString({ message: '进度内容必须为文本' })
+  @Length(1, 2000, { message: '进度内容长度必须为1至2000个字符' })
   content!: string;
 
-  @IsOptional()
-  @IsEnum(PropertyAffairStatus)
+  @ValidateIf(isDefined)
+  @IsEnum(PropertyAffairStatus, { message: '目标事项状态无效' })
   nextStatus?: PropertyAffairStatus;
 }

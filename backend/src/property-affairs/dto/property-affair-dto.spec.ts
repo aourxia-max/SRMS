@@ -176,7 +176,7 @@ describe('property-affair DTOs', () => {
       keyword: '电梯',
       category: undefined,
       page: 1,
-      pageSize: 10,
+      pageSize: 20,
       buildingId: 1,
       roomId: 2,
       tenantId: 3,
