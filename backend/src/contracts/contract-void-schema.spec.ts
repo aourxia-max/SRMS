@@ -73,12 +73,6 @@ describe('contract void correction schema', () => {
   it('migrates append-only contract void correction storage without updating contracts', () => {
     expect(existsSync(migrationPath)).toBe(true);
     const migration = readFileSync(migrationPath, 'utf8');
-    const schema = readFileSync(schemaPath, 'utf8');
-    const schemaFileCategory =
-      schema.match(/enum FileCategory \{([\s\S]*?)\n\}/)?.[1] ?? '';
-    const schemaFileCategories = (
-      schemaFileCategory.match(/^\s+([A-Z_]+)$/gm) ?? []
-    ).map((value) => value.trim());
     const migrationFileCategory =
       migration.match(
         /ALTER TABLE `file_assets`\s+MODIFY `category` ENUM\(([^)]+)\) NOT NULL/,
