@@ -10,7 +10,9 @@ import {
   pricingRebateSourceLabel,
   rentBillStatusLabel,
   roomStatusLabel,
+  tenantIdTypeLabel,
   tenantStatusLabel,
+  tenantTypeLabel,
   usageTypeLabel,
 } from "./status-labels";
 
@@ -50,6 +52,14 @@ describe("status label helpers", () => {
     expect(tenantStatusLabel("INACTIVE")).toBe("停用");
     expect(usageTypeLabel("UNEXPECTED")).toBe("未知状态");
     expect(tenantStatusLabel("UNEXPECTED")).toBe("未知状态");
+  });
+
+  it("集中翻译承租人类型和常用证件类型且不泄露未知代码", () => {
+    expect(tenantTypeLabel("INDIVIDUAL")).toBe("个人");
+    expect(tenantTypeLabel("COMPANY")).toBe("单位");
+    expect(tenantTypeLabel("UNEXPECTED")).toBe("未知类型");
+    expect(tenantIdTypeLabel("ID_CARD")).toBe("身份证");
+    expect(tenantIdTypeLabel("UNEXPECTED")).toBe("其他证件");
   });
 
   it("uses a safe Chinese fallback for payment, rent-bill, and room statuses", () => {

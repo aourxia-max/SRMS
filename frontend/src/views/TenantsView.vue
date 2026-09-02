@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, getCurrentInstance, onMounted, reactive, ref } from "vue";
+import type { Router } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "../services/http";
 import { useSessionStore } from "../stores/session";
-import { tenantStatusLabel } from "../utils/status-labels";
+import { tenantIdTypeLabel, tenantStatusLabel, tenantTypeLabel } from "../utils/status-labels";
 import {
   tenantFormFromListItem,
   tenantUpdatePayload,
@@ -14,6 +15,7 @@ import {
 import { pageAfterDeleting } from './tenant-pagination'
 
 const session = useSessionStore();
+const router = getCurrentInstance()?.appContext.config.globalProperties.$router as Router | undefined;
 const canManage = computed(() =>
   ["SUPER_ADMIN", "ADMIN"].includes(session.user?.role ?? ""),
 );
@@ -110,6 +112,10 @@ async function viewId(tenant: TenantListItem) {
   ElMessage.success(`完整证件号码：${result.data.data.idNo ?? "未登记"}`);
 }
 
+function viewDetail(tenant: TenantListItem) {
+  void router?.push({ name: "tenant-detail", params: { id: tenant.id } });
+}
+
 async function upload(tenant: TenantListItem, event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -157,19 +163,28 @@ onMounted(async () => {
         <el-table-column prop="name" label="姓名/单位" />
         <el-table-column label="类型">
           <template #default="{ row }">{{
-            row.tenantType === "COMPANY" ? "单位" : "个人"
+            tenantTypeLabel(row.tenantType)
           }}</template>
         </el-table-column>
         <el-table-column prop="phone" label="联系电话" />
-        <el-table-column prop="idType" label="证件类型" />
+        <el-table-column label="证件类型">
+          <template #default="{ row }">{{ tenantIdTypeLabel(row.idType) }}</template>
+        </el-table-column>
         <el-table-column prop="maskedIdNo" label="证件号码（脱敏）" />
         <el-table-column label="状态">
           <template #default="{ row }">{{
             tenantStatusLabel(row.status)
           }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="230">
+        <el-table-column label="操作" width="320">
           <template #default="{ row }">
+            <el-button
+              v-if="canManage"
+              :data-test="`tenant-detail-${row.id}`"
+              size="small"
+              @click="viewDetail(row)"
+              >查看详情</el-button
+            >
             <el-button v-if="canManage" size="small" @click="open(row)"
               >编辑</el-button
             >

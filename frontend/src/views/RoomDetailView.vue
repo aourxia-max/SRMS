@@ -2,6 +2,7 @@
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import RelatedPropertyAffairs from '../components/property-affairs/RelatedPropertyAffairs.vue'
 import { http } from '../services/http'
 import { roomContractRoute, supportedRoomContractId } from './room-detail-navigation'
 import { useSessionStore } from '../stores/session'
@@ -118,6 +119,8 @@ onMounted(load)
       </el-card>
 
       <el-collapse class="history-panel"><el-collapse-item title="历史信息（房态变更与历史合同）" name="history"><section class="history-grid"><div><h3>房态变更</h3><el-empty v-if="!room.histories.length" description="暂无房态变更记录" /><el-timeline v-else><el-timeline-item v-for="item in room.histories" :key="item.id" :timestamp="date(item.changedAt)">{{ item.fromStatus ? `${statusLabel(item.fromStatus)} → ${statusLabel(item.toStatus)}` : statusLabel(item.toStatus) }}<small>{{ item.changeReason || '房源建档' }}</small></el-timeline-item></el-timeline></div><div><h3>历史合同</h3><el-empty v-if="!room.contracts.length" description="暂无合同记录" /><el-timeline v-else><el-timeline-item v-for="contract in room.contracts" :key="contract.id" :timestamp="`${date(contract.startDate)} 至 ${date(contract.endDate)}`"><b>{{ contract.contractNo }}</b><small>{{ contractStatusLabel(contract.status) }} · {{ contract.hasOverdueBill ? '存在逾期账单' : '无逾期账单' }}</small></el-timeline-item></el-timeline></div></section></el-collapse-item></el-collapse>
+      <RelatedPropertyAffairs v-if="canManage" :room-id="room.id" />
+
       <el-dialog v-model="editDialog" title="编辑房源" width="680">
         <el-form :model="editForm" label-position="top">
           <el-row :gutter="16">

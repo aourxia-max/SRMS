@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import PropertyAffairsDashboardList from '../components/property-affairs/PropertyAffairsDashboardList.vue'
 import { http } from '../services/http'
 import { useApprovalTasksStore } from '../stores/approval-tasks'
 import { useSessionStore } from '../stores/session'
@@ -48,6 +49,7 @@ const data = ref<any>({
   rentCollectionOverview: null,
   monthlyMoveInCount: 0,
   monthlyCheckoutCount: 0,
+  propertyAffairs: [],
 })
 const roomMapData = ref<any>({
   roomSummary: { statusCounts: {}, rooms: [] },
@@ -65,6 +67,7 @@ const roomMapFilters = reactive({
 
 const isSuper = computed(() => session.user?.role === 'SUPER_ADMIN')
 const canViewRoomRent = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
+const canViewPropertyAffairs = computed(() => ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? ''))
 const statusMeta: Record<RoomStatus, { label: string; className: string; color: string }> = {
   EMPTY: { label: '空置', className: 'empty', color: '#20a37a' },
   PENDING_MOVE_IN: { label: '待入住', className: 'movein', color: '#7ef1ff' },
@@ -404,6 +407,11 @@ onMounted(init)
             </div>
           </div>
         </el-card>
+
+        <PropertyAffairsDashboardList
+          v-if="canViewPropertyAffairs"
+          :items="data.propertyAffairs ?? []"
+        />
 
         <el-card v-if="isSuper" class="panel-card" shadow="never">
           <template #header>

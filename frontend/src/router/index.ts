@@ -5,6 +5,7 @@ import LoginView from '../views/LoginView.vue'
 import UsersView from '../views/UsersView.vue'
 import PropertiesView from '../views/PropertiesView.vue'
 import TenantsView from '../views/TenantsView.vue'
+import TenantDetailView from '../views/TenantDetailView.vue'
 import ContractsView from '../views/ContractsView.vue'
 import ConcessionsPreviewView from '../views/ConcessionsPreviewView.vue'
 import ContractChangesView from '../views/ContractChangesView.vue'
@@ -51,6 +52,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/properties', name: 'properties', component: PropertiesView, meta: { requiresAuth: true } },
     { path: '/properties/:id', name: 'room-detail', component: RoomDetailView, meta: { requiresAuth: true } },
     { path: '/tenants', name: 'tenants', component: TenantsView, meta: { requiresAuth: true } },
+    { path: '/tenants/:id', name: 'tenant-detail', component: TenantDetailView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
     { path: '/contracts', name: 'contracts', component: ContractsView, meta: { requiresAuth: true } },
     { path: '/property-affairs', name: 'property-affairs', component: PropertyAffairsView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
     { path: '/property-affairs/new', name: 'property-affair-create', component: PropertyAffairFormView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },

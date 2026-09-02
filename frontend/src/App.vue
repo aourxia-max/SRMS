@@ -19,7 +19,7 @@ const propertyAffairRouteNames = new Set(['property-affairs', 'property-affair-c
 const propertyAffairsSectionActive = computed(() => propertyAffairRouteNames.has(String(route.name)))
 const pageNames: Record<string, string> = {
   'rent-bills': '租金账单',
-  session: '经营驾驶舱', properties: '房源管理', tenants: '承租人管理', contracts: '合同管理',
+  session: '经营驾驶舱', properties: '房源管理', tenants: '承租人管理', 'tenant-detail': '承租人详情', contracts: '合同管理',
   'contract-changes': '合同变更', 'payment-collect': '收款登记', 'payment-detail': '收款详情',
   'payment-reviews': '退款/作废确认',
   'property-affairs': '物业办事', 'property-affair-create': '新建办事事项',

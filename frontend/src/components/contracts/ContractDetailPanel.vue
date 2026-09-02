@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
+import RelatedPropertyAffairs from '../property-affairs/RelatedPropertyAffairs.vue'
 import { presentContractChange, type ContractChangeRecord } from './contract-change-presentation'
 import { isFixedRentRebateEligible, isPreviewableContractImage, updateContractRemark } from '../../services/contracts'
 import { http } from '../../services/http'
@@ -249,6 +250,10 @@ async function removeCommission() {
           <section class="notice">已确认合同的关键金额和日期不能直接编辑。如需调整，请进入合同变更流程。</section>
         </aside>
       </div>
+      <RelatedPropertyAffairs
+        v-if="contract && ['SUPER_ADMIN', 'ADMIN'].includes(role)"
+        :contract-id="contract.id"
+      />
     </template>
 
     <el-dialog v-model="remarkDialog" title="编辑合同备注" width="560px" append-to-body>

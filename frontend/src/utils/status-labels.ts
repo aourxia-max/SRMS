@@ -149,6 +149,20 @@ export const tenantStatusLabels: StatusMap = {
   INACTIVE: '停用',
 };
 
+export const tenantTypeLabels: StatusMap = {
+  INDIVIDUAL: '个人',
+  COMPANY: '单位',
+};
+
+export const tenantIdTypeLabels: StatusMap = {
+  ID_CARD: '身份证',
+  PASSPORT: '护照',
+  BUSINESS_LICENSE: '营业执照',
+  HK_MACAO_PASS: '港澳通行证',
+  TAIWAN_PASS: '台湾通行证',
+  OTHER: '其他证件',
+};
+
 const safeBusinessLabel = (map: StatusMap, value?: string | null) => {
   if (!value) return '—';
   return map[value] ?? '未知状态';
@@ -156,3 +170,12 @@ const safeBusinessLabel = (map: StatusMap, value?: string | null) => {
 
 export const usageTypeLabel = (value?: string | null) => safeBusinessLabel(usageTypeLabels, value);
 export const tenantStatusLabel = (value?: string | null) => safeBusinessLabel(tenantStatusLabels, value);
+export const tenantTypeLabel = (value?: string | null) => {
+  if (!value) return '—';
+  return Object.hasOwn(tenantTypeLabels, value) ? tenantTypeLabels[value] : '未知类型';
+};
+export const tenantIdTypeLabel = (value?: string | null) => {
+  if (!value) return '—';
+  if (Object.hasOwn(tenantIdTypeLabels, value)) return tenantIdTypeLabels[value];
+  return /[一-鿿]/.test(value) ? value : '其他证件';
+};
