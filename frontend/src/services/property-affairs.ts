@@ -17,6 +17,9 @@ const unwrap = <T>(response: { data: ApiEnvelope<T> }) => response.data.data
 export async function listPropertyAffairs(query: PropertyAffairListQuery = {}) {
   return unwrap(await http.get<ApiEnvelope<PropertyAffairPaginatedResponse<PropertyAffairSummary>>>('/property-affairs', { params: query }))
 }
+export async function listPropertyAffairsRecycleBin(query: PropertyAffairListQuery = {}) {
+  return unwrap(await http.get<ApiEnvelope<PropertyAffairPaginatedResponse<PropertyAffairSummary>>>('/property-affairs/recycle-bin', { params: query }))
+}
 export async function getPropertyAffair(id: number) { return unwrap(await http.get<ApiEnvelope<PropertyAffairDetail>>(`/property-affairs/${id}`)) }
 export async function listPropertyAffairCategories() { return unwrap(await http.get<ApiEnvelope<string[]>>('/property-affairs/categories')) }
 export async function listPropertyAffairResponsibleUsers() { return unwrap(await http.get<ApiEnvelope<PropertyAffairResponsibleUserOption[]>>('/property-affairs/responsible-users')) }

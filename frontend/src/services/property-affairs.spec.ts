@@ -9,6 +9,7 @@ import {
   listPropertyAffairCategories,
   listPropertyAffairResponsibleUsers,
   listPropertyAffairs,
+  listPropertyAffairsRecycleBin,
   permanentlyDeletePropertyAffair,
   previewPropertyAffairFile,
   restorePropertyAffair,
@@ -30,6 +31,13 @@ describe('物业办事 API', () => {
 
     await expect(listPropertyAffairs({ keyword: '照明', status: 'IN_PROGRESS', page: 2, pageSize: 10 })).resolves.toEqual({ items: [affair], total: 1, page: 2, pageSize: 10 })
     expect(get).toHaveBeenCalledWith('/property-affairs', { params: { keyword: '照明', status: 'IN_PROGRESS', page: 2, pageSize: 10 } })
+  })
+
+  it('通过独立回收站端点加载已删除事项', async () => {
+    const get = vi.spyOn(http, 'get').mockResolvedValue(envelope({ items: [affair], total: 1, page: 1, pageSize: 20 }) as never)
+
+    await expect(listPropertyAffairsRecycleBin({ keyword: '照明', page: 1, pageSize: 20 })).resolves.toEqual({ items: [affair], total: 1, page: 1, pageSize: 20 })
+    expect(get).toHaveBeenCalledWith('/property-affairs/recycle-bin', { params: { keyword: '照明', page: 1, pageSize: 20 } })
   })
 
   it('加载详情、分类和可选负责人并解包响应信封', async () => {

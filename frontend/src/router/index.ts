@@ -17,6 +17,9 @@ import DashboardView from '../views/DashboardView.vue'
 import SystemManagementView from '../views/SystemManagementView.vue'
 import RoomDetailView from '../views/RoomDetailView.vue'
 import RentBillsView from '../views/RentBillsView.vue'
+import PropertyAffairsView from '../views/PropertyAffairsView.vue'
+import PropertyAffairFormView from '../views/PropertyAffairFormView.vue'
+import PropertyAffairDetailView from '../views/PropertyAffairDetailView.vue'
 
 type RouteAccessTarget = {
   fullPath: string
@@ -49,6 +52,11 @@ export const routes: RouteRecordRaw[] = [
     { path: '/properties/:id', name: 'room-detail', component: RoomDetailView, meta: { requiresAuth: true } },
     { path: '/tenants', name: 'tenants', component: TenantsView, meta: { requiresAuth: true } },
     { path: '/contracts', name: 'contracts', component: ContractsView, meta: { requiresAuth: true } },
+    { path: '/property-affairs', name: 'property-affairs', component: PropertyAffairsView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
+    { path: '/property-affairs/new', name: 'property-affair-create', component: PropertyAffairFormView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
+    { path: '/property-affairs/recycle-bin', name: 'property-affairs-recycle-bin', component: PropertyAffairsView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
+    { path: '/property-affairs/:id', name: 'property-affair-detail', component: PropertyAffairDetailView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
+    { path: '/property-affairs/:id/edit', name: 'property-affair-edit', component: PropertyAffairFormView, meta: { requiresAuth: true, roles: ['SUPER_ADMIN', 'ADMIN'] } },
     {
       path: '/pricing-rebates',
       redirect: (to) => ({ name: 'contracts', query: { ...to.query, tab: 'fixed-rebate' } }),

@@ -20,6 +20,9 @@ const pageNames: Record<string, string> = {
   session: '经营驾驶舱', properties: '房源管理', tenants: '承租人管理', contracts: '合同管理',
   'contract-changes': '合同变更', 'payment-collect': '收款登记', 'payment-detail': '收款详情',
   'payment-reviews': '退款/作废确认',
+  'property-affairs': '物业办事', 'property-affair-create': '新建办事事项',
+  'property-affairs-recycle-bin': '物业办事回收站', 'property-affair-detail': '办事事项详情',
+  'property-affair-edit': '编辑办事事项',
   checkout: '退租结算', finance: '财务中心', users: '用户管理', 'system-management': '系统管理',
 }
 const currentPage = computed(() => pageNames[String(route.name)] ?? 'SRMS')
@@ -64,6 +67,7 @@ onBeforeUnmount(() => approvalTasks.stopPolling())
         <router-link to="/tenants" class="srms-nav-item"><span>♙</span><b v-show="!collapsed">承租人管理</b></router-link>
         <router-link to="/contracts" class="srms-nav-item"><span>▤</span><b v-show="!collapsed">合同管理</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.contractsTotal" /></router-link>
         <router-link v-if="isAdmin" to="/contracts/changes" class="srms-nav-item srms-subnav"><span>↻</span><b v-show="!collapsed">合同变更</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.contractChanges" /></router-link>
+        <router-link v-if="isAdmin" data-test="property-affairs-sidebar" to="/property-affairs" class="srms-nav-item"><span>◇</span><b v-show="!collapsed">物业办事</b></router-link>
         <p v-show="!collapsed">租赁财务</p>
         <router-link to="/rent-bills" class="srms-nav-item"><span>▣</span><b v-show="!collapsed">租金账单</b></router-link>
         <router-link to="/payments/collect" class="srms-nav-item"><span>✓</span><b v-show="!collapsed">收款管理</b><PendingCountBadge v-if="isSuperAdmin" class="srms-nav-badge" :count="approvalTasks.counts.paymentsTotal" /></router-link>
