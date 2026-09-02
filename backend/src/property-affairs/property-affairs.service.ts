@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,6 +13,8 @@ import {
 } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { SecurityAuditChainService } from '../system/security-audit-chain.service';
+import { AppendPropertyAffairProgressDto } from './dto/append-property-affair-progress.dto';
 import { CreatePropertyAffairDto } from './dto/create-property-affair.dto';
 import { ListPropertyAffairsQueryDto } from './dto/list-property-affairs-query.dto';
 import { PropertyAffairRelationsDto } from './dto/property-affair-relations.dto';
@@ -66,7 +69,10 @@ type RelationReader = Pick<
 
 @Injectable()
 export class PropertyAffairsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditChain?: SecurityAuditChainService,
+  ) {}
 
   async list(query: ListPropertyAffairsQueryDto) {
     const page = query.page ?? 1;
@@ -124,6 +130,75 @@ export class PropertyAffairsService {
         where,
         include: propertyAffairInclude,
         orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    const current = await this.loadCurrentRelations(affairs, this.prisma.db);
+    return {
+      items: affairs.map((affair) => presentPropertyAffair(affair, current)),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async listRecycleBin(query: ListPropertyAffairsQueryDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const keyword = query.keyword?.trim();
+    const where: Prisma.PropertyAffairWhereInput = {
+      deletedAt: { not: null },
+      ...(query.category !== undefined ? { category: query.category } : {}),
+      ...(query.priority !== undefined ? { priority: query.priority } : {}),
+      ...(query.status !== undefined ? { status: query.status } : {}),
+      ...(query.responsibleUserId !== undefined
+        ? { responsibleUserId: query.responsibleUserId }
+        : {}),
+      ...(query.buildingId !== undefined
+        ? { buildings: { some: { buildingId: query.buildingId } } }
+        : {}),
+      ...(query.roomId !== undefined
+        ? { rooms: { some: { roomId: query.roomId } } }
+        : {}),
+      ...(query.tenantId !== undefined
+        ? { tenants: { some: { tenantId: query.tenantId } } }
+        : {}),
+      ...(query.contractId !== undefined
+        ? { contracts: { some: { contractId: query.contractId } } }
+        : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { affairNo: { contains: keyword } },
+              { title: { contains: keyword } },
+              { content: { contains: keyword } },
+              { externalHandlerName: { contains: keyword } },
+              { externalPhone: { contains: keyword } },
+              { externalContact: { contains: keyword } },
+              {
+                buildings: {
+                  some: { targetLabel: { contains: keyword } },
+                },
+              },
+              { rooms: { some: { targetLabel: { contains: keyword } } } },
+              { tenants: { some: { targetLabel: { contains: keyword } } } },
+              {
+                contracts: {
+                  some: { targetLabel: { contains: keyword } },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, affairs] = await Promise.all([
+      this.prisma.db.propertyAffair.count({ where }),
+      this.prisma.db.propertyAffair.findMany({
+        where,
+        include: propertyAffairInclude,
+        orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -365,6 +440,262 @@ export class PropertyAffairsService {
     });
   }
 
+  async appendProgress(
+    id: number,
+    dto: AppendPropertyAffairProgressDto,
+    user: AuthUser,
+  ) {
+    return this.prisma.db.$transaction(async (tx) => {
+      const current = await tx.propertyAffair.findFirst({
+        where: { id, deletedAt: null },
+        include: propertyAffairInclude,
+      });
+      if (!current) throw new NotFoundException('办事事项不存在');
+      if (current.version !== dto.version) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      const nextStatus = dto.nextStatus ?? current.status;
+      assertPropertyAffairTransition(current.status, nextStatus);
+      const statusChanged = nextStatus !== current.status;
+      const occurredAt = new Date();
+      const data: Prisma.PropertyAffairUpdateManyMutationInput = {
+        updatedBy: user.id,
+        version: { increment: 1 },
+      };
+      if (statusChanged) {
+        data.status = nextStatus;
+        if (nextStatus === PropertyAffairStatus.COMPLETED) {
+          data.completedAt = occurredAt;
+          data.cancelledAt = null;
+        } else if (nextStatus === PropertyAffairStatus.CANCELLED) {
+          data.completedAt = null;
+          data.cancelledAt = occurredAt;
+        } else {
+          data.completedAt = null;
+          data.cancelledAt = null;
+        }
+      }
+
+      const changed = await tx.propertyAffair.updateMany({
+        where: { id, version: dto.version, deletedAt: null },
+        data,
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      await tx.propertyAffairProgress.create({
+        data: {
+          affairId: id,
+          content: dto.content,
+          statusBefore: current.status,
+          statusAfter: nextStatus,
+          createdBy: user.id,
+          createdBySnapshot: user.displayName,
+        },
+      });
+      const updated = await tx.propertyAffair.findUniqueOrThrow({
+        where: { id },
+        include: propertyAffairInclude,
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'PROPERTY_AFFAIRS',
+          action: 'APPEND_PROGRESS',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: id,
+          entityNo: current.affairNo,
+          summary: `追加物业办事进度 ${current.affairNo}`,
+          beforeData: this.auditSnapshot(current),
+          afterData: this.auditSnapshot(updated),
+          reason: dto.content,
+          operatorId: user.id,
+          operatorRole: user.role,
+          occurredAt,
+        },
+      });
+      const relations = await this.loadCurrentRelations([updated], tx);
+      return presentPropertyAffair(updated, relations);
+    });
+  }
+
+  async softDelete(id: number, version: number, user: AuthUser) {
+    return this.prisma.db.$transaction(async (tx) => {
+      const current = await tx.propertyAffair.findUnique({
+        where: { id },
+        include: propertyAffairInclude,
+      });
+      if (!current) throw new NotFoundException('办事事项不存在');
+      if (current.version !== version) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      const occurredAt = new Date();
+      const changed = await tx.propertyAffair.updateMany({
+        where: { id, version, deletedAt: null },
+        data: {
+          deletedAt: occurredAt,
+          deletedBy: user.id,
+          updatedBy: user.id,
+          version: { increment: 1 },
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      const updated = await tx.propertyAffair.findUniqueOrThrow({
+        where: { id },
+        include: propertyAffairInclude,
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'PROPERTY_AFFAIRS',
+          action: 'SOFT_DELETE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: id,
+          entityNo: current.affairNo,
+          summary: `删除物业办事至回收站 ${current.affairNo}`,
+          beforeData: this.auditSnapshot(current),
+          afterData: this.auditSnapshot(updated),
+          operatorId: user.id,
+          operatorRole: user.role,
+          occurredAt,
+        },
+      });
+      const relations = await this.loadCurrentRelations([updated], tx);
+      return presentPropertyAffair(updated, relations);
+    });
+  }
+
+  async restore(id: number, version: number, user: AuthUser) {
+    return this.prisma.db.$transaction(async (tx) => {
+      const current = await tx.propertyAffair.findUnique({
+        where: { id },
+        include: propertyAffairInclude,
+      });
+      if (!current) throw new NotFoundException('办事事项不存在');
+      if (current.version !== version) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      const occurredAt = new Date();
+      const changed = await tx.propertyAffair.updateMany({
+        where: { id, version, deletedAt: { not: null } },
+        data: {
+          deletedAt: null,
+          deletedBy: null,
+          updatedBy: user.id,
+          version: { increment: 1 },
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      const updated = await tx.propertyAffair.findUniqueOrThrow({
+        where: { id },
+        include: propertyAffairInclude,
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'PROPERTY_AFFAIRS',
+          action: 'RESTORE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: id,
+          entityNo: current.affairNo,
+          summary: `从回收站恢复物业办事 ${current.affairNo}`,
+          beforeData: this.auditSnapshot(current),
+          afterData: this.auditSnapshot(updated),
+          operatorId: user.id,
+          operatorRole: user.role,
+          occurredAt,
+        },
+      });
+      const relations = await this.loadCurrentRelations([updated], tx);
+      return presentPropertyAffair(updated, relations);
+    });
+  }
+
+  async permanentDelete(id: number, version: number, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('无权操作物业办事事项');
+    }
+    const auditChain = this.auditChain;
+    if (!auditChain) throw new Error('安全审计服务未配置');
+
+    return this.prisma.db.$transaction(async (tx) => {
+      const current = await tx.propertyAffair.findUnique({
+        where: { id },
+        include: propertyAffairInclude,
+      });
+      if (!current) throw new NotFoundException('办事事项不存在');
+      if (current.version !== version) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+      if (!current.deletedAt) {
+        throw new BadRequestException('只有回收站中的事项可以永久删除');
+      }
+
+      const guarded = await tx.propertyAffair.updateMany({
+        where: { id, version, deletedAt: { not: null } },
+        data: { version: { increment: 1 } },
+      });
+      if (guarded.count !== 1) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
+
+      const occurredAt = new Date();
+      const releasedFileAssetIds = [
+        ...new Set(current.files.map((link) => link.fileAssetId)),
+      ];
+      const preDeleteSnapshot = {
+        ...this.auditSnapshot(current),
+        fileAssetIds: releasedFileAssetIds,
+        progressCount: current.progresses.length,
+      } satisfies Prisma.InputJsonObject;
+      await auditChain.appendInTransaction(tx, {
+        eventType: 'PROPERTY_AFFAIR_PERMANENT_DELETE',
+        entityType: 'PROPERTY_AFFAIR',
+        entityId: id,
+        operatorId: user.id,
+        occurredAt,
+        eventData: {
+          affairNo: current.affairNo,
+          preDeleteSnapshot,
+        },
+      });
+      await tx.operationLog.create({
+        data: {
+          module: 'PROPERTY_AFFAIRS',
+          action: 'PERMANENT_DELETE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: id,
+          entityNo: current.affairNo,
+          summary: `永久删除物业办事 ${current.affairNo}`,
+          beforeData: preDeleteSnapshot,
+          afterData: {
+            permanentlyDeleted: true,
+            releasedFileAssetIds,
+          },
+          operatorId: user.id,
+          operatorRole: user.role,
+          occurredAt,
+        },
+      });
+
+      await tx.propertyAffairFile.deleteMany({ where: { affairId: id } });
+      await tx.propertyAffairProgress.deleteMany({ where: { affairId: id } });
+      await tx.propertyAffairBuilding.deleteMany({ where: { affairId: id } });
+      await tx.propertyAffairRoom.deleteMany({ where: { affairId: id } });
+      await tx.propertyAffairTenant.deleteMany({ where: { affairId: id } });
+      await tx.propertyAffairContract.deleteMany({ where: { affairId: id } });
+      await tx.propertyAffair.delete({ where: { id } });
+      return releasedFileAssetIds;
+    });
+  }
+
   private async nextAffairNo(tx: Prisma.TransactionClient) {
     const parts = Object.fromEntries(
       SHANGHAI_DATE_FORMATTER.formatToParts(new Date()).map((part) => [
@@ -552,6 +883,8 @@ export class PropertyAffairsService {
       externalContact: affair.externalContact,
       completedAt: affair.completedAt?.toISOString() ?? null,
       cancelledAt: affair.cancelledAt?.toISOString() ?? null,
+      deletedAt: affair.deletedAt?.toISOString() ?? null,
+      deletedBy: affair.deletedBy,
       buildingIds: affair.buildings.map((link) => link.buildingId),
       roomIds: affair.rooms.map((link) => link.roomId),
       tenantIds: affair.tenants.map((link) => link.tenantId),

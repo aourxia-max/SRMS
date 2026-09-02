@@ -12,6 +12,13 @@ const admin = {
   role: UserRole.ADMIN,
 };
 
+const superAdmin = {
+  id: 1,
+  username: 'root',
+  displayName: '超级管理员',
+  role: UserRole.SUPER_ADMIN,
+};
+
 const createdAt = new Date('2026-09-02T03:04:05.000Z');
 
 const baseAffair = {
@@ -1163,5 +1170,951 @@ describe('PropertyAffairsService', () => {
       currentStatus: 'DISABLED',
       available: false,
     });
+  });
+
+  function progressFixture(
+    currentStatus: PropertyAffairStatus,
+    nextStatus: PropertyAffairStatus = currentStatus,
+  ) {
+    const current = {
+      ...baseAffair,
+      version: 3,
+      status: currentStatus,
+      completedAt:
+        currentStatus === PropertyAffairStatus.COMPLETED ? createdAt : null,
+      cancelledAt:
+        currentStatus === PropertyAffairStatus.CANCELLED ? createdAt : null,
+      buildings: [],
+      rooms: [],
+      tenants: [],
+      contracts: [],
+      progresses: [
+        {
+          id: 70,
+          affairId: 41,
+          content: '历史进度',
+          statusBefore: PropertyAffairStatus.IN_PROGRESS,
+          statusAfter: currentStatus,
+          createdBy: admin.id,
+          createdBySnapshot: admin.displayName,
+          createdAt,
+        },
+      ],
+      files: [],
+    };
+    const updated = {
+      ...current,
+      version: 4,
+      status: nextStatus,
+      completedAt:
+        nextStatus === PropertyAffairStatus.COMPLETED ? createdAt : null,
+      cancelledAt:
+        nextStatus === PropertyAffairStatus.CANCELLED ? createdAt : null,
+      progresses: [
+        {
+          id: 71,
+          affairId: 41,
+          content: '已联系维修单位',
+          statusBefore: currentStatus,
+          statusAfter: nextStatus,
+          createdBy: admin.id,
+          createdBySnapshot: admin.displayName,
+          createdAt,
+        },
+        ...current.progresses,
+      ],
+    };
+    const tx = {
+      propertyAffair: {
+        findFirst: jest.fn().mockResolvedValue(current),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(updated),
+      },
+      propertyAffairProgress: {
+        create: jest.fn().mockResolvedValue({ id: 71 }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      operationLog: { create: jest.fn().mockResolvedValue({ id: 72 }) },
+      building: { findMany: jest.fn().mockResolvedValue([]) },
+      room: { findMany: jest.fn().mockResolvedValue([]) },
+      tenant: { findMany: jest.fn().mockResolvedValue([]) },
+      contract: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const db = {
+      $transaction: jest.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const service = new PropertyAffairsService({ db } as never);
+    return { service, db, tx };
+  }
+
+  function recycleFixture(deleted: boolean) {
+    const current = {
+      ...baseAffair,
+      version: 3,
+      status: PropertyAffairStatus.COMPLETED,
+      completedAt: createdAt,
+      deletedAt: deleted ? createdAt : null,
+      deletedBy: deleted ? admin.id : null,
+      buildings: [{ id: 1, affairId: 41, buildingId: 1, targetLabel: '1栋' }],
+      rooms: [{ id: 2, affairId: 41, roomId: 11, targetLabel: '1栋101' }],
+      tenants: [{ id: 3, affairId: 41, tenantId: 21, targetLabel: '张三' }],
+      contracts: [
+        { id: 4, affairId: 41, contractId: 31, targetLabel: 'HT-31' },
+      ],
+      progresses: [
+        {
+          id: 5,
+          affairId: 41,
+          content: '事项已完成',
+          statusBefore: PropertyAffairStatus.IN_PROGRESS,
+          statusAfter: PropertyAffairStatus.COMPLETED,
+          createdBy: admin.id,
+          createdBySnapshot: admin.displayName,
+          createdAt,
+        },
+      ],
+      files: [
+        {
+          affairId: 41,
+          fileAssetId: 71,
+          createdBy: admin.id,
+          createdAt,
+          fileAsset: {
+            id: 71,
+            storageKey: 'property-affairs/71.pdf',
+            originalName: '维修单.pdf',
+            storedName: '71.pdf',
+            mimeType: 'application/pdf',
+            extension: '.pdf',
+            sizeBytes: 42n,
+            sha256: 'a'.repeat(64),
+            category: 'PROPERTY_AFFAIR',
+            uploadedBy: admin.id,
+            uploadedAt: createdAt,
+            lockedAt: null,
+          },
+        },
+      ],
+    };
+    const updated = {
+      ...current,
+      version: 4,
+      updatedBy: superAdmin.id,
+      deletedAt: deleted ? null : createdAt,
+      deletedBy: deleted ? null : superAdmin.id,
+    };
+    const tx = {
+      propertyAffair: {
+        findUnique: jest.fn().mockResolvedValue(current),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(updated),
+        delete: jest.fn().mockResolvedValue(current),
+      },
+      propertyAffairFile: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      propertyAffairProgress: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      propertyAffairBuilding: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      propertyAffairRoom: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      propertyAffairTenant: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      propertyAffairContract: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      operationLog: { create: jest.fn().mockResolvedValue({ id: 73 }) },
+      building: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 1, buildingNo: '1栋', buildingName: null, status: 'ACTIVE' },
+          ]),
+        update: jest.fn(),
+      },
+      room: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 11,
+            fullHouseNo: '1栋101',
+            roomStatus: 'RENTED',
+            deletedAt: null,
+          },
+        ]),
+        update: jest.fn(),
+      },
+      tenant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 21, name: '张三', status: 'ACTIVE' }]),
+        update: jest.fn(),
+      },
+      contract: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 31, contractNo: 'HT-31', status: 'ACTIVE' },
+          ]),
+        update: jest.fn(),
+      },
+      fileAsset: { delete: jest.fn() },
+      rentBill: { updateMany: jest.fn() },
+      payment: { updateMany: jest.fn() },
+    };
+    const db = {
+      $transaction: jest.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const service = new PropertyAffairsService({ db } as never);
+    return { service, db, tx, current, updated };
+  }
+
+  function permanentDeleteFixture(deleted = true) {
+    const fixture = recycleFixture(deleted);
+    const secondFile = {
+      ...fixture.current.files[0],
+      fileAssetId: 72,
+      fileAsset: {
+        ...fixture.current.files[0].fileAsset,
+        id: 72,
+        storageKey: 'property-affairs/72.docx',
+        originalName: '维修记录.docx',
+        storedName: '72.docx',
+        mimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        extension: '.docx',
+      },
+    };
+    const current = {
+      ...fixture.current,
+      files: [
+        fixture.current.files[0],
+        secondFile,
+        { ...fixture.current.files[0] },
+      ],
+    };
+    fixture.tx.propertyAffair.findUnique.mockResolvedValue(current);
+    const audit = {
+      appendInTransaction: jest.fn().mockResolvedValue({ id: 90 }),
+    };
+    const service = new PropertyAffairsService(
+      { db: fixture.db } as never,
+      audit as never,
+    );
+    return { ...fixture, service, current, audit };
+  }
+
+  it('appends administrator content and one status change with an optimistic write and audit', async () => {
+    jest.useFakeTimers().setSystemTime(createdAt);
+    const { service, db, tx } = progressFixture(
+      PropertyAffairStatus.PENDING,
+      PropertyAffairStatus.IN_PROGRESS,
+    );
+
+    const result = await service.appendProgress(
+      41,
+      {
+        version: 3,
+        content: '已联系维修单位',
+        nextStatus: PropertyAffairStatus.IN_PROGRESS,
+      },
+      admin,
+    );
+
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
+      where: { id: 41, deletedAt: null },
+      include: expect.any(Object),
+    });
+    expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
+      where: { id: 41, version: 3, deletedAt: null },
+      data: expect.objectContaining({
+        status: PropertyAffairStatus.IN_PROGRESS,
+        completedAt: null,
+        cancelledAt: null,
+        updatedBy: admin.id,
+        version: { increment: 1 },
+      }),
+    });
+    expect(tx.propertyAffairProgress.create).toHaveBeenCalledTimes(1);
+    expect(tx.propertyAffairProgress.create).toHaveBeenCalledWith({
+      data: {
+        affairId: 41,
+        content: '已联系维修单位',
+        statusBefore: PropertyAffairStatus.PENDING,
+        statusAfter: PropertyAffairStatus.IN_PROGRESS,
+        createdBy: admin.id,
+        createdBySnapshot: admin.displayName,
+      },
+    });
+    expect(tx.propertyAffairProgress.deleteMany).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        module: 'PROPERTY_AFFAIRS',
+        action: 'APPEND_PROGRESS',
+        entityType: 'PROPERTY_AFFAIR',
+        entityId: 41,
+        entityNo: 'WY202609020001',
+        summary: '追加物业办事进度 WY202609020001',
+        beforeData: expect.objectContaining({
+          status: PropertyAffairStatus.PENDING,
+          version: 3,
+        }),
+        afterData: expect.objectContaining({
+          status: PropertyAffairStatus.IN_PROGRESS,
+          version: 4,
+        }),
+        operatorId: admin.id,
+        operatorRole: admin.role,
+        occurredAt: createdAt,
+      }),
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: PropertyAffairStatus.IN_PROGRESS,
+        version: 4,
+      }),
+    );
+  });
+
+  it.each([
+    [PropertyAffairStatus.COMPLETED, 'completedAt'],
+    [PropertyAffairStatus.CANCELLED, 'cancelledAt'],
+  ] as const)(
+    'sets the current %s timestamp and clears the opposite lifecycle timestamp',
+    async (nextStatus, timestampField) => {
+      jest.useFakeTimers().setSystemTime(createdAt);
+      const { service, tx } = progressFixture(
+        PropertyAffairStatus.IN_PROGRESS,
+        nextStatus,
+      );
+
+      await service.appendProgress(
+        41,
+        {
+          version: 3,
+          content: '办理状态已更新',
+          nextStatus,
+        },
+        admin,
+      );
+
+      const data = tx.propertyAffair.updateMany.mock.calls[0][0].data;
+      expect(data[timestampField]).toEqual(createdAt);
+      expect(
+        data[timestampField === 'completedAt' ? 'cancelledAt' : 'completedAt'],
+      ).toBeNull();
+    },
+  );
+
+  it.each([PropertyAffairStatus.COMPLETED, PropertyAffairStatus.CANCELLED])(
+    'reopens %s by clearing current lifecycle timestamps without deleting progress history',
+    async (currentStatus) => {
+      const { service, tx } = progressFixture(
+        currentStatus,
+        PropertyAffairStatus.IN_PROGRESS,
+      );
+
+      await service.appendProgress(
+        41,
+        {
+          version: 3,
+          content: '重新启动办理',
+          nextStatus: PropertyAffairStatus.IN_PROGRESS,
+        },
+        admin,
+      );
+
+      expect(tx.propertyAffair.updateMany.mock.calls[0][0].data).toEqual(
+        expect.objectContaining({ completedAt: null, cancelledAt: null }),
+      );
+      expect(tx.propertyAffairProgress.create).toHaveBeenCalledTimes(1);
+      expect(tx.propertyAffairProgress.deleteMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps status and lifecycle timestamps unchanged when appending content without a status change', async () => {
+    const { service, tx } = progressFixture(PropertyAffairStatus.COMPLETED);
+
+    await service.appendProgress(
+      41,
+      { version: 3, content: '补充已完成事项说明' },
+      admin,
+    );
+
+    const data = tx.propertyAffair.updateMany.mock.calls[0][0].data;
+    expect(data).toEqual({
+      updatedBy: admin.id,
+      version: { increment: 1 },
+    });
+    expect(tx.propertyAffairProgress.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        content: '补充已完成事项说明',
+        statusBefore: PropertyAffairStatus.COMPLETED,
+        statusAfter: PropertyAffairStatus.COMPLETED,
+      }),
+    });
+    expect(tx.propertyAffairProgress.create).toHaveBeenCalledTimes(1);
+    expect(tx.propertyAffairProgress.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('returns stale-version 409 before validating an illegal progress transition', async () => {
+    const { service, tx } = progressFixture(PropertyAffairStatus.COMPLETED);
+
+    await expect(
+      service.appendProgress(
+        41,
+        {
+          version: 2,
+          content: '旧页面提交',
+          nextStatus: PropertyAffairStatus.PENDING,
+        },
+        admin,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairProgress.create).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('applies the lifecycle policy before writing an illegal progress transition', async () => {
+    const { service, tx } = progressFixture(PropertyAffairStatus.COMPLETED);
+
+    await expect(
+      service.appendProgress(
+        41,
+        {
+          version: 3,
+          content: '尝试退回待办理',
+          nextStatus: PropertyAffairStatus.PENDING,
+        },
+        admin,
+      ),
+    ).rejects.toThrow('事项状态不能这样变更');
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairProgress.create).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('returns the exact stale-version 409 when the progress update loses a race', async () => {
+    const { service, tx } = progressFixture(PropertyAffairStatus.PENDING);
+    tx.propertyAffair.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.appendProgress(41, { version: 3, content: '竞争追加' }, admin),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.propertyAffairProgress.create).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('lists only recycled affairs with safe pagination and exact deletion order', async () => {
+    const { current } = recycleFixture(true);
+    const db = {
+      propertyAffair: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([current]),
+      },
+      building: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 1, buildingNo: '1栋', buildingName: null, status: 'ACTIVE' },
+          ]),
+      },
+      room: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 11,
+            fullHouseNo: '1栋101',
+            roomStatus: 'RENTED',
+            deletedAt: null,
+          },
+        ]),
+      },
+      tenant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 21, name: '张三', status: 'ACTIVE' }]),
+      },
+      contract: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 31, contractNo: 'HT-31', status: 'ACTIVE' },
+          ]),
+      },
+    };
+    const service = new PropertyAffairsService({ db } as never);
+
+    const result = await service.listRecycleBin({
+      keyword: '漏水',
+      category: '公共维修',
+      priority: PropertyAffairPriority.NORMAL,
+      status: PropertyAffairStatus.COMPLETED,
+      responsibleUserId: 9,
+      buildingId: 1,
+      roomId: 11,
+      tenantId: 21,
+      contractId: 31,
+      page: 2,
+      pageSize: 5,
+    });
+
+    const listCall = db.propertyAffair.findMany.mock.calls[0][0];
+    expect(listCall).toEqual({
+      where: expect.objectContaining({
+        deletedAt: { not: null },
+        category: '公共维修',
+        priority: PropertyAffairPriority.NORMAL,
+        status: PropertyAffairStatus.COMPLETED,
+        responsibleUserId: 9,
+        buildings: { some: { buildingId: 1 } },
+        rooms: { some: { roomId: 11 } },
+        tenants: { some: { tenantId: 21 } },
+        contracts: { some: { contractId: 31 } },
+      }),
+      include: expect.any(Object),
+      orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
+      skip: 5,
+      take: 5,
+    });
+    expect(listCall.where.OR).toEqual(
+      expect.arrayContaining([
+        { affairNo: { contains: '漏水' } },
+        { title: { contains: '漏水' } },
+        { content: { contains: '漏水' } },
+        { externalHandlerName: { contains: '漏水' } },
+        { externalPhone: { contains: '漏水' } },
+        { externalContact: { contains: '漏水' } },
+      ]),
+    );
+    expect(db.propertyAffair.count).toHaveBeenCalledWith({
+      where: listCall.where,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        total: 1,
+        page: 2,
+        pageSize: 5,
+        items: [
+          expect.objectContaining({
+            id: 41,
+            deletedAt: createdAt,
+            status: PropertyAffairStatus.COMPLETED,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it.each([admin, superAdmin])(
+    'allows $role to soft-delete with one guarded mutation and an operation log',
+    async (user) => {
+      jest.useFakeTimers().setSystemTime(createdAt);
+      const { service, db, tx, updated } = recycleFixture(false);
+      tx.propertyAffair.findUniqueOrThrow.mockResolvedValue({
+        ...updated,
+        updatedBy: user.id,
+        deletedBy: user.id,
+      });
+
+      await service.softDelete(41, 3, user);
+
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.propertyAffair.findUnique).toHaveBeenCalledWith({
+        where: { id: 41 },
+        include: expect.any(Object),
+      });
+      expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
+        where: { id: 41, version: 3, deletedAt: null },
+        data: {
+          deletedAt: createdAt,
+          deletedBy: user.id,
+          updatedBy: user.id,
+          version: { increment: 1 },
+        },
+      });
+      expect(tx.operationLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          module: 'PROPERTY_AFFAIRS',
+          action: 'SOFT_DELETE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: 41,
+          entityNo: 'WY202609020001',
+          summary: '删除物业办事至回收站 WY202609020001',
+          beforeData: expect.objectContaining({
+            deletedAt: null,
+            deletedBy: null,
+            version: 3,
+          }),
+          afterData: expect.objectContaining({
+            deletedAt: createdAt.toISOString(),
+            deletedBy: user.id,
+            version: 4,
+          }),
+          operatorId: user.id,
+          operatorRole: user.role,
+          occurredAt: createdAt,
+        }),
+      });
+    },
+  );
+
+  it('returns stale-version 409 before attempting the soft-delete write', async () => {
+    const { service, tx } = recycleFixture(false);
+
+    await expect(service.softDelete(41, 2, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a concurrent update', false],
+    ['a repeated deletion', true],
+  ] as const)(
+    'returns the exact 409 after %s defeats the soft-delete guard',
+    async (_case, alreadyDeleted) => {
+      const { service, tx } = recycleFixture(alreadyDeleted);
+      tx.propertyAffair.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.softDelete(41, 3, admin)).rejects.toEqual(
+        expect.objectContaining({
+          message: '内容已被其他管理员更新，请刷新后重试',
+          status: 409,
+        }),
+      );
+      expect(tx.operationLog.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([admin, superAdmin])(
+    'allows $role to restore only deletion metadata while preserving lifecycle and children',
+    async (user) => {
+      jest.useFakeTimers().setSystemTime(createdAt);
+      const { service, tx } = recycleFixture(true);
+
+      const result = await service.restore(41, 3, user);
+
+      expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
+        where: { id: 41, version: 3, deletedAt: { not: null } },
+        data: {
+          deletedAt: null,
+          deletedBy: null,
+          updatedBy: user.id,
+          version: { increment: 1 },
+        },
+      });
+      for (const delegate of [
+        tx.propertyAffairFile,
+        tx.propertyAffairProgress,
+        tx.propertyAffairBuilding,
+        tx.propertyAffairRoom,
+        tx.propertyAffairTenant,
+        tx.propertyAffairContract,
+      ]) {
+        expect(delegate.deleteMany).not.toHaveBeenCalled();
+      }
+      expect(result).toEqual(
+        expect.objectContaining({
+          status: PropertyAffairStatus.COMPLETED,
+          completedAt: createdAt,
+          cancelledAt: null,
+          version: 4,
+          buildings: [expect.objectContaining({ id: 1 })],
+          rooms: [expect.objectContaining({ id: 11 })],
+          tenants: [expect.objectContaining({ id: 21 })],
+          contracts: [expect.objectContaining({ id: 31 })],
+          progresses: [expect.objectContaining({ content: '事项已完成' })],
+          files: [expect.objectContaining({ id: 71 })],
+        }),
+      );
+      expect(tx.operationLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          module: 'PROPERTY_AFFAIRS',
+          action: 'RESTORE',
+          entityType: 'PROPERTY_AFFAIR',
+          entityId: 41,
+          entityNo: 'WY202609020001',
+          summary: '从回收站恢复物业办事 WY202609020001',
+          beforeData: expect.objectContaining({
+            deletedAt: createdAt.toISOString(),
+            deletedBy: admin.id,
+            version: 3,
+          }),
+          afterData: expect.objectContaining({
+            deletedAt: null,
+            deletedBy: null,
+            version: 4,
+          }),
+          operatorId: user.id,
+          operatorRole: user.role,
+          occurredAt: createdAt,
+        }),
+      });
+    },
+  );
+
+  it('returns stale-version 409 before attempting a restore mutation', async () => {
+    const { service, tx } = recycleFixture(true);
+
+    await expect(service.restore(41, 2, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('returns the exact stale-version 409 when restore loses its guarded race', async () => {
+    const { service, tx } = recycleFixture(true);
+    tx.propertyAffair.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.restore(41, 3, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+    expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('uses the Chinese not-found convention when a lifecycle target is missing', async () => {
+    const { service, tx } = recycleFixture(false);
+    tx.propertyAffair.findUnique.mockResolvedValue(null);
+
+    await expect(service.softDelete(404, 1, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '办事事项不存在',
+        status: 404,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an ordinary administrator before starting permanent-delete transaction work', async () => {
+    const { service, db, audit } = permanentDeleteFixture();
+
+    await expect(service.permanentDelete(41, 3, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '无权操作物业办事事项',
+        status: 403,
+      }),
+    );
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('returns stale-version 409 before checking whether a permanent-delete target is recycled', async () => {
+    const { service, tx, audit } = permanentDeleteFixture(false);
+
+    await expect(service.permanentDelete(41, 2, superAdmin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses to permanently delete an active affair with matching version', async () => {
+    const { service, tx, audit } = permanentDeleteFixture(false);
+
+    await expect(service.permanentDelete(41, 3, superAdmin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '只有回收站中的事项可以永久删除',
+        status: 400,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
+    expect(tx.propertyAffair.delete).not.toHaveBeenCalled();
+  });
+
+  it('returns the exact stale-version 409 when the permanent-delete guard loses a race', async () => {
+    const { service, tx, audit } = permanentDeleteFixture();
+    tx.propertyAffair.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.permanentDelete(41, 3, superAdmin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
+    expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffair.delete).not.toHaveBeenCalled();
+  });
+
+  it('audits before ordered child deletion and returns unique released file asset IDs', async () => {
+    jest.useFakeTimers().setSystemTime(createdAt);
+    const { service, db, tx, audit } = permanentDeleteFixture();
+
+    const releasedFileAssetIds = await service.permanentDelete(
+      41,
+      3,
+      superAdmin,
+    );
+
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.propertyAffair.findUnique).toHaveBeenCalledWith({
+      where: { id: 41 },
+      include: expect.any(Object),
+    });
+    expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
+      where: { id: 41, version: 3, deletedAt: { not: null } },
+      data: { version: { increment: 1 } },
+    });
+    expect(audit.appendInTransaction).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        eventType: 'PROPERTY_AFFAIR_PERMANENT_DELETE',
+        entityType: 'PROPERTY_AFFAIR',
+        entityId: 41,
+        operatorId: superAdmin.id,
+        occurredAt: createdAt,
+        eventData: expect.objectContaining({
+          affairNo: 'WY202609020001',
+          preDeleteSnapshot: expect.objectContaining({
+            title: baseAffair.title,
+            status: PropertyAffairStatus.COMPLETED,
+            version: 3,
+            deletedAt: createdAt.toISOString(),
+            fileAssetIds: [71, 72],
+            progressCount: 1,
+          }),
+        }),
+      }),
+    );
+    expect(tx.operationLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        module: 'PROPERTY_AFFAIRS',
+        action: 'PERMANENT_DELETE',
+        entityType: 'PROPERTY_AFFAIR',
+        entityId: 41,
+        entityNo: 'WY202609020001',
+        summary: '永久删除物业办事 WY202609020001',
+        beforeData: expect.objectContaining({
+          status: PropertyAffairStatus.COMPLETED,
+          version: 3,
+          fileAssetIds: [71, 72],
+          progressCount: 1,
+        }),
+        afterData: {
+          permanentlyDeleted: true,
+          releasedFileAssetIds: [71, 72],
+        },
+        operatorId: superAdmin.id,
+        operatorRole: superAdmin.role,
+        occurredAt: createdAt,
+      }),
+    });
+
+    const orderedCalls = [
+      tx.propertyAffairFile.deleteMany,
+      tx.propertyAffairProgress.deleteMany,
+      tx.propertyAffairBuilding.deleteMany,
+      tx.propertyAffairRoom.deleteMany,
+      tx.propertyAffairTenant.deleteMany,
+      tx.propertyAffairContract.deleteMany,
+      tx.propertyAffair.delete,
+    ];
+    expect(audit.appendInTransaction.mock.invocationCallOrder[0]).toBeLessThan(
+      orderedCalls[0].mock.invocationCallOrder[0],
+    );
+    expect(tx.operationLog.create.mock.invocationCallOrder[0]).toBeLessThan(
+      orderedCalls[0].mock.invocationCallOrder[0],
+    );
+    for (let index = 0; index < orderedCalls.length - 1; index += 1) {
+      expect(orderedCalls[index].mock.invocationCallOrder[0]).toBeLessThan(
+        orderedCalls[index + 1].mock.invocationCallOrder[0],
+      );
+    }
+    expect(tx.propertyAffairFile.deleteMany).toHaveBeenCalledWith({
+      where: { affairId: 41 },
+    });
+    expect(tx.propertyAffairProgress.deleteMany).toHaveBeenCalledWith({
+      where: { affairId: 41 },
+    });
+    for (const delegate of [
+      tx.propertyAffairBuilding,
+      tx.propertyAffairRoom,
+      tx.propertyAffairTenant,
+      tx.propertyAffairContract,
+    ]) {
+      expect(delegate.deleteMany).toHaveBeenCalledWith({
+        where: { affairId: 41 },
+      });
+    }
+    expect(tx.propertyAffair.delete).toHaveBeenCalledWith({
+      where: { id: 41 },
+    });
+    expect(releasedFileAssetIds).toEqual([71, 72]);
+    expect(new Set(releasedFileAssetIds).size).toBe(
+      releasedFileAssetIds.length,
+    );
+    expect(tx.fileAsset.delete).not.toHaveBeenCalled();
+    expect(tx.building.update).not.toHaveBeenCalled();
+    expect(tx.room.update).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.contract.update).not.toHaveBeenCalled();
+    expect(tx.rentBill.updateMany).not.toHaveBeenCalled();
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('propagates security-audit failure before ordinary log or destructive calls', async () => {
+    const { service, tx, audit } = permanentDeleteFixture();
+    audit.appendInTransaction.mockRejectedValue(
+      new Error('forced security audit failure'),
+    );
+
+    await expect(service.permanentDelete(41, 3, superAdmin)).rejects.toThrow(
+      'forced security audit failure',
+    );
+    expect(tx.propertyAffair.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+    expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffairProgress.deleteMany).not.toHaveBeenCalled();
+    expect(tx.propertyAffair.delete).not.toHaveBeenCalled();
+  });
+
+  it('returns Chinese 404 when the permanent-delete target no longer exists', async () => {
+    const { service, tx, audit } = permanentDeleteFixture();
+    tx.propertyAffair.findUnique.mockResolvedValue(null);
+
+    await expect(service.permanentDelete(404, 1, superAdmin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '办事事项不存在',
+        status: 404,
+      }),
+    );
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+    expect(audit.appendInTransaction).not.toHaveBeenCalled();
   });
 });
