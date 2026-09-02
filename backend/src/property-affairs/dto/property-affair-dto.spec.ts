@@ -133,6 +133,64 @@ describe('property-affair DTOs', () => {
     );
   });
 
+  it('accepts null only for explicitly clearable update fields and keeps blanks as undefined', async () => {
+    const clearable = plainToInstance(UpdatePropertyAffairDto, {
+      version: 1,
+      category: null,
+      responsibleUserId: null,
+      externalHandlerName: null,
+      externalPhone: null,
+      externalContact: null,
+    });
+    const blank = plainToInstance(UpdatePropertyAffairDto, {
+      version: 1,
+      category: '   ',
+      externalHandlerName: '   ',
+      externalPhone: '   ',
+      externalContact: '   ',
+    });
+    const invalid = plainToInstance(UpdatePropertyAffairDto, {
+      version: null,
+      title: null,
+      content: null,
+      priority: null,
+      status: null,
+      buildingIds: null,
+      roomIds: null,
+      tenantIds: null,
+      contractIds: null,
+    });
+
+    expect(clearable).toMatchObject({
+      category: null,
+      responsibleUserId: null,
+      externalHandlerName: null,
+      externalPhone: null,
+      externalContact: null,
+    });
+    await expect(validate(clearable)).resolves.toHaveLength(0);
+    expect(blank).toMatchObject({
+      category: undefined,
+      externalHandlerName: undefined,
+      externalPhone: undefined,
+      externalContact: undefined,
+    });
+    await expect(validate(blank)).resolves.toHaveLength(0);
+    await expect(invalidProperties(invalid)).resolves.toEqual(
+      expect.arrayContaining([
+        'version',
+        'title',
+        'content',
+        'priority',
+        'status',
+        'buildingIds',
+        'roomIds',
+        'tenantIds',
+        'contractIds',
+      ]),
+    );
+  });
+
   it('requires trimmed progress content, a positive version, and a valid next status', async () => {
     const valid = plainToInstance(AppendPropertyAffairProgressDto, {
       version: '3',

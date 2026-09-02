@@ -262,6 +262,80 @@ describe('PropertyAffairsService', () => {
     );
   });
 
+  it('uses the Asia/Shanghai business date across the UTC day boundary', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T16:30:00.000Z'));
+    const { service, tx } = createFixture();
+
+    await service.create(
+      {
+        title: baseAffair.title,
+        priority: baseAffair.priority,
+        content: baseAffair.content,
+        buildingIds: [],
+        roomIds: [],
+        tenantIds: [],
+        contractIds: [],
+      },
+      admin,
+    );
+
+    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual(['20260902']);
+    expect(tx.$queryRaw.mock.calls[0].slice(1)).toEqual(['20260902']);
+    expect(tx.propertyAffair.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ affairNo: 'WY202609020001' }),
+    });
+  });
+
+  it('allows the final four-digit daily sequence value 9999', async () => {
+    const { service, tx } = createFixture();
+    tx.$queryRaw.mockResolvedValue([{ currentValue: 9999 }]);
+
+    await service.create(
+      {
+        title: baseAffair.title,
+        priority: baseAffair.priority,
+        content: baseAffair.content,
+        buildingIds: [],
+        roomIds: [],
+        tenantIds: [],
+        contractIds: [],
+      },
+      admin,
+    );
+
+    expect(tx.propertyAffair.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ affairNo: 'WY202609029999' }),
+    });
+  });
+
+  it('rejects sequence value 10000 in Chinese before writing an affair', async () => {
+    const { service, tx } = createFixture();
+    tx.$queryRaw.mockResolvedValue([{ currentValue: 10000 }]);
+
+    await expect(
+      service.create(
+        {
+          title: baseAffair.title,
+          priority: baseAffair.priority,
+          content: baseAffair.content,
+          buildingIds: [],
+          roomIds: [],
+          tenantIds: [],
+          contractIds: [],
+        },
+        admin,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '当日物业办事事项已达到上限，请次日再试',
+        status: 409,
+      }),
+    );
+    expect(tx.propertyAffair.create).not.toHaveBeenCalled();
+    expect(tx.propertyAffairProgress.create).not.toHaveBeenCalled();
+    expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['building', '楼栋 1 不存在'],
     ['room', '房源 11 不存在'],
@@ -840,14 +914,88 @@ describe('PropertyAffairsService', () => {
     );
   });
 
-  it('returns exact 409 conflict and performs no replacement or audit for a stale version', async () => {
+  it('clears optional fields, responsible snapshot, persisted output and audit after values', async () => {
+    const { service, tx, updated } = updateFixture(
+      PropertyAffairStatus.PENDING,
+    );
+    tx.propertyAffair.findUniqueOrThrow.mockResolvedValue({
+      ...updated,
+      category: null,
+      responsibleUserId: null,
+      responsibleSnapshot: null,
+      externalHandlerName: null,
+      externalPhone: null,
+      externalContact: null,
+    });
+
+    const result = await service.update(
+      41,
+      {
+        version: 3,
+        category: null,
+        responsibleUserId: null,
+        externalHandlerName: null,
+        externalPhone: null,
+        externalContact: null,
+        ...replacementRelations,
+      },
+      admin,
+    );
+
+    expect(tx.user.findFirst).not.toHaveBeenCalled();
+    expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
+      where: { id: 41, version: 3, deletedAt: null },
+      data: expect.objectContaining({
+        category: null,
+        responsibleUserId: null,
+        responsibleSnapshot: null,
+        externalHandlerName: null,
+        externalPhone: null,
+        externalContact: null,
+      }),
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        category: null,
+        responsibleUserId: null,
+        responsibleSnapshot: null,
+        externalHandlerName: null,
+        externalPhone: null,
+        externalContact: null,
+        version: 4,
+      }),
+    );
+    const audit = tx.operationLog.create.mock.calls[0][0].data;
+    expect(audit.beforeData).toEqual(
+      expect.objectContaining({
+        category: '公共维修',
+        responsibleUserId: 9,
+        responsibleSnapshot: '管理员乙',
+        externalHandlerName: '维修公司',
+        externalPhone: '021-12345678',
+        externalContact: '工作日上午联系',
+      }),
+    );
+    expect(audit.afterData).toEqual(
+      expect.objectContaining({
+        category: null,
+        responsibleUserId: null,
+        responsibleSnapshot: null,
+        externalHandlerName: null,
+        externalPhone: null,
+        externalContact: null,
+      }),
+    );
+  });
+
+  it('keeps updateMany as the read-after-write race guard', async () => {
     const { service, tx } = updateFixture(PropertyAffairStatus.PENDING);
     tx.propertyAffair.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(
       service.update(
         41,
-        { version: 2, title: '过期编辑', ...replacementRelations },
+        { version: 3, title: '竞争编辑', ...replacementRelations },
         admin,
       ),
     ).rejects.toEqual(
@@ -857,12 +1005,68 @@ describe('PropertyAffairsService', () => {
       }),
     );
     expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, version: 2, deletedAt: null },
+      where: { id: 41, version: 3, deletedAt: null },
       data: expect.objectContaining({ version: { increment: 1 } }),
     });
     expect(tx.propertyAffairRoom.deleteMany).not.toHaveBeenCalled();
     expect(tx.propertyAffairProgress.create).not.toHaveBeenCalled();
     expect(tx.operationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('returns stale-version 409 before validating an otherwise illegal transition', async () => {
+    const { service, tx } = updateFixture(PropertyAffairStatus.COMPLETED);
+
+    await expect(
+      service.update(
+        41,
+        {
+          version: 2,
+          status: PropertyAffairStatus.PENDING,
+          ...replacementRelations,
+        },
+        admin,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.building.findMany).not.toHaveBeenCalled();
+    expect(tx.room.findMany).not.toHaveBeenCalled();
+    expect(tx.tenant.findMany).not.toHaveBeenCalled();
+    expect(tx.contract.findMany).not.toHaveBeenCalled();
+    expect(tx.user.findFirst).not.toHaveBeenCalled();
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('returns stale-version 409 before validating invalid relations or responsible user', async () => {
+    const { service, tx } = updateFixture(PropertyAffairStatus.PENDING);
+    tx.room.findMany.mockResolvedValue([]);
+    tx.user.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.update(
+        41,
+        {
+          version: 2,
+          responsibleUserId: 9,
+          ...replacementRelations,
+        },
+        admin,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: '内容已被其他管理员更新，请刷新后重试',
+        status: 409,
+      }),
+    );
+    expect(tx.building.findMany).not.toHaveBeenCalled();
+    expect(tx.room.findMany).not.toHaveBeenCalled();
+    expect(tx.tenant.findMany).not.toHaveBeenCalled();
+    expect(tx.contract.findMany).not.toHaveBeenCalled();
+    expect(tx.user.findFirst).not.toHaveBeenCalled();
+    expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
   });
 
   it('validates the lifecycle policy before the optimistic write', async () => {

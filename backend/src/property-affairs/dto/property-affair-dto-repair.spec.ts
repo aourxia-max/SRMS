@@ -39,9 +39,11 @@ describe('property-affair DTO repair contract', () => {
     await expect(invalidProperties(create)).resolves.toContain(
       'responsibleUserId',
     );
-    await expect(invalidProperties(update)).resolves.toEqual(
-      expect.arrayContaining(['priority', 'responsibleUserId', 'status']),
+    const updateInvalid = await invalidProperties(update);
+    expect(updateInvalid).toEqual(
+      expect.arrayContaining(['priority', 'status']),
     );
+    expect(updateInvalid).not.toContain('responsibleUserId');
     await expect(invalidProperties(progress)).resolves.toContain('nextStatus');
   });
 

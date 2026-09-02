@@ -42,7 +42,7 @@ describe('property-affair optional text null contract', () => {
     );
   });
 
-  it('rejects explicit null for every optional update text field', async () => {
+  it('rejects null for update required text while accepting clearable text', async () => {
     const dto = plainToInstance(UpdatePropertyAffairDto, {
       version: 1,
       title: null,
@@ -55,16 +55,10 @@ describe('property-affair optional text null contract', () => {
 
     const errors = await validationErrors(dto);
 
-    expect(errors.map((error) => error.property)).toEqual(
-      expect.arrayContaining([
-        'title',
-        'category',
-        'content',
-        'externalHandlerName',
-        'externalPhone',
-        'externalContact',
-      ]),
-    );
+    expect(errors.map((error) => error.property).sort()).toEqual([
+      'content',
+      'title',
+    ]);
   });
 
   it('rejects explicit null for optional list text filters', async () => {

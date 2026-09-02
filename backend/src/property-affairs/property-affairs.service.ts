@@ -25,6 +25,12 @@ import {
 } from './property-affair-presenter';
 
 const BUILT_IN_CATEGORIES = ['公共维修', '证件资料', '沟通协调'] as const;
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 const STATUS_LABELS: Record<PropertyAffairStatus, string> = {
   PENDING: '待办理',
   IN_PROGRESS: '办理中',
@@ -253,14 +259,19 @@ export class PropertyAffairsService {
         include: propertyAffairInclude,
       });
       if (!current) throw new NotFoundException('办事事项不存在');
+      if (current.version !== dto.version) {
+        throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
+      }
 
       const nextStatus = dto.status ?? current.status;
       assertPropertyAffairTransition(current.status, nextStatus);
       const [relations, responsible] = await Promise.all([
         this.resolveRelations(dto, tx),
-        dto.responsibleUserId !== undefined
-          ? this.resolveResponsible(dto.responsibleUserId, tx)
-          : Promise.resolve(undefined),
+        dto.responsibleUserId === null
+          ? Promise.resolve(null)
+          : dto.responsibleUserId !== undefined
+            ? this.resolveResponsible(dto.responsibleUserId, tx)
+            : Promise.resolve(undefined),
       ]);
       const statusChanged = nextStatus !== current.status;
       const occurredAt = new Date();
@@ -272,9 +283,9 @@ export class PropertyAffairsService {
       if (dto.category !== undefined) data.category = dto.category;
       if (dto.priority !== undefined) data.priority = dto.priority;
       if (dto.content !== undefined) data.content = dto.content;
-      if (dto.responsibleUserId !== undefined && responsible) {
-        data.responsibleUserId = responsible.id;
-        data.responsibleSnapshot = responsible.displayName;
+      if (dto.responsibleUserId !== undefined) {
+        data.responsibleUserId = responsible?.id ?? null;
+        data.responsibleSnapshot = responsible?.displayName ?? null;
       }
       if (dto.externalHandlerName !== undefined) {
         data.externalHandlerName = dto.externalHandlerName;
@@ -355,7 +366,13 @@ export class PropertyAffairsService {
   }
 
   private async nextAffairNo(tx: Prisma.TransactionClient) {
-    const dateKey = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+    const parts = Object.fromEntries(
+      SHANGHAI_DATE_FORMATTER.formatToParts(new Date()).map((part) => [
+        part.type,
+        part.value,
+      ]),
+    );
+    const dateKey = `${parts.year}${parts.month}${parts.day}`;
     await tx.$executeRaw`INSERT INTO property_affair_daily_sequences (date_key, current_value)
       VALUES (${dateKey}, 1)
       ON DUPLICATE KEY UPDATE current_value = current_value + 1`;
@@ -364,6 +381,9 @@ export class PropertyAffairsService {
       FROM property_affair_daily_sequences WHERE date_key = ${dateKey} FOR UPDATE`;
     if (!row || !Number.isInteger(row.currentValue) || row.currentValue < 1) {
       throw new Error('事项编号生成失败');
+    }
+    if (row.currentValue > 9999) {
+      throw new ConflictException('当日物业办事事项已达到上限，请次日再试');
     }
     return `WY${dateKey}${String(row.currentValue).padStart(4, '0')}`;
   }
