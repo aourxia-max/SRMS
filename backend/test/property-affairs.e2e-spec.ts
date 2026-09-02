@@ -13,6 +13,12 @@ import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { FilesService } from '../src/files/files.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { SecurityAuditChainService } from '../src/system/security-audit-chain.service';
+import {
+  collectPropertyAffairCleanupTargets,
+  createIsolatedSecurityAuditChain,
+  runBestEffortCleanup,
+} from './property-affairs.e2e-support';
 
 type AffairState = { id: number; version: number };
 
@@ -57,6 +63,7 @@ describe('property affairs API workflows and invariants (e2e)', () => {
   const contractNo = `WY-E2E-${marker}`;
   const workflowAffairs = new Map<UserRole, AffairState>();
   const createdAffairIds = new Set<number>();
+  const createdFileIds = new Set<number>();
 
   const selectAuthUser = {
     id: true,
@@ -118,6 +125,8 @@ describe('property affairs API workflows and invariants (e2e)', () => {
           return true;
         },
       })
+      .overrideProvider(SecurityAuditChainService)
+      .useValue(createIsolatedSecurityAuditChain())
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -210,71 +219,155 @@ describe('property affairs API workflows and invariants (e2e)', () => {
   });
 
   afterAll(async () => {
+    let cleanupTargets = collectPropertyAffairCleanupTargets({
+      createdAffairIds,
+      prefixedAffairIds: [],
+      createdFileIds,
+      remainingLinkedFileIds: [],
+    });
+    const cleanupSteps: Parameters<typeof runBestEffortCleanup>[0] = [];
+
     if (prisma) {
-      const remaining = await prisma.db.propertyAffair.findMany({
-        where: { title: { startsWith: titlePrefix } },
-        select: {
-          id: true,
-          files: { select: { fileAssetId: true } },
+      cleanupSteps.push(
+        {
+          label: '反查标题前缀事项',
+          run: async () => {
+            const remaining = await prisma.db.propertyAffair.findMany({
+              where: { title: { startsWith: titlePrefix } },
+              select: { id: true },
+            });
+            cleanupTargets = collectPropertyAffairCleanupTargets({
+              createdAffairIds,
+              prefixedAffairIds: remaining.map((item) => item.id),
+              createdFileIds,
+              remainingLinkedFileIds: cleanupTargets.fileIds,
+            });
+          },
         },
-      });
-      const affairIds = remaining.map((item) => item.id);
-      const releasedFileIds = remaining.flatMap((item) =>
-        item.files.map((link) => link.fileAssetId),
+        {
+          label: '反查事项附件',
+          run: async () => {
+            const remainingLinks = cleanupTargets.affairIds.length
+              ? await prisma.db.propertyAffairFile.findMany({
+                  where: {
+                    affairId: { in: cleanupTargets.affairIds },
+                  },
+                  select: { fileAssetId: true },
+                })
+              : [];
+            cleanupTargets = collectPropertyAffairCleanupTargets({
+              createdAffairIds,
+              prefixedAffairIds: cleanupTargets.affairIds,
+              createdFileIds,
+              remainingLinkedFileIds: remainingLinks.map(
+                (item) => item.fileAssetId,
+              ),
+            });
+          },
+        },
+        {
+          label: '删除物业办事测试记录',
+          run: async () => {
+            if (!cleanupTargets.affairIds.length) return;
+            await prisma.db.$transaction(async (tx) => {
+              const affairIdFilter = {
+                affairId: { in: cleanupTargets.affairIds },
+              };
+              await tx.propertyAffairFile.deleteMany({
+                where: affairIdFilter,
+              });
+              await tx.propertyAffairProgress.deleteMany({
+                where: affairIdFilter,
+              });
+              await tx.propertyAffairBuilding.deleteMany({
+                where: affairIdFilter,
+              });
+              await tx.propertyAffairRoom.deleteMany({
+                where: affairIdFilter,
+              });
+              await tx.propertyAffairTenant.deleteMany({
+                where: affairIdFilter,
+              });
+              await tx.propertyAffairContract.deleteMany({
+                where: affairIdFilter,
+              });
+              await tx.propertyAffair.deleteMany({
+                where: { id: { in: cleanupTargets.affairIds } },
+              });
+            });
+          },
+        },
       );
-      affairIds.forEach((id) => createdAffairIds.add(id));
-      if (affairIds.length) {
-        await prisma.db.$transaction(async (tx) => {
-          await tx.propertyAffairFile.deleteMany({
-            where: { affairId: { in: affairIds } },
-          });
-          await tx.propertyAffairProgress.deleteMany({
-            where: { affairId: { in: affairIds } },
-          });
-          await tx.propertyAffairBuilding.deleteMany({
-            where: { affairId: { in: affairIds } },
-          });
-          await tx.propertyAffairRoom.deleteMany({
-            where: { affairId: { in: affairIds } },
-          });
-          await tx.propertyAffairTenant.deleteMany({
-            where: { affairId: { in: affairIds } },
-          });
-          await tx.propertyAffairContract.deleteMany({
-            where: { affairId: { in: affairIds } },
-          });
-          await tx.propertyAffair.deleteMany({
-            where: { id: { in: affairIds } },
-          });
-        });
-      }
-      if (releasedFileIds.length) {
-        await files.cleanupReleasedPropertyAffairFiles(releasedFileIds);
-      }
-      const allCreatedIds = [...createdAffairIds];
-      if (allCreatedIds.length) {
-        await prisma.db.operationLog.deleteMany({
-          where: {
-            module: 'PROPERTY_AFFAIRS',
-            entityId: { in: allCreatedIds },
+
+      if (files) {
+        cleanupSteps.push({
+          label: '清理物业办事附件',
+          run: async () => {
+            if (!cleanupTargets.fileIds.length) return;
+            await files.cleanupReleasedPropertyAffairFiles(
+              cleanupTargets.fileIds,
+            );
           },
         });
       }
-      if (contractId) {
-        await prisma.db.contract.deleteMany({ where: { id: contractId } });
-      }
-      if (tenantId) {
-        await prisma.db.tenant.deleteMany({ where: { id: tenantId } });
-      }
-      if (roomId) {
-        await prisma.db.roomStatusHistory.deleteMany({ where: { roomId } });
-        await prisma.db.room.deleteMany({ where: { id: roomId } });
-      }
-      if (buildingId) {
-        await prisma.db.building.deleteMany({ where: { id: buildingId } });
-      }
+
+      cleanupSteps.push(
+        {
+          label: '清理物业办事操作日志',
+          run: async () => {
+            if (!cleanupTargets.affairIds.length) return;
+            await prisma.db.operationLog.deleteMany({
+              where: {
+                module: 'PROPERTY_AFFAIRS',
+                entityId: { in: cleanupTargets.affairIds },
+              },
+            });
+          },
+        },
+        {
+          label: '清理合同夹具',
+          run: async () => {
+            if (!contractId) return;
+            await prisma.db.contract.deleteMany({ where: { id: contractId } });
+          },
+        },
+        {
+          label: '清理租户夹具',
+          run: async () => {
+            if (!tenantId) return;
+            await prisma.db.tenant.deleteMany({ where: { id: tenantId } });
+          },
+        },
+        {
+          label: '清理房间夹具',
+          run: async () => {
+            if (!roomId) return;
+            await prisma.db.roomStatusHistory.deleteMany({ where: { roomId } });
+            await prisma.db.room.deleteMany({ where: { id: roomId } });
+          },
+        },
+        {
+          label: '清理楼栋夹具',
+          run: async () => {
+            if (!buildingId) return;
+            await prisma.db.building.deleteMany({ where: { id: buildingId } });
+          },
+        },
+      );
     }
-    if (app) await app.close();
+    if (app) {
+      cleanupSteps.push({
+        label: '关闭测试应用',
+        run: () => app.close(),
+      });
+    }
+
+    const failedLabels = await runBestEffortCleanup(cleanupSteps);
+    if (failedLabels.length) {
+      process.stderr.write(
+        `物业办事 E2E 清理未完成：${failedLabels.join('、')}\n`,
+      );
+    }
   });
 
   it.each([UserRole.SUPER_ADMIN, UserRole.ADMIN])(
@@ -301,13 +394,13 @@ describe('property affairs API workflows and invariants (e2e)', () => {
           ...relationIds,
         })
         .expect(201);
+      const affairId = created.body.data.id as number;
+      createdAffairIds.add(affairId);
       expect(created.body).toMatchObject({
         code: 200,
         message: 'success',
         data: { id: expect.any(Number), version: 1, status: 'PENDING' },
       });
-      const affairId = created.body.data.id as number;
-      createdAffairIds.add(affairId);
 
       const listed = await request(app.getHttpServer())
         .get('/api/property-affairs')
@@ -529,6 +622,8 @@ describe('property affairs API workflows and invariants (e2e)', () => {
         contentType: 'image/png',
       })
       .expect(201);
+    const fileId = uploaded.body.data.id as number;
+    createdFileIds.add(fileId);
     expect(uploaded.body).toMatchObject({
       code: 200,
       message: 'success',
@@ -538,7 +633,6 @@ describe('property affairs API workflows and invariants (e2e)', () => {
         mimeType: 'image/png',
       },
     });
-    const fileId = uploaded.body.data.id as number;
 
     const detail = await request(app.getHttpServer())
       .get(`/api/property-affairs/${main.id}`)
