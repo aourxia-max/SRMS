@@ -40,3 +40,21 @@
 ## Commit
 
 - `feat: add property affair frontend foundation`
+
+## Review-fix round 1: prototype-safe labels
+
+- Finding: `value in labels` accepted inherited keys such as `toString` and `constructor`, which could return functions instead of Chinese labels.
+- Scope: changed only `frontend/src/utils/property-affair-labels.ts` and `frontend/src/utils/property-affair-labels.spec.ts`.
+- RED: the focused label suite failed three independent prototype-key cases, each receiving `[Function toString]` instead of its Chinese fallback.
+- GREEN: all three lookups now use `Object.hasOwn(...)`, so only declared mapping keys are accepted.
+- Added regression coverage for status, priority, and relation type. Each rejects `toString`; each also verifies the `constructor` result is a string.
+
+### Review-fix verification
+
+- Focused labels: 1 file, 12 tests passed.
+- Full frontend unit suite: 54 files, 365 tests passed.
+- `npm --prefix frontend run build`: passed (`vue-tsc -b` and Vite build).
+- `git diff --check`: passed.
+### Review-fix commit
+
+- `65261fd fix: harden property affair label lookups`
