@@ -77,10 +77,23 @@ enum FileCategory {
   CONTRACT_VOID_PROOF
   DEPOSIT_REFUND_PROOF
   PRICING_REBATE_PROOF
+  PROPERTY_AFFAIR
   IMPORT
   EXPORT
   BACKUP
   FINANCE_EXPORT
+}
+
+enum PropertyAffairStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+enum PropertyAffairPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
 }
 
 enum ExportTaskStatus {
@@ -380,6 +393,7 @@ model FileAsset {
   paymentFiles                PaymentFile[]
   contractFiles               ContractFile[]
   exportTasks                 ExportTask[]
+  propertyAffairFiles         PropertyAffairFile[]
   contractVoidRequestFiles    ContractVoidRequestFile[]
 
   @@index([category, uploadedAt])
@@ -1280,4 +1294,109 @@ model RoomStatusHistory {
 
   @@index([roomId, changedAt])
   @@map("room_status_histories")
+}
+model PropertyAffair {
+  id                  Int                    @id @default(autoincrement()) @db.UnsignedInt
+  affairNo            String                 @unique @map("affair_no") @db.VarChar(32)
+  title               String                 @db.VarChar(200)
+  category            String?                @db.VarChar(80)
+  priority            PropertyAffairPriority @default(NORMAL)
+  status              PropertyAffairStatus   @default(PENDING)
+  content             String                 @db.Text
+  responsibleUserId   Int?                   @map("responsible_user_id") @db.UnsignedInt
+  responsibleSnapshot String?                @map("responsible_snapshot") @db.VarChar(50)
+  externalHandlerName String?                @map("external_handler_name") @db.VarChar(100)
+  externalPhone       String?                @map("external_phone") @db.VarChar(50)
+  externalContact     String?                @map("external_contact") @db.VarChar(200)
+  completedAt         DateTime?              @map("completed_at") @db.DateTime(3)
+  cancelledAt         DateTime?              @map("cancelled_at") @db.DateTime(3)
+  createdBy           Int                    @map("created_by") @db.UnsignedInt
+  updatedBy           Int                    @map("updated_by") @db.UnsignedInt
+  deletedAt           DateTime?              @map("deleted_at") @db.DateTime(3)
+  deletedBy           Int?                   @map("deleted_by") @db.UnsignedInt
+  version             Int                    @default(1)
+  createdAt           DateTime               @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt           DateTime               @updatedAt @map("updated_at") @db.DateTime(3)
+  buildings           PropertyAffairBuilding[]
+  rooms               PropertyAffairRoom[]
+  tenants             PropertyAffairTenant[]
+  contracts           PropertyAffairContract[]
+  progresses          PropertyAffairProgress[]
+  files               PropertyAffairFile[]
+  @@index([status, deletedAt, updatedAt])
+  @@index([priority, updatedAt])
+  @@index([responsibleUserId, status])
+  @@index([category, updatedAt])
+  @@map("property_affairs")
+}
+model PropertyAffairDailySequence {
+  dateKey      String @id @map("date_key") @db.Char(8)
+  currentValue Int    @map("current_value")
+  @@map("property_affair_daily_sequences")
+}
+model PropertyAffairBuilding {
+  id          Int            @id @default(autoincrement()) @db.UnsignedInt
+  affairId    Int            @map("affair_id") @db.UnsignedInt
+  buildingId  Int            @map("building_id") @db.UnsignedInt
+  targetLabel String         @map("target_label") @db.VarChar(200)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  affair      PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  @@unique([affairId, buildingId])
+  @@index([buildingId])
+  @@map("property_affair_buildings")
+}
+model PropertyAffairRoom {
+  id          Int            @id @default(autoincrement()) @db.UnsignedInt
+  affairId    Int            @map("affair_id") @db.UnsignedInt
+  roomId      Int            @map("room_id") @db.UnsignedInt
+  targetLabel String         @map("target_label") @db.VarChar(200)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  affair      PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  @@unique([affairId, roomId])
+  @@index([roomId])
+  @@map("property_affair_rooms")
+}
+model PropertyAffairTenant {
+  id          Int            @id @default(autoincrement()) @db.UnsignedInt
+  affairId    Int            @map("affair_id") @db.UnsignedInt
+  tenantId    Int            @map("tenant_id") @db.UnsignedInt
+  targetLabel String         @map("target_label") @db.VarChar(200)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  affair      PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  @@unique([affairId, tenantId])
+  @@index([tenantId])
+  @@map("property_affair_tenants")
+}
+model PropertyAffairContract {
+  id          Int            @id @default(autoincrement()) @db.UnsignedInt
+  affairId    Int            @map("affair_id") @db.UnsignedInt
+  contractId  Int            @map("contract_id") @db.UnsignedInt
+  targetLabel String         @map("target_label") @db.VarChar(200)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  affair      PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  @@unique([affairId, contractId])
+  @@index([contractId])
+  @@map("property_affair_contracts")
+}
+model PropertyAffairProgress {
+  id                Int                   @id @default(autoincrement()) @db.UnsignedInt
+  affairId          Int                   @map("affair_id") @db.UnsignedInt
+  content           String                @db.Text
+  statusBefore      PropertyAffairStatus? @map("status_before")
+  statusAfter       PropertyAffairStatus? @map("status_after")
+  createdBy         Int                   @map("created_by") @db.UnsignedInt
+  createdBySnapshot String                @map("created_by_snapshot") @db.VarChar(50)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.DateTime(3)
+  affair            PropertyAffair        @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  @@index([affairId, createdAt])
+  @@map("property_affair_progresses")
+}
+model PropertyAffairFile {
+  affairId    Int            @map("affair_id") @db.UnsignedInt
+  fileAssetId Int            @map("file_asset_id") @db.UnsignedInt
+  createdAt   DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  affair      PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  fileAsset   FileAsset      @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+  @@id([affairId, fileAssetId])
+  @@map("property_affair_files")
 }
