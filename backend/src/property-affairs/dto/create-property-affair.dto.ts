@@ -3,7 +3,6 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
-  IsOptional,
   IsString,
   Length,
   MaxLength,
@@ -24,7 +23,7 @@ export class CreatePropertyAffairDto extends PropertyAffairRelationsDto {
   title!: string;
 
   @Transform(trimOptionalString)
-  @IsOptional()
+  @ValidateIf(isDefined)
   @IsString({ message: '分类必须为文本' })
   @MaxLength(80, { message: '分类长度不能超过80个字符' })
   category?: string;
@@ -44,19 +43,19 @@ export class CreatePropertyAffairDto extends PropertyAffairRelationsDto {
   responsibleUserId?: number;
 
   @Transform(trimOptionalString)
-  @IsOptional()
+  @ValidateIf(isDefined)
   @IsString({ message: '外部处理人必须为文本' })
   @MaxLength(100, { message: '外部处理人长度不能超过100个字符' })
   externalHandlerName?: string;
 
   @Transform(trimOptionalString)
-  @IsOptional()
+  @ValidateIf(isDefined)
   @IsString({ message: '外部联系电话必须为文本' })
   @MaxLength(50, { message: '外部联系电话长度不能超过50个字符' })
   externalPhone?: string;
 
   @Transform(trimOptionalString)
-  @IsOptional()
+  @ValidateIf(isDefined)
   @IsString({ message: '其他联系方式必须为文本' })
   @MaxLength(200, { message: '其他联系方式长度不能超过200个字符' })
   externalContact?: string;

@@ -3,7 +3,6 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
-  IsOptional,
   IsString,
   Max,
   MaxLength,
@@ -14,13 +13,13 @@ import { isDefined, trimOptionalString } from './property-affair-relations.dto';
 
 export class ListPropertyAffairsQueryDto {
   @Transform(trimOptionalString)
-  @IsOptional()
+  @ValidateIf(isDefined)
   @IsString({ message: '关键词必须为文本' })
   @MaxLength(100, { message: '关键词长度不能超过100个字符' })
   keyword?: string;
 
   @Transform(trimOptionalString)
-  @IsOptional()
+  @ValidateIf(isDefined)
   @IsString({ message: '分类必须为文本' })
   @MaxLength(80, { message: '分类长度不能超过80个字符' })
   category?: string;
