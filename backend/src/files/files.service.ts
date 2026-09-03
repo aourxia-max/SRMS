@@ -24,6 +24,11 @@ export type UploadedFile = {
   size: number;
   buffer: Buffer;
 };
+
+export function safeStoredFileName(storedName: string) {
+  return basename(storedName.replace(/\\/g, '/'));
+}
+
 const signatures: Record<string, (content: Buffer) => boolean> = {
   'application/pdf': (content) => content.subarray(0, 5).toString() === '%PDF-',
   'image/png': (content) =>
@@ -216,7 +221,7 @@ export class FilesService {
     return resolve(process.cwd(), '..', 'uploads', 'property-affairs');
   }
   private propertyAffairPath(storedName: string) {
-    return resolve(this.propertyAffairFolder(), basename(storedName));
+    return resolve(this.propertyAffairFolder(), safeStoredFileName(storedName));
   }
 
   private async cleanupFailedContractFile(path: string) {
