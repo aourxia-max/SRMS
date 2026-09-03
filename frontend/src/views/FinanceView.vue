@@ -47,7 +47,7 @@ const kpis = computed(() => [
   { label: '租金及押金入账合计', value: cash.value.rentAndDepositReceivedTotal, hint: '按实际收款日期统计', tone: 'green' },
   { label: '原应收', value: collection.value.total?.originalReceivable, hint: '账期口径', tone: 'blue' },
   { label: '优惠减免', value: collection.value.total?.concessionAmount, hint: '免租和折扣', tone: 'orange' },
-  { label: '未收', value: collection.value.total?.outstanding, hint: '仍需跟进', tone: 'red' },
+  { label: '经营收入', value: cash.value.operatingIncome, hint: '退租扣款', tone: 'green' },
 ])
 
 function formatMoney(value: unknown) {
