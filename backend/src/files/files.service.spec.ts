@@ -11,6 +11,7 @@ import { UserRole } from '@prisma/client';
 import {
   CONTRACT_VOID_PROOF_STAGED_TTL_MS,
   FilesService,
+  safeStoredFileName,
 } from './files.service';
 
 jest.mock('fs/promises', () => ({
@@ -21,6 +22,11 @@ jest.mock('fs/promises', () => ({
 }));
 
 describe('FilesService payment proofs', () => {
+  it('normalizes Windows and POSIX traversal separators in stored file names', () => {
+    expect(safeStoredFileName('..\\..\\outside.pdf')).toBe('outside.pdf');
+    expect(safeStoredFileName('../../outside.pdf')).toBe('outside.pdf');
+  });
+
   it('accepts a real WebP signature and stores it as a staged payment proof', async () => {
     const create = jest.fn().mockResolvedValue({
       id: 31,
