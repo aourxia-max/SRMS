@@ -183,6 +183,34 @@ export class FinanceService {
       .map((item) => item.originalEntityId)
       .filter((id): id is number => id !== null);
     const terminalPaymentIdSet = new Set(terminalPaymentIds);
+    const terminalRefundIds = (
+      await this.prisma.db.contractVoidReversal.findMany({
+        where: {
+          category: 'REFUND',
+          originalEntityType: 'PaymentRefund',
+          originalEntityId: { not: null },
+        },
+        select: { originalEntityId: true },
+        orderBy: { originalEntityId: 'asc' },
+      })
+    )
+      .map((item) => item.originalEntityId)
+      .filter((id): id is number => id !== null);
+    const terminalRefundIdSet = new Set(terminalRefundIds);
+    const terminalCheckoutRefundIds = (
+      await this.prisma.db.contractVoidReversal.findMany({
+        where: {
+          category: 'DEPOSIT',
+          originalEntityType: 'DepositRefund',
+          originalEntityId: { not: null },
+        },
+        select: { originalEntityId: true },
+        orderBy: { originalEntityId: 'asc' },
+      })
+    )
+      .map((item) => item.originalEntityId)
+      .filter((id): id is number => id !== null);
+    const terminalCheckoutRefundIdSet = new Set(terminalCheckoutRefundIds);
     const [payments, refunds, checkoutRefunds, deposits, reversals] =
       await Promise.all([
         this.prisma.db.payment.findMany({
@@ -202,6 +230,9 @@ export class FinanceService {
           where: {
             approvalStatus: 'APPROVED',
             ...(date ? { refundDate: date } : {}),
+          },
+          include: {
+            payment: { select: { paymentCategory: true } },
           },
         }),
         this.prisma.db.depositRefund.findMany({
@@ -307,7 +338,7 @@ export class FinanceService {
           flowType: 'DEPOSIT_OFFSET',
           type:
             item.transactionType === 'OFFSET_SETTLEMENT'
-              ? '退租扣款经营收入'
+              ? '退租扣款'
               : '押金抵扣欠租',
           category: null,
           amount: item.amount,
@@ -365,7 +396,7 @@ export class FinanceService {
     const outflow = flows
       .filter((item) => item.external && item.direction === 'OUT')
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
-    const rentAndDepositReceivedTotal = payments
+    const rentAndDepositReceipts = payments
       .filter(
         (item) =>
           !terminalPaymentIdSet.has(item.id) &&
@@ -375,6 +406,31 @@ export class FinanceService {
           ),
       )
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+    const paymentRefundTotal = refunds
+      .filter(
+        (item) =>
+          !terminalRefundIdSet.has(item.id) &&
+          ['RENT', 'PREPAYMENT', 'DEPOSIT'].includes(
+            item.payment?.paymentCategory ?? 'RENT',
+          ),
+      )
+      .reduce(
+        (sum, item) => sum.plus(item.refundAmount),
+        new Prisma.Decimal(0),
+      );
+    const checkoutRefundTotal = checkoutRefunds
+      .filter((item) => !terminalCheckoutRefundIdSet.has(item.id))
+      .reduce(
+        (sum, item) =>
+          sum
+            .plus(item.depositRefundAmount)
+            .plus(item.prepaymentRefundAmount)
+            .plus(item.rentRefundAmount),
+        new Prisma.Decimal(0),
+      );
+    const rentAndDepositReceivedTotal = rentAndDepositReceipts
+      .minus(paymentRefundTotal)
+      .minus(checkoutRefundTotal);
     const operatingIncome = deposits
       .filter((item) => item.transactionType === 'OFFSET_SETTLEMENT')
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));

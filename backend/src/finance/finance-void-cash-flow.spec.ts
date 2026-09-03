@@ -208,6 +208,7 @@ describe('FinanceService void correction cash-flow audit', () => {
     });
     expect(prisma.db.paymentRefund.findMany).toHaveBeenCalledWith({
       where: { approvalStatus: 'APPROVED' },
+      include: { payment: { select: { paymentCategory: true } } },
     });
     const payment = report.flows.find((row) => row.flowType === 'PAYMENT');
     const refund = report.flows.find(
@@ -257,6 +258,7 @@ describe('FinanceService void correction cash-flow audit', () => {
     expect(report.inflow.toString()).toBe('100');
     expect(report.outflow.toString()).toBe('100');
     expect(report.netCashFlow.toString()).toBe('0');
+    expect(report.rentAndDepositReceivedTotal.toString()).toBe('0');
   });
 
   it('uses an exclusive next-day Shanghai boundary for end-date evening records', async () => {
@@ -319,6 +321,7 @@ describe('FinanceService void correction cash-flow audit', () => {
     });
     expect(refundFindMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ refundDate: expectedRange }),
+      include: { payment: { select: { paymentCategory: true } } },
     });
     expect(reversalFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
