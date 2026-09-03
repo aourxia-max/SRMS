@@ -66,7 +66,7 @@ describe('FinanceService rent collection category isolation', () => {
     expect(report.total.concessionAmount).toEqual(new Prisma.Decimal('200.00'));
   });
 
-  it('totals valid rent and deposit receipts by payment date without netting refunds', async () => {
+  it('nets approved rent, prepayment, and deposit refunds from received totals', async () => {
     const paymentFindMany = jest.fn().mockResolvedValue([
       {
         id: 1,
@@ -159,7 +159,7 @@ describe('FinanceService rent collection category isolation', () => {
     const report = await service.cashFlows('2026-08-01', '2026-08-31');
 
     expect(report.rentAndDepositReceivedTotal).toEqual(
-      new Prisma.Decimal('5200.00'),
+      new Prisma.Decimal('4600.00'),
     );
     expect(report.outflow).toEqual(new Prisma.Decimal('600.00'));
     expect(paymentFindMany).toHaveBeenCalledWith({
@@ -247,7 +247,7 @@ describe('FinanceService rent collection category isolation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           reference: 'YJ-JY-71',
-          type: '退租扣款经营收入',
+          type: '退租扣款',
         }),
         expect.objectContaining({
           reference: 'YJ-QZ-72',
@@ -259,28 +259,31 @@ describe('FinanceService rent collection category isolation', () => {
 
   it('orders every cash-flow source by activity time and source id without exposing sortAt', async () => {
     const tieTime = new Date('2026-09-01T08:00:00.000Z');
-    const contractVoidReversalFindMany = jest
-      .fn()
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: 60,
-          category: 'PAYMENT',
-          amount: new Prisma.Decimal('-50.00'),
-          balanceBefore: new Prisma.Decimal('50.00'),
-          balanceAfter: new Prisma.Decimal('0.00'),
-          originalEntityType: 'Payment',
-          originalEntityId: 6,
-          generatedEntityType: null,
-          generatedEntityId: null,
-          originalOccurredAt: new Date('2026-08-01'),
-          correctionOccurredAt: tieTime,
-          request: {
-            requestNo: 'HTZF-TIE-6',
-            contract: { contractNo: 'HT-TIE' },
-          },
-        },
-      ]);
+    const contractVoidReversalFindMany = jest.fn().mockImplementation((args) =>
+      Promise.resolve(
+        args.select
+          ? []
+          : [
+              {
+                id: 60,
+                category: 'PAYMENT',
+                amount: new Prisma.Decimal('-50.00'),
+                balanceBefore: new Prisma.Decimal('50.00'),
+                balanceAfter: new Prisma.Decimal('0.00'),
+                originalEntityType: 'Payment',
+                originalEntityId: 6,
+                generatedEntityType: null,
+                generatedEntityId: null,
+                originalOccurredAt: new Date('2026-08-01'),
+                correctionOccurredAt: tieTime,
+                request: {
+                  requestNo: 'HTZF-TIE-6',
+                  contract: { contractNo: 'HT-TIE' },
+                },
+              },
+            ],
+      ),
+    );
     const service = new FinanceService({
       db: {
         payment: {

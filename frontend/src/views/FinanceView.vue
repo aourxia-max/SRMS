@@ -42,12 +42,12 @@ const cashSummary = computed(() => [
   { label: '净资金流', value: cash.value.netCashFlow, tone: 'blue' },
 ])
 const kpis = computed(() => [
+  { label: '租金及押金入账合计', value: cash.value.rentAndDepositReceivedTotal, hint: '已扣除退款和回冲', tone: 'green' },
   { label: '有效实收', value: collection.value.total?.validReceived, hint: '已分配租金', tone: 'green' },
   { label: '押金余额总额', value: overview.value.depositBalanceTotal, hint: '当前实际保管押金', tone: 'green' },
-  { label: '租金及押金入账合计', value: cash.value.rentAndDepositReceivedTotal, hint: '按实际收款日期统计', tone: 'green' },
   { label: '原应收', value: collection.value.total?.originalReceivable, hint: '账期口径', tone: 'blue' },
   { label: '优惠减免', value: collection.value.total?.concessionAmount, hint: '免租和折扣', tone: 'orange' },
-  { label: '经营收入', value: cash.value.operatingIncome, hint: '退租扣款', tone: 'green' },
+  { label: '退租扣款', value: cash.value.operatingIncome, hint: '已确认的验房等扣款', tone: 'green' },
 ])
 
 function formatMoney(value: unknown) {

@@ -123,7 +123,7 @@ describe('财务报表账单状态中文显示', () => {
     wrapper.unmount()
   })
 
-  it('shows operating income instead of outstanding receivables in the KPI cards', async () => {
+  it('shows net received totals first and labels checkout deductions clearly', async () => {
     const wrapper = mount(FinanceView, {
       global: { plugins: [ElementPlus] },
     })
@@ -134,12 +134,12 @@ describe('财务报表账单状态中文显示', () => {
       .map((card) => card.find('span').text())
 
     expect(labels).toEqual([
+      '租金及押金入账合计',
       '有效实收',
       '押金余额总额',
-      '租金及押金入账合计',
       '原应收',
       '优惠减免',
-      '经营收入',
+      '退租扣款',
     ])
     expect(wrapper.find('.metrics').text()).toContain('￥3,000.00')
     expect(wrapper.find('.metrics').text()).not.toContain('净应收')
