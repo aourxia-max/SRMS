@@ -209,6 +209,54 @@ describe('FinanceService rent collection category isolation', () => {
     });
   });
 
+  it('counts only confirmed checkout deposit deductions as operating income', async () => {
+    const service = new FinanceService({
+      db: {
+        payment: { findMany: jest.fn().mockResolvedValue([]) },
+        paymentRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositTransaction: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 71,
+              occurredAt: new Date('2026-09-03T08:00:00.000Z'),
+              transactionType: 'OFFSET_SETTLEMENT',
+              amount: new Prisma.Decimal('200.00'),
+              transactionNo: 'YJ-JY-71',
+            },
+            {
+              id: 72,
+              occurredAt: new Date('2026-09-03T08:00:00.000Z'),
+              transactionType: 'OFFSET_ARREARS',
+              amount: new Prisma.Decimal('300.00'),
+              transactionNo: 'YJ-QZ-72',
+            },
+          ]),
+        },
+        contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    const report = await service.cashFlows();
+
+    expect(report.operatingIncome).toEqual(new Prisma.Decimal('200.00'));
+    expect(report.rentAndDepositReceivedTotal).toEqual(
+      new Prisma.Decimal('0.00'),
+    );
+    expect(report.flows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reference: 'YJ-JY-71',
+          type: '退租扣款经营收入',
+        }),
+        expect.objectContaining({
+          reference: 'YJ-QZ-72',
+          type: '押金抵扣欠租',
+        }),
+      ]),
+    );
+  });
+
   it('orders every cash-flow source by activity time and source id without exposing sortAt', async () => {
     const tieTime = new Date('2026-09-01T08:00:00.000Z');
     const contractVoidReversalFindMany = jest

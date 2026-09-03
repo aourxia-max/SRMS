@@ -305,7 +305,10 @@ export class FinanceService {
           date: item.occurredAt,
           sortAt: item.occurredAt,
           flowType: 'DEPOSIT_OFFSET',
-          type: '押金内部抵扣',
+          type:
+            item.transactionType === 'OFFSET_SETTLEMENT'
+              ? '退租扣款经营收入'
+              : '押金抵扣欠租',
           category: null,
           amount: item.amount,
           direction: 'OUT' as const,
@@ -372,6 +375,9 @@ export class FinanceService {
           ),
       )
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+    const operatingIncome = deposits
+      .filter((item) => item.transactionType === 'OFFSET_SETTLEMENT')
+      .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
     return {
       flows,
       total: flows.length,
@@ -379,6 +385,7 @@ export class FinanceService {
       outflow,
       netCashFlow: inflow.minus(outflow),
       rentAndDepositReceivedTotal,
+      operatingIncome,
     };
   }
 }
