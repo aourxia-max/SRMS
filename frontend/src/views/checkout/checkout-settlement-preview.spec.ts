@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ElOption, ElSelect } from "element-plus";
 import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 
 const settlement = {
@@ -39,6 +40,127 @@ const rentRefundPreview = {
 
 describe("退租结算实时预估", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("offers searchable arrears bills only through the actual checkout date", async () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [
+          {
+            ...settlement,
+            arrearsBills: [
+              {
+                id: 31,
+                billNo: "ZD2026070031",
+                periodStart: "2026-07-01",
+                periodEnd: "2026-07-31",
+                outstandingAmount: "300.00",
+              },
+              {
+                id: 32,
+                billNo: "ZD2026080032",
+                periodStart: "2026-08-01",
+                periodEnd: "2026-08-31",
+                outstandingAmount: "800.00",
+              },
+              {
+                id: 33,
+                billNo: "ZD2026090033",
+                periodStart: "2026-09-01",
+                periodEnd: "2026-09-30",
+                outstandingAmount: "900.00",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const addArrears = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("添加欠租"));
+    expect(addArrears).toBeDefined();
+    await addArrears!.trigger("click");
+
+    const select = wrapper.getComponent(ElSelect);
+    expect(select.props("filterable")).toBe(true);
+    expect(
+      wrapper.findAllComponents(ElOption).map((option) => option.props("label")),
+    ).toEqual([
+      "ZD2026070031｜2026/07/01–2026/07/31｜未收 ¥300.00",
+      "ZD2026080032｜2026/08/01–2026/08/31｜未收 ¥800.00",
+    ]);
+  });
+
+  it("fills the unpaid amount after an arrears bill is selected", async () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [
+          {
+            ...settlement,
+            arrearsBills: [
+              {
+                id: 32,
+                billNo: "ZD2026080032",
+                periodStart: "2026-08-01",
+                periodEnd: "2026-08-31",
+                outstandingAmount: "800.00",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const addArrears = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("添加欠租"));
+    await addArrears!.trigger("click");
+
+    const select = wrapper.getComponent(ElSelect);
+    select.vm.$emit("update:modelValue", 32);
+    select.vm.$emit("change", 32);
+    await wrapper.vm.$nextTick();
+
+    expect(
+      (wrapper.get('input[placeholder="金额"]').element as HTMLInputElement)
+        .value,
+    ).toBe("800.00");
+  });
+
+  it("disables an arrears bill already selected by another item", async () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [
+          {
+            ...settlement,
+            arrearsBills: [
+              {
+                id: 32,
+                billNo: "ZD2026080032",
+                periodStart: "2026-08-01",
+                periodEnd: "2026-08-31",
+                outstandingAmount: "800.00",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const addArrears = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("添加欠租"))!;
+    await addArrears.trigger("click");
+    const first = wrapper.getComponent(ElSelect);
+    first.vm.$emit("update:modelValue", 32);
+    first.vm.$emit("change", 32);
+    await wrapper.vm.$nextTick();
+    await addArrears.trigger("click");
+
+    const second = wrapper.findAllComponents(ElSelect)[1];
+    const selectedBill = second
+      .findAllComponents(ElOption)
+      .find((option) => option.props("value") === 32);
+    expect(selectedBill?.props("disabled")).toBe(true);
+  });
 
   it("shows the five labelled backend summary values, including zero amounts", () => {
     const wrapper = mount(CheckoutSettlementPanel, {

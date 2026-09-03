@@ -29,10 +29,45 @@ import { assertContractNotVoided } from '../contracts/contract-operability';
 export class CheckoutService {
   constructor(private readonly prisma: PrismaService) {}
   async list() {
-    return this.prisma.db.checkoutSettlement.findMany({
+    const settlements = await this.prisma.db.checkoutSettlement.findMany({
       where: { status: { in: ['DRAFT', 'PENDING', 'REJECTED'] } },
-      include: { contract: { include: { room: true } }, items: true },
+      include: {
+        contract: {
+          include: {
+            room: true,
+            bills: {
+              where: {
+                billCategory: 'RENT',
+                status: { notIn: ['VOIDED', 'REFUNDED'] },
+                outstandingAmount: { gt: 0 },
+              },
+              orderBy: [{ periodStart: 'asc' }, { id: 'asc' }],
+              select: {
+                id: true,
+                billNo: true,
+                periodStart: true,
+                periodEnd: true,
+                outstandingAmount: true,
+              },
+            },
+          },
+        },
+        items: true,
+      },
       orderBy: { id: 'desc' },
+    });
+    return settlements.map((settlement) => {
+      const { bills, ...contract } = settlement.contract;
+      return {
+        ...settlement,
+        contract,
+        arrearsBills: bills.map((bill) => ({
+          ...bill,
+          periodStart: bill.periodStart.toISOString().slice(0, 10),
+          periodEnd: bill.periodEnd.toISOString().slice(0, 10),
+          outstandingAmount: this.money(bill.outstandingAmount),
+        })),
+      };
     });
   }
 

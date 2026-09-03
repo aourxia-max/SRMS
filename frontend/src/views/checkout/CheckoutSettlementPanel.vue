@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { ElOption, ElSelect } from "element-plus";
 import type {
+  CheckoutArrearsBill,
   CheckoutSettlement,
   CheckoutSettlementPreview,
   CheckoutSettlementItem,
@@ -47,6 +49,34 @@ const selected = computed(
     actionableSettlements.value.find((item) => item.id === selectedId.value) ??
     actionableSettlements.value[0],
 );
+const eligibleArrearsBills = computed(() =>
+  (selected.value?.arrearsBills || []).filter(
+    (bill) => !form.actualCheckoutDate || bill.periodStart <= form.actualCheckoutDate,
+  ),
+);
+
+function arrearsBillLabel(bill: CheckoutArrearsBill) {
+  const periodStart = bill.periodStart.replaceAll("-", "/");
+  const periodEnd = bill.periodEnd.replaceAll("-", "/");
+  return `${bill.billNo}｜${periodStart}–${periodEnd}｜未收 ${formatMoney(bill.outstandingAmount)}`;
+}
+
+function selectArrearsBill(
+  item: CheckoutSettlementItem,
+  billId: number | undefined,
+) {
+  const bill = eligibleArrearsBills.value.find((value) => value.id === billId);
+  if (bill) item.amount = bill.outstandingAmount;
+}
+
+function arrearsBillDisabled(billId: number, itemIndex: number) {
+  return items.value.some(
+    (item, index) =>
+      index !== itemIndex &&
+      item.itemType === "RENT_ARREARS" &&
+      item.rentBillId === billId,
+  );
+}
 
 function isoDate(value?: string) {
   return value ? value.slice(0, 10) : new Date().toISOString().slice(0, 10);
@@ -401,12 +431,26 @@ function cancelSelected() {
                 inputmode="decimal"
                 placeholder="金额"
               />
-              <input
+              <ElSelect
                 v-if="item.itemType === 'RENT_ARREARS'"
-                v-model.number="item.rentBillId"
-                inputmode="numeric"
-                placeholder="关联账单 ID"
-              />
+                v-model="item.rentBillId"
+                class="settlement-item__bill-select"
+                filterable
+                clearable
+                size="large"
+                placeholder="选择关联欠租账单"
+                no-data-text="当前没有可关联的欠租账单"
+                no-match-text="未找到匹配的欠租账单"
+                @change="selectArrearsBill(item, $event)"
+              >
+                <ElOption
+                  v-for="bill in eligibleArrearsBills"
+                  :key="bill.id"
+                  :label="arrearsBillLabel(bill)"
+                  :value="bill.id"
+                  :disabled="arrearsBillDisabled(bill.id, index)"
+                />
+              </ElSelect>
               <input
                 v-else
                 v-model="item.inspectionRecordRef"
@@ -708,6 +752,9 @@ function cancelSelected() {
 }
 .settlement-item__description {
   min-width: 0;
+}
+.settlement-item__bill-select {
+  width: 100%;
 }
 .settlement-panel__actions {
   display: flex;

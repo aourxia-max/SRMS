@@ -33,6 +33,14 @@ export type CheckoutSettlementItemPayload =
       itemType: Exclude<CheckoutSettlementItem["itemType"], "RENT_REFUND">;
     });
 
+export type CheckoutArrearsBill = {
+  id: number;
+  billNo: string;
+  periodStart: string;
+  periodEnd: string;
+  outstandingAmount: string;
+};
+
 export type CheckoutSettlementPayload = {
   actualCheckoutDate: string;
   handoverDate: string;
@@ -81,6 +89,7 @@ export type CheckoutSettlement = {
   supplementalOutstandingAmount?: string;
   supplementalCollectedAt?: string | null;
   contract?: CheckoutContract;
+  arrearsBills?: CheckoutArrearsBill[];
   items?: CheckoutSettlementItem[];
   depositRefunds?: DepositRefund[];
   rentRefundAllocations?: CheckoutRentRefundAllocationDetail[];

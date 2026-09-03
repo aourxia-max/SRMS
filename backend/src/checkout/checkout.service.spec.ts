@@ -564,6 +564,70 @@ describe('CheckoutService', () => {
       }),
     );
   });
+  it('exposes valid unpaid rent bills as selectable arrears bills', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 8,
+        status: 'DRAFT',
+        contract: {
+          id: 3,
+          room: { id: 6, fullHouseNo: '1栋201' },
+          bills: [
+            {
+              id: 11,
+              billNo: 'ZD2026080011',
+              periodStart: new Date('2026-08-01T00:00:00.000Z'),
+              periodEnd: new Date('2026-08-31T00:00:00.000Z'),
+              outstandingAmount: new Prisma.Decimal('800.00'),
+            },
+          ],
+        },
+      },
+    ]);
+    const service = new CheckoutService({
+      db: { checkoutSettlement: { findMany } },
+    } as never);
+
+    const result = await service.list();
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: {
+          contract: {
+            include: {
+              room: true,
+              bills: expect.objectContaining({
+                where: {
+                  billCategory: 'RENT',
+                  status: { notIn: ['VOIDED', 'REFUNDED'] },
+                  outstandingAmount: { gt: 0 },
+                },
+              }),
+            },
+          },
+          items: true,
+        },
+      }),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 8,
+        contract: {
+          id: 3,
+          room: { id: 6, fullHouseNo: '1栋201' },
+        },
+        arrearsBills: [
+          {
+            id: 11,
+            billNo: 'ZD2026080011',
+            periodStart: '2026-08-01',
+            periodEnd: '2026-08-31',
+            outstandingAmount: '800.00',
+          },
+        ],
+      }),
+    ]);
+  });
   it('rejects duplicate rent-arrears items for the same bill', async () => {
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
