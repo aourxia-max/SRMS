@@ -619,11 +619,11 @@ describe("CheckoutTopNav", () => {
       ...payload,
       actualCheckoutDate: "2026-08-21",
     });
-    await flushPromises();
-
-    expect(panel.props("preview")).toMatchObject({
-      maxRentRefundAmount: "50.00",
-    });
+    await vi.waitFor(() =>
+      expect(panel.props("preview")).toMatchObject({
+        maxRentRefundAmount: "50.00",
+      }),
+    );
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
