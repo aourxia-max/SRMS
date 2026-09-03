@@ -436,12 +436,13 @@ async function cancelSettlement(id: number) {
   }
 }
 async function approveSettlement(id: number) {
+  clearSettlementPreview();
   actionError.value = "";
   try {
     await checkoutApi.approve(id);
     await loadData();
     await approvalTasks.refresh();
-    activeTab.value = "refund";
+    changeTab("refund");
   } catch (error) {
     actionError.value = message(error, "确认结算失败，请稍后重试");
   }

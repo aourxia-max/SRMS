@@ -547,6 +547,45 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
   });
 
+  it("ignores an in-flight preview failure after settlement approval succeeds", async () => {
+    let rejectPreview!: (error: Error) => void;
+    const api = checkoutApi as unknown as {
+      preview: ReturnType<typeof vi.fn>;
+      approve: ReturnType<typeof vi.fn>;
+    };
+    api.preview.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectPreview = reject;
+        }),
+    );
+    api.approve.mockResolvedValueOnce(undefined);
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get("button:nth-child(2)").trigger("click");
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    const payload = {
+      actualCheckoutDate: "2026-08-20",
+      handoverDate: "2026-08-20",
+      inspectionAt: "2026-08-20",
+      targetRoomStatus: "EMPTY",
+      items: [],
+    };
+
+    panel.vm.$emit("preview", 8, payload);
+    await flushPromises();
+    panel.vm.$emit("approve", 8);
+    await flushPromises();
+    rejectPreview(new Error("stale preview failed"));
+    await flushPromises();
+
+    expect(api.approve).toHaveBeenCalledWith(8);
+    expect(wrapper.findComponent(CheckoutRefundPanel).exists()).toBe(true);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+  });
+
   it("recovers from a failed preview with a fresh maximum before showing it to the settlement panel", async () => {
     const api = checkoutApi as unknown as { preview: ReturnType<typeof vi.fn> };
     const wrapper = mount(CheckoutWorkspace, {
