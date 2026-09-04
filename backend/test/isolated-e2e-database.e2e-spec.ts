@@ -74,9 +74,11 @@ describe('isolated e2e database safety', () => {
     ['contract void correction', './contract-void-correction.e2e-spec'],
     ['property affairs', './property-affairs.e2e-spec'],
   ])(
-    'defers AppModule evaluation until guarded setup for %s',
-    (_scenario, suitePath) => {
+    'rejects a missing database target before %s can evaluate AppModule',
+    async (_scenario, suitePath) => {
+      const previousDatabaseUrl = process.env.DATABASE_URL;
       let appModuleEvaluated = false;
+      let suiteBeforeAll: jest.ProvidesHookCallback | undefined;
       const enumValues = new Proxy<Record<string, string>>(
         {},
         { get: (_target, property) => String(property) },
@@ -88,6 +90,7 @@ describe('isolated e2e database safety', () => {
         },
         { get: (target, property) => target[String(property)] ?? jest.fn() },
       );
+      delete process.env.DATABASE_URL;
       jest.resetModules();
       jest.doMock(
         '@prisma/client',
@@ -110,18 +113,46 @@ describe('isolated e2e database safety', () => {
       });
       const describeSpy = jest
         .spyOn(global, 'describe')
+        .mockImplementation((_name, suiteBody) => suiteBody());
+      const beforeAllSpy = jest
+        .spyOn(global, 'beforeAll')
+        .mockImplementation((hook) => {
+          suiteBeforeAll = hook;
+        });
+      const afterAllSpy = jest
+        .spyOn(global, 'afterAll')
         .mockImplementation(() => undefined);
+      const itSpy = jest
+        .spyOn(global, 'it')
+        .mockImplementation(() => undefined);
+      Object.defineProperty(global.it, 'each', {
+        configurable: true,
+        value: () => () => undefined,
+      });
 
       try {
         jest.isolateModules(() => {
           void jest.requireActual<Record<string, unknown>>(suitePath);
         });
+        expect(suiteBeforeAll).toBeDefined();
+        const runSuiteBeforeAll = suiteBeforeAll as () => Promise<unknown>;
+        await expect(runSuiteBeforeAll()).rejects.toThrow(
+          'E2E 只能运行在本机 13306 端口的一次性 srms_e2e 数据库',
+        );
         expect(appModuleEvaluated).toBe(false);
       } finally {
+        itSpy.mockRestore();
+        afterAllSpy.mockRestore();
+        beforeAllSpy.mockRestore();
         describeSpy.mockRestore();
         jest.dontMock('../src/app.module');
         jest.dontMock('@prisma/client');
         jest.resetModules();
+        if (previousDatabaseUrl === undefined) {
+          delete process.env.DATABASE_URL;
+        } else {
+          process.env.DATABASE_URL = previousDatabaseUrl;
+        }
       }
     },
   );
