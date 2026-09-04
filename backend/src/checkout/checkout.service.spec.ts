@@ -294,6 +294,24 @@ describe('CheckoutService', () => {
     });
   });
 
+  it('normalizes an unsupported completed-contract page size to 20', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: { findMany, count: jest.fn().mockResolvedValue(0) },
+        roomStatusHistory: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    await expect(
+      service.listCompletedContracts({ page: 1, pageSize: 37 }),
+    ).resolves.toMatchObject({ page: 1, pageSize: 20, total: 0 });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 20 }),
+    );
+  });
+
   it('serializes approved combined refunds and zero refunds with two decimals', async () => {
     const service = new CheckoutService({
       db: {

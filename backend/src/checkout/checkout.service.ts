@@ -91,8 +91,8 @@ export class CheckoutService {
     const page = Number.isFinite(requestedPage)
       ? Math.max(1, requestedPage)
       : 1;
-    const pageSize = Number.isFinite(requestedPageSize)
-      ? Math.min(100, Math.max(1, requestedPageSize))
+    const pageSize = [20, 50, 100].includes(requestedPageSize)
+      ? requestedPageSize
       : 20;
     const keyword = query.keyword?.trim();
     const contract: Prisma.ContractWhereInput = {

@@ -1126,6 +1126,24 @@ describe("CheckoutTopNav", () => {
       .trigger("click");
     expect(wrapper.emitted("select")).toEqual([[9]]);
   });
+  it("changes completed-contract page size and returns to the first page", async () => {
+    const wrapper = mount(CompletedCheckoutContractsPanel, {
+      props: {
+        result: {
+          items: [],
+          page: 2,
+          pageSize: 20,
+          total: 60,
+        },
+      },
+    });
+
+    await wrapper
+      .get('[data-test="completed-contract-page-size"]')
+      .setValue("50");
+
+    expect(wrapper.emitted("pageSizeChange")).toEqual([[50]]);
+  });
   it("shows the completed audit timestamp with seconds", () => {
     const wrapper = mount(CompletedCheckoutContractsPanel, {
       props: {

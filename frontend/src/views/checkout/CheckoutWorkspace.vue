@@ -158,6 +158,7 @@ async function selectRefundSettlement(settlementId?: number) {
 async function loadCompletedContracts(
   page = 1,
   keyword = completedKeyword.value,
+  pageSize = completedContracts.value.pageSize,
 ) {
   loadingCompletedContracts.value = true;
   actionError.value = "";
@@ -166,7 +167,7 @@ async function loadCompletedContracts(
     completedContracts.value = await checkoutApi.completedContracts({
       keyword: keyword || undefined,
       page,
-      pageSize: completedContracts.value.pageSize,
+      pageSize,
     });
   } catch (error) {
     actionError.value = message(error, "已退租合同加载失败，请稍后重试");
@@ -628,6 +629,7 @@ onMounted(initialize);
         :loading="loadingCompletedContracts"
         @search="loadCompletedContracts(1, $event)"
         @page-change="loadCompletedContracts($event)"
+        @page-size-change="loadCompletedContracts(1, completedKeyword, $event)"
         @select="openCompletedDetail"
       />
       <section
