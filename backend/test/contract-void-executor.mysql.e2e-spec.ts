@@ -9,6 +9,7 @@ import { ContractVoidReversalWriter } from '../src/contracts/contract-void-rever
 import { CommissionsService } from '../src/finance/commissions.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SecurityAuditChainService } from '../src/system/security-audit-chain.service';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 type Fixture = {
   buildingId: number;
@@ -39,18 +40,16 @@ describe('contract void executor real MySQL transaction semantics (e2e)', () => 
     .slice(2, 8)}`;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
-      throw new Error(
-        '缺少隔离测试库 DATABASE_URL，无法运行合同作废 MySQL E2E',
+    prisma = await runAfterDisposableE2eDatabaseGuard(async () => {
+      const connection = new PrismaService(
+        new ConfigService({
+          DATABASE_URL: process.env.DATABASE_URL,
+          NODE_ENV: 'test',
+        }),
       );
-    }
-    prisma = new PrismaService(
-      new ConfigService({
-        DATABASE_URL: process.env.DATABASE_URL,
-        NODE_ENV: 'test',
-      }),
-    );
-    await prisma.db.$connect();
+      await connection.db.$connect();
+      return connection;
+    });
     const user = await prisma.db.user.findFirst({
       where: {
         role: UserRole.SUPER_ADMIN,

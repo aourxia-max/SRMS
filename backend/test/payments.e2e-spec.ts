@@ -10,29 +10,35 @@ import { PaymentsController } from '../src/payments/payments.controller';
 import { PaymentsService } from '../src/payments/payments.service';
 import { PaymentReviewsController } from '../src/payments/payment-reviews.controller';
 import { PaymentReviewsService } from '../src/payments/payment-reviews.service';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 describe('payments API authorization (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
-    const moduleFixture = await Test.createTestingModule({
-      controllers: [PaymentsController, PaymentReviewsController],
-      providers: [
-        { provide: PaymentsService, useValue: {} },
-        { provide: FilesService, useValue: {} },
-        { provide: ContractLifecycleService, useValue: { run: jest.fn() } },
-        { provide: PaymentReviewsService, useValue: {} },
-      ],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate: () => {
-          throw new UnauthorizedException();
-        },
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() =>
+      Test.createTestingModule({
+        controllers: [PaymentsController, PaymentReviewsController],
+        providers: [
+          { provide: PaymentsService, useValue: {} },
+          { provide: FilesService, useValue: {} },
+          {
+            provide: ContractLifecycleService,
+            useValue: { run: jest.fn() },
+          },
+          { provide: PaymentReviewsService, useValue: {} },
+        ],
       })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate: () => {
+            throw new UnauthorizedException();
+          },
+        })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .compile(),
+    );
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();

@@ -12,6 +12,7 @@ import { ContractsService } from '../src/contracts/contracts.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AppModule } from '../src/app.module';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 describe('contract deposit auto-receipt (e2e)', () => {
   let app: INestApplication<App>;
@@ -33,24 +34,27 @@ describe('contract deposit auto-receipt (e2e)', () => {
   let createdOperatorId: number | undefined;
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-32-characters';
-    process.env.JWT_REFRESH_SECRET =
-      'test-refresh-secret-at-least-32-characters';
-    const moduleFixture = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate(context: ExecutionContext) {
-          const testRequest = context.switchToHttp().getRequest<{
-            user?: AuthUser;
-          }>();
-          if (!currentUser) return false;
-          testRequest.user = currentUser;
-          return true;
-        },
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+      process.env.JWT_ACCESS_SECRET =
+        'test-access-secret-at-least-32-characters';
+      process.env.JWT_REFRESH_SECRET =
+        'test-refresh-secret-at-least-32-characters';
+      return Test.createTestingModule({
+        imports: [AppModule],
       })
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            const testRequest = context.switchToHttp().getRequest<{
+              user?: AuthUser;
+            }>();
+            if (!currentUser) return false;
+            testRequest.user = currentUser;
+            return true;
+          },
+        })
+        .compile();
+    });
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');

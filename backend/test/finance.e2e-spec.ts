@@ -14,46 +14,49 @@ import { ExportTasksService } from '../src/finance/export-tasks.service';
 import { FinanceController } from '../src/finance/finance.controller';
 import { FinanceExportService } from '../src/finance/finance-export.service';
 import { FinanceService } from '../src/finance/finance.service';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 describe('finance overview authorization (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
-    const moduleFixture = await Test.createTestingModule({
-      controllers: [FinanceController],
-      providers: [
-        RolesGuard,
-        {
-          provide: FinanceService,
-          useValue: {
-            overview: jest
-              .fn()
-              .mockResolvedValue({ depositBalanceTotal: '10000.00' }),
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() =>
+      Test.createTestingModule({
+        controllers: [FinanceController],
+        providers: [
+          RolesGuard,
+          {
+            provide: FinanceService,
+            useValue: {
+              overview: jest
+                .fn()
+                .mockResolvedValue({ depositBalanceTotal: '10000.00' }),
+            },
           },
-        },
-        { provide: FinanceExportService, useValue: {} },
-        { provide: ExportTasksService, useValue: {} },
-      ],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate(context: ExecutionContext) {
-          const testRequest = context.switchToHttp().getRequest<{
-            headers: Record<string, string | string[] | undefined>;
-            user?: AuthUser;
-          }>();
-          const role = testRequest.headers['x-test-role'];
-          if (!role) throw new UnauthorizedException('登录状态已失效');
-          testRequest.user = {
-            id: 1,
-            username: 'test-user',
-            displayName: '测试用户',
-            role: role as UserRole,
-          };
-          return true;
-        },
+          { provide: FinanceExportService, useValue: {} },
+          { provide: ExportTasksService, useValue: {} },
+        ],
       })
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            const testRequest = context.switchToHttp().getRequest<{
+              headers: Record<string, string | string[] | undefined>;
+              user?: AuthUser;
+            }>();
+            const role = testRequest.headers['x-test-role'];
+            if (!role) throw new UnauthorizedException('登录状态已失效');
+            testRequest.user = {
+              id: 1,
+              username: 'test-user',
+              displayName: '测试用户',
+              role: role as UserRole,
+            };
+            return true;
+          },
+        })
+        .compile(),
+    );
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');

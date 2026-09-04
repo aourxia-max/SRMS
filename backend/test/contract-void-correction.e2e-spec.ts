@@ -6,15 +6,13 @@ import {
 import { Test } from '@nestjs/testing';
 import { Prisma, UserRole } from '@prisma/client';
 import ExcelJS from 'exceljs';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { assertContractVoidMutationDatabaseSafety } from './support/contract-void-mutation-database-guard';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 type SourceIds = {
   bills: number[];
@@ -78,49 +76,6 @@ type CompletedScenario = {
   requestNo: string;
 };
 
-function loadLocalTestDatabaseEnvironment() {
-  const content = readFileSync(
-    resolve(__dirname, '../../deploy/.env.test'),
-    'utf8',
-  );
-  const mysql: Record<string, string> = {};
-  for (const line of content.split(/\r?\n/)) {
-    const match = /^\s*(MYSQL_[A-Za-z0-9_]+)\s*=(.*)$/.exec(line);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    mysql[match[1]] = value;
-    process.env[match[1]] = value;
-  }
-  const required = [
-    'MYSQL_USER',
-    'MYSQL_PASSWORD',
-    'MYSQL_DATABASE',
-    'MYSQL_PORT',
-  ];
-  const missing = required.filter((name) => !mysql[name]);
-  if (missing.length) {
-    throw new Error(`隔离测试库配置缺少变量：${missing.join('、')}`);
-  }
-  const databaseUrl = new URL('mysql://127.0.0.1');
-  databaseUrl.username = mysql.MYSQL_USER;
-  databaseUrl.password = mysql.MYSQL_PASSWORD;
-  databaseUrl.port = mysql.MYSQL_PORT;
-  databaseUrl.pathname = `/${mysql.MYSQL_DATABASE}`;
-  assertContractVoidMutationDatabaseSafety(
-    databaseUrl.toString(),
-    process.env.CONTRACT_VOID_MUTATION_PROOF === '1',
-  );
-  process.env.DATABASE_URL = databaseUrl.toString();
-  process.env.NODE_ENV = 'test';
-}
-
 function collectBinaryResponse(
   response: NodeJS.ReadableStream,
   callback: (error: Error | null, body: unknown) => void,
@@ -157,25 +112,27 @@ describe('contract void correction API and financial invariants (e2e)', () => {
   const prefix = `合同纠错测试-Task10-${marker}`;
 
   beforeAll(async () => {
-    loadLocalTestDatabaseEnvironment();
-    process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-32-characters';
-    process.env.JWT_REFRESH_SECRET =
-      'test-refresh-secret-at-least-32-characters';
-    const moduleFixture = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate(context: ExecutionContext) {
-          const testRequest = context.switchToHttp().getRequest<{
-            user?: AuthUser;
-          }>();
-          if (!currentUser) return false;
-          testRequest.user = currentUser;
-          return true;
-        },
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+      process.env.JWT_ACCESS_SECRET =
+        'test-access-secret-at-least-32-characters';
+      process.env.JWT_REFRESH_SECRET =
+        'test-refresh-secret-at-least-32-characters';
+      return Test.createTestingModule({
+        imports: [AppModule],
       })
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            const testRequest = context.switchToHttp().getRequest<{
+              user?: AuthUser;
+            }>();
+            if (!currentUser) return false;
+            testRequest.user = currentUser;
+            return true;
+          },
+        })
+        .compile();
+    });
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');

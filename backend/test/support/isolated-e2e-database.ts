@@ -37,7 +37,18 @@ export function assertDisposableE2eDatabaseUrl(databaseUrl: string): URL {
   return url;
 }
 
-export function readLocalTestMySqlConfig(envPath: string): LocalTestMySqlConfig {
+export async function runAfterDisposableE2eDatabaseGuard<T>(
+  connect: () => Promise<T>,
+): Promise<T> {
+  const databaseUrl = process.env.DATABASE_URL ?? '';
+  assertDisposableE2eDatabaseUrl(databaseUrl);
+  process.env.NODE_ENV = 'test';
+  return connect();
+}
+
+export function readLocalTestMySqlConfig(
+  envPath: string,
+): LocalTestMySqlConfig {
   const values = parseEnvFile(readFileSync(envPath, 'utf8'));
   const requiredVariableNames = [
     'MYSQL_USER',
@@ -81,18 +92,20 @@ export function buildDisposableDatabaseName(now: Date, suffix: string): string {
 }
 
 function parseEnvFile(contents: string): Record<string, string> {
-  return contents.split(/\r?\n/).reduce<Record<string, string>>((values, line) => {
-    const trimmedLine = line.trim();
-    if (!trimmedLine || trimmedLine.startsWith('#')) return values;
+  return contents
+    .split(/\r?\n/)
+    .reduce<Record<string, string>>((values, line) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine || trimmedLine.startsWith('#')) return values;
 
-    const separatorIndex = trimmedLine.indexOf('=');
-    if (separatorIndex === -1) return values;
+      const separatorIndex = trimmedLine.indexOf('=');
+      if (separatorIndex === -1) return values;
 
-    const name = trimmedLine.slice(0, separatorIndex).trim();
-    const rawValue = trimmedLine.slice(separatorIndex + 1).trim();
-    values[name] = unquote(rawValue);
-    return values;
-  }, {});
+      const name = trimmedLine.slice(0, separatorIndex).trim();
+      const rawValue = trimmedLine.slice(separatorIndex + 1).trim();
+      values[name] = unquote(rawValue);
+      return values;
+    }, {});
 }
 
 function unquote(value: string): string {

@@ -24,6 +24,7 @@ import {
   createIsolatedSecurityAuditChain,
   runBestEffortCleanup,
 } from './property-affairs.e2e-support';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 type AffairState = { id: number; version: number };
 
@@ -97,6 +98,7 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     username: true,
     displayName: true,
     role: true,
+    status: true,
   } as const;
 
   async function businessSnapshot() {
@@ -158,28 +160,31 @@ describe('property affairs API workflows and invariants (e2e)', () => {
   }
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-32-characters';
-    process.env.JWT_REFRESH_SECRET =
-      'test-refresh-secret-at-least-32-characters';
-    const moduleFixture = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate(context: ExecutionContext) {
-          const testRequest = context.switchToHttp().getRequest<{
-            user?: AuthUser;
-            headers: Record<string, string | string[] | undefined>;
-          }>();
-          if (!currentUser) return false;
-          testRequest.user = currentUser;
-          testRequest.headers['user-agent'] = 'SRMS物业办事E2E';
-          return true;
-        },
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+      process.env.JWT_ACCESS_SECRET =
+        'test-access-secret-at-least-32-characters';
+      process.env.JWT_REFRESH_SECRET =
+        'test-refresh-secret-at-least-32-characters';
+      return Test.createTestingModule({
+        imports: [AppModule],
       })
-      .overrideProvider(SecurityAuditChainService)
-      .useValue(createIsolatedSecurityAuditChain())
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            const testRequest = context.switchToHttp().getRequest<{
+              user?: AuthUser;
+              headers: Record<string, string | string[] | undefined>;
+            }>();
+            if (!currentUser) return false;
+            testRequest.user = currentUser;
+            testRequest.headers['user-agent'] = 'SRMS物业办事E2E';
+            return true;
+          },
+        })
+        .overrideProvider(SecurityAuditChainService)
+        .useValue(createIsolatedSecurityAuditChain())
+        .compile();
+    });
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
@@ -195,22 +200,28 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     files = app.get(FilesService);
 
     const [storedSuper, storedAdmin] = await Promise.all([
-      prisma.db.user.findFirst({
-        where: {
-          role: UserRole.SUPER_ADMIN,
-          status: 'ACTIVE',
-          deletedAt: null,
-        },
+      prisma.db.user.findUnique({
+        where: { username: 'srms-e2e-super-admin' },
         select: selectAuthUser,
       }),
-      prisma.db.user.findFirst({
-        where: { role: UserRole.ADMIN, status: 'ACTIVE', deletedAt: null },
+      prisma.db.user.findUnique({
+        where: { username: 'srms-e2e-admin' },
         select: selectAuthUser,
       }),
     ]);
     if (!storedSuper || !storedAdmin) {
       throw new Error('物业办事 E2E 需要有效的超级管理员和普通管理员基础账号');
     }
+    expect(storedSuper).toMatchObject({
+      username: 'srms-e2e-super-admin',
+      role: UserRole.SUPER_ADMIN,
+      status: 'ACTIVE',
+    });
+    expect(storedAdmin).toMatchObject({
+      username: 'srms-e2e-admin',
+      role: UserRole.ADMIN,
+      status: 'ACTIVE',
+    });
     superAdmin = storedSuper;
     admin = storedAdmin;
     visitor = {

@@ -5,6 +5,7 @@ import {
   assertDisposableE2eDatabaseUrl,
   buildDisposableDatabaseName,
   readLocalTestMySqlConfig,
+  runAfterDisposableE2eDatabaseGuard,
 } from './support/isolated-e2e-database';
 
 describe('isolated e2e database safety', () => {
@@ -34,6 +35,33 @@ describe('isolated e2e database safety', () => {
         'mysql://user:secret@[::1]:13306/srms_e2e_20260904_ab12',
       ),
     ).not.toThrow();
+  });
+
+  it.each([
+    ['an unsafe target', 'mysql://user:secret@localhost:3306/srms'],
+    ['a missing target', undefined],
+  ])('rejects %s before connecting', async (_scenario, databaseUrl) => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    const connect = jest.fn(() => Promise.resolve());
+
+    if (databaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = databaseUrl;
+    }
+
+    try {
+      await expect(runAfterDisposableE2eDatabaseGuard(connect)).rejects.toThrow(
+        'E2E 只能运行在本机 13306 端口的一次性 srms_e2e 数据库',
+      );
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousDatabaseUrl;
+      }
+    }
   });
 
   it('parses quoted local test MySQL settings without exposing passwords', () => {
@@ -87,18 +115,14 @@ describe('isolated e2e database safety', () => {
 
   it.each([
     ['MYSQL_PORT', '13307', '本地测试 MySQL 端口必须为 13306'],
-    [
-      'MYSQL_DATABASE',
-      'srms',
-      '本地测试 MySQL 配置来源库必须为 srms_docker',
-    ],
+    ['MYSQL_DATABASE', 'srms', '本地测试 MySQL 配置来源库必须为 srms_docker'],
   ])(
     'rejects unsafe local test MySQL setting %s=%s',
     (variable, value, message) => {
       const fixtureDirectory = mkdtempSync(join(tmpdir(), 'srms-e2e-config-'));
       const envPath = join(fixtureDirectory, '.env');
       const fixtureValue = String(process.pid);
-      const settings = {
+      const settings: Record<string, string> = {
         MYSQL_USER: 'e2e_user',
         MYSQL_PASSWORD: fixtureValue,
         MYSQL_ROOT_PASSWORD: fixtureValue,
@@ -109,7 +133,7 @@ describe('isolated e2e database safety', () => {
       writeFileSync(
         envPath,
         Object.entries(settings)
-          .map(([key, setting]) => `${key}=\"${setting}\"`)
+          .map(([key, setting]) => `${key}="${setting}"`)
           .join('\n'),
       );
 

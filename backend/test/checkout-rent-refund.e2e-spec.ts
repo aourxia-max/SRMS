@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import {
   ExecutionContext,
   INestApplication,
@@ -17,6 +15,7 @@ import { DepositRefundsService } from '../src/checkout/deposit-refunds.service';
 import { ContractVoidPreviewService } from '../src/contracts/contract-void-preview.service';
 import { ContractVoidReversalWriter } from '../src/contracts/contract-void-reversal-writer';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 type Fixture = {
   buildingId: number;
@@ -49,43 +48,6 @@ type CleanupScope = {
 const actualCheckoutDate = '2035-01-15';
 const refundDate = '2035-01-20';
 
-function loadLocalTestDatabaseEnvironment() {
-  const content = readFileSync(
-    resolve(__dirname, '../../deploy/.env.test'),
-    'utf8',
-  );
-  const mysql: Record<string, string> = {};
-  for (const line of content.split(/\r?\n/)) {
-    const match = /^\s*(MYSQL_[A-Za-z0-9_]+)\s*=(.*)$/.exec(line);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    mysql[match[1]] = value;
-  }
-  const required = [
-    'MYSQL_USER',
-    'MYSQL_PASSWORD',
-    'MYSQL_DATABASE',
-    'MYSQL_PORT',
-  ];
-  if (required.some((name) => !mysql[name])) {
-    throw new Error('本机测试环境数据库配置不完整');
-  }
-  const databaseUrl = new URL('mysql://127.0.0.1');
-  databaseUrl.username = mysql.MYSQL_USER;
-  databaseUrl.password = mysql.MYSQL_PASSWORD;
-  databaseUrl.port = mysql.MYSQL_PORT;
-  databaseUrl.pathname = `/${mysql.MYSQL_DATABASE}`;
-  process.env.DATABASE_URL = databaseUrl.toString();
-  process.env.NODE_ENV = 'test';
-}
-
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -106,31 +68,28 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   const suitePrefix = `T9RR${marker}`;
 
   beforeAll(async () => {
-    loadLocalTestDatabaseEnvironment();
-    if (!process.env.DATABASE_URL) {
-      throw new Error(
-        '缺少隔离测试库 DATABASE_URL，无法运行退租租金退款 MySQL E2E',
-      );
-    }
-    process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-32-characters';
-    process.env.JWT_REFRESH_SECRET =
-      'test-refresh-secret-at-least-32-characters';
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+      process.env.JWT_ACCESS_SECRET =
+        'test-access-secret-at-least-32-characters';
+      process.env.JWT_REFRESH_SECRET =
+        'test-refresh-secret-at-least-32-characters';
 
-    const moduleFixture = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate(context: ExecutionContext) {
-          const testRequest = context.switchToHttp().getRequest<{
-            user?: AuthUser;
-          }>();
-          if (!currentUser) return false;
-          testRequest.user = currentUser;
-          return true;
-        },
+      return Test.createTestingModule({
+        imports: [AppModule],
       })
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            const testRequest = context.switchToHttp().getRequest<{
+              user?: AuthUser;
+            }>();
+            if (!currentUser) return false;
+            testRequest.user = currentUser;
+            return true;
+          },
+        })
+        .compile();
+    });
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');

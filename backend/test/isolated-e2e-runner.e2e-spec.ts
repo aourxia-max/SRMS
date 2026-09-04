@@ -45,12 +45,12 @@ describe('isolated E2E runner dependencies', () => {
     expect(calls[0].sql).not.toContain(opaquePasswordHash);
     expect(calls[0].sql.match(/\?/g)).toHaveLength(10);
     expect(calls[0].values).toEqual([
-      'e2e_super_admin',
+      'srms-e2e-super-admin',
       opaquePasswordHash,
       'E2E 超级管理员',
       'SUPER_ADMIN',
       'ACTIVE',
-      'e2e_admin',
+      'srms-e2e-admin',
       opaquePasswordHash,
       'E2E 管理员',
       'ADMIN',

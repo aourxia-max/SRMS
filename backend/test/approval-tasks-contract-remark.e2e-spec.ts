@@ -6,14 +6,13 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Prisma, UserRole } from '@prisma/client';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 const expectedCountKeys = [
   'contractChanges',
@@ -29,44 +28,6 @@ const expectedCountKeys = [
   'checkoutsTotal',
   'total',
 ];
-
-function loadLocalTestDatabaseEnvironment() {
-  const candidates = [
-    resolve(__dirname, '../../deploy/.env.test'),
-    resolve(__dirname, '../../../../deploy/.env.test'),
-  ];
-  const envPath = candidates.find((candidate) => existsSync(candidate));
-  if (!envPath) throw new Error('未找到本机测试环境配置');
-  const mysql: Record<string, string> = {};
-  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-    const match = /^\s*(MYSQL_[A-Za-z0-9_]+)\s*=(.*)$/.exec(line);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    mysql[match[1]] = value;
-  }
-  const required = [
-    'MYSQL_USER',
-    'MYSQL_PASSWORD',
-    'MYSQL_DATABASE',
-    'MYSQL_PORT',
-  ];
-  if (required.some((name) => !mysql[name]))
-    throw new Error('本机测试环境数据库配置不完整');
-  const databaseUrl = new URL('mysql://127.0.0.1');
-  databaseUrl.username = mysql.MYSQL_USER;
-  databaseUrl.password = mysql.MYSQL_PASSWORD;
-  databaseUrl.port = mysql.MYSQL_PORT;
-  databaseUrl.pathname = `/${mysql.MYSQL_DATABASE}`;
-  process.env.DATABASE_URL = databaseUrl.toString();
-  process.env.NODE_ENV = 'test';
-}
 
 describe('approval task counts and contract remark authorization (e2e)', () => {
   let app: INestApplication<App>;
@@ -85,23 +46,25 @@ describe('approval task counts and contract remark authorization (e2e)', () => {
   const contractNo = `E2E-BZ-${marker}`;
 
   beforeAll(async () => {
-    loadLocalTestDatabaseEnvironment();
-    process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-32-characters';
-    process.env.JWT_REFRESH_SECRET =
-      'test-refresh-secret-at-least-32-characters';
-    const moduleFixture = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideGuard(JwtAuthGuard)
-      .useValue({
-        canActivate(context: ExecutionContext) {
-          if (!currentUser) throw new UnauthorizedException('请先登录');
-          context.switchToHttp().getRequest<{ user?: AuthUser }>().user =
-            currentUser;
-          return true;
-        },
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+      process.env.JWT_ACCESS_SECRET =
+        'test-access-secret-at-least-32-characters';
+      process.env.JWT_REFRESH_SECRET =
+        'test-refresh-secret-at-least-32-characters';
+      return Test.createTestingModule({
+        imports: [AppModule],
       })
-      .compile();
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate(context: ExecutionContext) {
+            if (!currentUser) throw new UnauthorizedException('请先登录');
+            context.switchToHttp().getRequest<{ user?: AuthUser }>().user =
+              currentUser;
+            return true;
+          },
+        })
+        .compile();
+    });
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     app.useGlobalPipes(
