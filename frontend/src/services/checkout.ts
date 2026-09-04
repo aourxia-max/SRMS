@@ -92,6 +92,15 @@ export const checkoutApi = {
         `/checkout-settlements/${id}/cancel`,
       ),
     ),
+  revokeCompleted: async (id: number) =>
+    data(
+      await http.post<Envelope<{
+        settlementId: number;
+        settlementStatus: 'CANCELLED';
+        contractStatus: string;
+        roomStatus: string;
+      }>>(`/checkout-settlements/${id}/revoke-completed`),
+    ),
   completeZeroRefund: async (id: number) =>
     data(
       await http.post<Envelope<CheckoutSettlement>>(

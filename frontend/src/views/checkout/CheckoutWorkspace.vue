@@ -56,6 +56,7 @@ const refundUploading = ref(false);
 const refundSubmitting = ref(false);
 const refundApproving = ref(false);
 const refundCancelling = ref(false);
+const completedRevoking = ref(false);
 const selectedInitiateContractId = ref<number | null>(null);
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const refundProofPreview = ref<{
@@ -66,6 +67,7 @@ const refundProofPreview = ref<{
 const refundRole = computed<"SUPER_ADMIN" | "ADMIN" | "VISITOR">(
   () => session.user?.role ?? "VISITOR",
 );
+const canRevokeCompleted = computed(() => refundRole.value === "SUPER_ADMIN");
 applyRouteState();
 const approvedSettlement = computed(() => refundSettlement.value);
 function setRefundSettlement(next?: CheckoutSettlement) {
@@ -536,6 +538,30 @@ async function cancelApprovedCheckout(id: number) {
     refundCancelling.value = false;
   }
 }
+async function revokeCompletedCheckout(id: number) {
+  if (completedRevoking.value || !canRevokeCompleted.value) return;
+  if (
+    !window.confirm(
+      "将恢复系统中的合同、房态、押金余额和本次退租产生的账本记录；现实中已支付给租户的款项不会自动追回。确定撤销退租吗？",
+    )
+  )
+    return;
+  completedRevoking.value = true;
+  actionError.value = "";
+  try {
+    await checkoutApi.revokeCompleted(id);
+    completedDetail.value = undefined;
+    await Promise.all([
+      loadData(),
+      loadCompletedContracts(completedContracts.value.page),
+      approvalTasks.refresh(),
+    ]);
+  } catch (error) {
+    actionError.value = message(error, "撤销退租失败，请稍后重试");
+  } finally {
+    completedRevoking.value = false;
+  }
+}
 async function collectSupplemental(id: number) {
   const contractId = approvedSettlement.value?.contractId;
   if (!contractId) {
@@ -627,10 +653,12 @@ onMounted(initialize);
       <CompletedCheckoutContractsPanel
         :result="completedContracts"
         :loading="loadingCompletedContracts"
+        :can-revoke-completed="canRevokeCompleted"
         @search="loadCompletedContracts(1, $event)"
         @page-change="loadCompletedContracts($event)"
         @page-size-change="loadCompletedContracts(1, completedKeyword, $event)"
         @select="openCompletedDetail"
+        @revoke="revokeCompletedCheckout"
       />
       <section
         v-if="completedDetail"

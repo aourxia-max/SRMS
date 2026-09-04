@@ -5,12 +5,14 @@ import type { CompletedCheckoutContractsResult } from "./checkout-types";
 const props = defineProps<{
   result: CompletedCheckoutContractsResult;
   loading?: boolean;
+  canRevokeCompleted?: boolean;
 }>();
 const emit = defineEmits<{
   search: [keyword: string];
   pageChange: [page: number];
   pageSizeChange: [pageSize: number];
   select: [settlementId: number];
+  revoke: [settlementId: number];
 }>();
 
 const keyword = ref("");
@@ -128,6 +130,15 @@ function formatMoney(value: string) {
                 @click="emit('select', item.settlementId)"
               >
                 查看详情
+              </button>
+              <button
+                v-if="canRevokeCompleted"
+                :data-test="`completed-contract-revoke-${item.settlementId}`"
+                type="button"
+                class="danger-link-button"
+                @click="emit('revoke', item.settlementId)"
+              >
+                撤销退租
               </button>
             </td>
           </tr>
@@ -277,6 +288,15 @@ tbody tr:last-child td {
   border: 1px solid #d9e1ec;
   color: #39465a;
   background: #fff;
+}
+.danger-link-button {
+  margin-left: 12px;
+  padding: 0;
+  border: 0;
+  color: #d14343;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
 }
 .completed-contracts-panel__pagination select {
   min-height: 36px;
