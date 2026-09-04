@@ -72,9 +72,19 @@ describe('isolated e2e lifecycle', () => {
     ]);
   });
 
-  it('reports the fixed cleanup error when dropping the disposable database fails', async () => {
+  it('preserves a non-one Jest exit code when the shared fingerprint changes', async () => {
     const { dependencies } = createDependencies({
+      fingerprints: ['before', 'after'],
+      jestExitCode: 2,
+    });
+
+    await expect(runIsolatedE2e(options, dependencies)).resolves.toBe(2);
+  });
+
+  it('reports the fixed cleanup error when dropping the disposable database fails', async () => {
+    const { dependencies, operations } = createDependencies({
       dropDatabase: async () => {
+        operations.push('drop');
         throw new Error('drop failed');
       },
     });
@@ -82,6 +92,16 @@ describe('isolated e2e lifecycle', () => {
     await expect(runIsolatedE2e(options, dependencies)).rejects.toThrow(
       'E2E 临时数据库清理失败',
     );
+
+    expect(operations).toEqual([
+      'fingerprint-before',
+      'create',
+      'migrate',
+      'seed',
+      'jest',
+      'drop',
+      'assert-absent',
+    ]);
   });
 
   it('reports the fixed cleanup error when the disposable database remains', async () => {

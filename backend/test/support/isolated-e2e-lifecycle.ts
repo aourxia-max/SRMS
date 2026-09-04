@@ -53,7 +53,9 @@ export async function runIsolatedE2e(
     throw lifecycleFailure;
   }
 
-  return fingerprintBefore === fingerprintAfter ? jestExitCode : 1;
+  return fingerprintBefore !== fingerprintAfter && jestExitCode === 0
+    ? 1
+    : jestExitCode;
 }
 
 function assertDisposableOptions(options: IsolatedE2eOptions): void {
@@ -71,12 +73,23 @@ async function cleanupDatabase(
   options: IsolatedE2eOptions,
   dependencies: IsolatedE2eDependencies,
 ): Promise<void> {
+  let cleanupFailed = false;
+
   try {
     await dependencies.dropDatabase(options.databaseName);
+  } catch {
+    cleanupFailed = true;
+  }
+
+  try {
     if (await dependencies.databaseExists(options.databaseName)) {
-      throw new Error(CLEANUP_ERROR);
+      cleanupFailed = true;
     }
   } catch {
+    cleanupFailed = true;
+  }
+
+  if (cleanupFailed) {
     throw new Error(CLEANUP_ERROR);
   }
 }
