@@ -1126,6 +1126,52 @@ describe("CheckoutTopNav", () => {
       .trigger("click");
     expect(wrapper.emitted("select")).toEqual([[9]]);
   });
+  it("changes completed-contract page size and returns to the first page", async () => {
+    const wrapper = mount(CompletedCheckoutContractsPanel, {
+      props: {
+        result: {
+          items: [],
+          page: 2,
+          pageSize: 20,
+          total: 60,
+        },
+      },
+    });
+
+    await wrapper
+      .get('[data-test="completed-contract-page-size"]')
+      .setValue("50");
+
+    expect(wrapper.emitted("pageSizeChange")).toEqual([[50]]);
+  });
+  it("shows the completed-checkout revoke control only when permitted", async () => {
+    const result = {
+      items: [
+        {
+          settlementId: 9,
+          settlementNo: "TZ202608010009",
+          contractNo: "HT202608010001",
+          roomFullHouseNo: "2栋301",
+          tenantName: "李四",
+          actualCheckoutDate: "2026-08-01T00:00:00.000Z",
+          refundAmount: "0.00",
+          completedAt: "2026-08-02T09:30:00.000Z",
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    };
+    const allowed = mount(CompletedCheckoutContractsPanel, {
+      props: { result, canRevokeCompleted: true },
+    });
+    const denied = mount(CompletedCheckoutContractsPanel, {
+      props: { result, canRevokeCompleted: false },
+    });
+
+    expect(allowed.find('[data-test="completed-contract-revoke-9"]').exists()).toBe(true);
+    expect(denied.find('[data-test="completed-contract-revoke-9"]').exists()).toBe(false);
+  });
   it("shows the completed audit timestamp with seconds", () => {
     const wrapper = mount(CompletedCheckoutContractsPanel, {
       props: {

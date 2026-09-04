@@ -123,6 +123,18 @@ export class CheckoutController {
       data: await this.checkout.completeZeroRefund(id, user),
     };
   }
+  @Post(':id/revoke-completed')
+  @Roles(UserRole.SUPER_ADMIN)
+  async revokeCompleted(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      code: 200,
+      message: 'success',
+      data: await this.checkout.revokeCompleted(id, user),
+    };
+  }
   @Post(':id/reject')
   @Roles(UserRole.SUPER_ADMIN)
   async reject(

@@ -15,6 +15,28 @@ const settlementDto = (item: Record<string, unknown>) =>
   });
 
 describe('CheckoutController preview route', () => {
+  it('exposes a super-admin completed-checkout revoke endpoint', async () => {
+    const revokeCompleted = (
+      CheckoutController.prototype as unknown as {
+        revokeCompleted?: unknown;
+      }
+    ).revokeCompleted;
+    expect(revokeCompleted).toBeDefined();
+    expect(Reflect.getMetadata(PATH_METADATA, revokeCompleted as object)).toBe(
+      ':id/revoke-completed',
+    );
+
+    const checkout = { revokeCompleted: jest.fn().mockResolvedValue({ id: 9 }) };
+    const controller = new CheckoutController(checkout as never);
+    await expect(
+      (controller as any).revokeCompleted(9, {
+        id: 1,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).resolves.toEqual({ code: 200, message: 'success', data: { id: 9 } });
+  });
+
   it('exposes a protected settlement preview endpoint', () => {
     const preview = (
       CheckoutController.prototype as unknown as { preview?: unknown }

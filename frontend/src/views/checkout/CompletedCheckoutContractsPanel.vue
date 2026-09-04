@@ -5,11 +5,14 @@ import type { CompletedCheckoutContractsResult } from "./checkout-types";
 const props = defineProps<{
   result: CompletedCheckoutContractsResult;
   loading?: boolean;
+  canRevokeCompleted?: boolean;
 }>();
 const emit = defineEmits<{
   search: [keyword: string];
   pageChange: [page: number];
+  pageSizeChange: [pageSize: number];
   select: [settlementId: number];
+  revoke: [settlementId: number];
 }>();
 
 const keyword = ref("");
@@ -24,6 +27,10 @@ watch(
 
 function submitSearch() {
   emit("search", keyword.value.trim());
+}
+function changePageSize(event: Event) {
+  const pageSize = Number((event.target as HTMLSelectElement).value);
+  if ([20, 50, 100].includes(pageSize)) emit("pageSizeChange", pageSize);
 }
 function formatDate(value: string | null) {
   if (!value) return "—";
@@ -124,6 +131,15 @@ function formatMoney(value: string) {
               >
                 查看详情
               </button>
+              <button
+                v-if="canRevokeCompleted"
+                :data-test="`completed-contract-revoke-${item.settlementId}`"
+                type="button"
+                class="danger-link-button"
+                @click="emit('revoke', item.settlementId)"
+              >
+                撤销退租
+              </button>
             </td>
           </tr>
         </tbody>
@@ -131,10 +147,21 @@ function formatMoney(value: string) {
     </div>
 
     <footer
-      v-if="result.total > result.pageSize"
       class="completed-contracts-panel__pagination"
     >
       <span>共 {{ result.total }} 条</span>
+      <label>
+        每页
+        <select
+          data-test="completed-contract-page-size"
+          :value="result.pageSize"
+          @change="changePageSize"
+        >
+          <option :value="20">20 条</option>
+          <option :value="50">50 条</option>
+          <option :value="100">100 条</option>
+        </select>
+      </label>
       <button
         type="button"
         :disabled="result.page <= 1"
@@ -261,6 +288,25 @@ tbody tr:last-child td {
   border: 1px solid #d9e1ec;
   color: #39465a;
   background: #fff;
+}
+.danger-link-button {
+  margin-left: 12px;
+  padding: 0;
+  border: 0;
+  color: #d14343;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.completed-contracts-panel__pagination select {
+  min-height: 36px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border: 1px solid #d9e1ec;
+  border-radius: 6px;
+  color: #39465a;
+  background: #fff;
+  font: inherit;
 }
 .completed-contracts-panel__pagination button:disabled {
   cursor: not-allowed;

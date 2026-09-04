@@ -294,6 +294,24 @@ describe('CheckoutService', () => {
     });
   });
 
+  it('normalizes an unsupported completed-contract page size to 20', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CheckoutService({
+      db: {
+        checkoutSettlement: { findMany, count: jest.fn().mockResolvedValue(0) },
+        roomStatusHistory: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+
+    await expect(
+      service.listCompletedContracts({ page: 1, pageSize: 37 }),
+    ).resolves.toMatchObject({ page: 1, pageSize: 20, total: 0 });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 20 }),
+    );
+  });
+
   it('serializes approved combined refunds and zero refunds with two decimals', async () => {
     const service = new CheckoutService({
       db: {
@@ -363,6 +381,157 @@ describe('CheckoutService', () => {
         },
       ],
     });
+  });
+
+  it('revokes a completed zero-refund checkout and restores the contract and room', async () => {
+    const settlementUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const contractUpdate = jest.fn();
+    const roomUpdate = jest.fn();
+    const historyCreate = jest.fn();
+    const auditCreate = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValueOnce({ id: 9, contractId: 3 })
+          .mockResolvedValueOnce({
+            id: 9,
+            status: 'COMPLETED',
+            contractId: 3,
+            contract: {
+              id: 3,
+              roomId: 7,
+              status: 'ENDED',
+              startDate: new Date('2026-09-01'),
+              endDate: new Date('2026-12-31'),
+              room: { id: 7, roomStatus: 'EMPTY' },
+            },
+          }),
+        updateMany: settlementUpdateMany,
+      },
+      contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: contractUpdate,
+      },
+      roomStatusHistory: {
+        findFirst: jest.fn().mockResolvedValue({ fromStatus: 'RENTED' }),
+        create: historyCreate,
+      },
+      room: { update: roomUpdate },
+      depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+      depositTransaction: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      prepaymentTransaction: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      checkoutRentRefundAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+      rentBill: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      billAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
+      securityAuditLog: { create: auditCreate },
+    };
+    tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
+      const statement = query.strings?.join('?') ?? '';
+      if (statement.includes('FROM rooms')) return [{ id: 7 }];
+      if (statement.includes('FROM contracts')) return [{ id: 3, roomId: 7 }];
+      return [{ id: 9 }];
+    });
+    const service = new CheckoutService({
+      db: {
+        $transaction: jest.fn((callback) => callback(tx)),
+      },
+    } as never);
+
+    await expect(
+      (service as any).revokeCompleted(9, {
+        id: 2,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).resolves.toMatchObject({
+      settlementId: 9,
+      settlementStatus: 'CANCELLED',
+      contractStatus: 'ACTIVE',
+      roomStatus: 'RENTED',
+    });
+
+    expect(settlementUpdateMany).toHaveBeenCalledWith({
+      where: { id: 9, status: 'COMPLETED' },
+      data: { status: 'CANCELLED' },
+    });
+    expect(contractUpdate).toHaveBeenCalledWith({
+      where: { id: 3 },
+      data: { status: 'ACTIVE' },
+    });
+    expect(roomUpdate).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: expect.objectContaining({ roomStatus: 'RENTED' }),
+    });
+    expect(historyCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        roomId: 7,
+        fromStatus: 'EMPTY',
+        toStatus: 'RENTED',
+        businessType: 'CHECKOUT_REVERSAL',
+      }),
+    });
+    expect(auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        eventType: 'COMPLETED_CHECKOUT_REVOKED',
+        entityType: 'CHECKOUT_SETTLEMENT',
+        entityId: 9,
+      }),
+    });
+  });
+
+  it('rejects completed-checkout revocation when another effective contract occupies the room', async () => {
+    const tx = {
+      $queryRaw: jest.fn(),
+      checkoutSettlement: {
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValueOnce({ id: 9, contractId: 3 })
+          .mockResolvedValueOnce({
+            id: 9,
+            status: 'COMPLETED',
+            contractId: 3,
+            contract: {
+              id: 3,
+              roomId: 7,
+              status: 'ENDED',
+              room: { id: 7, roomStatus: 'EMPTY' },
+            },
+          }),
+      },
+      contract: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+        findFirst: jest.fn().mockResolvedValue({ id: 4 }),
+      },
+    };
+    tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
+      const statement = query.strings?.join('?') ?? '';
+      if (statement.includes('FROM rooms')) return [{ id: 7 }];
+      if (statement.includes('FROM contracts')) return [{ id: 3, roomId: 7 }];
+      return [{ id: 9 }];
+    });
+    const service = new CheckoutService({
+      db: { $transaction: jest.fn((callback) => callback(tx)) },
+    } as never);
+
+    await expect(
+      (service as any).revokeCompleted(9, {
+        id: 2,
+        username: 'root',
+        role: 'SUPER_ADMIN',
+      }),
+    ).rejects.toThrow('该房源已有后续有效合同占用，不能撤销退租');
   });
 
   it('cancels a draft checkout settlement and restores contract and original room status', async () => {
