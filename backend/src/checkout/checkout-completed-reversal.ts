@@ -101,7 +101,8 @@ export async function reverseCompletedCheckoutAccounting(
           occurredAt: input.occurredAt,
         },
       });
-      restoredPrepaymentAmount = restoredPrepaymentAmount.plus(prepaymentAmount);
+      restoredPrepaymentAmount =
+        restoredPrepaymentAmount.plus(prepaymentAmount);
     }
     const cancelled = await tx.depositRefund.updateMany({
       where: { id: refund.id, approvalStatus: 'APPROVED' },
@@ -189,7 +190,9 @@ export async function reverseCompletedCheckoutAccounting(
   });
   const appliedItemIds = [
     ...new Set(
-      appliedRentRefunds.map((allocation) => allocation.checkoutSettlementItemId),
+      appliedRentRefunds.map(
+        (allocation) => allocation.checkoutSettlementItemId,
+      ),
     ),
   ];
   const rentRefundAdjustments = appliedItemIds.length
@@ -260,9 +263,10 @@ export async function reverseCompletedCheckoutAccounting(
   for (const allocation of appliedRentRefunds) {
     amountByAllocation.set(
       allocation.paymentAllocationId,
-      (amountByAllocation.get(allocation.paymentAllocationId) ?? new Prisma.Decimal(0)).plus(
-        allocation.reservedAmount,
-      ),
+      (
+        amountByAllocation.get(allocation.paymentAllocationId) ??
+        new Prisma.Decimal(0)
+      ).plus(allocation.reservedAmount),
     );
   }
   const allocationIds = [...amountByAllocation.keys()];
@@ -303,9 +307,7 @@ export async function reverseCompletedCheckoutAccounting(
       where: { id: paymentId },
       data: {
         status:
-          status.completedRefundTotal === '0.00'
-            ? 'CONFIRMED'
-            : status.status,
+          status.completedRefundTotal === '0.00' ? 'CONFIRMED' : status.status,
       },
     });
   }

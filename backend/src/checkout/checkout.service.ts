@@ -247,7 +247,9 @@ export class CheckoutService {
           select: { id: true },
         });
         if (laterContract)
-          throw new ConflictException('该房源已有后续有效合同占用，不能撤销退租');
+          throw new ConflictException(
+            '该房源已有后续有效合同占用，不能撤销退租',
+          );
 
         const initialHistory = await tx.roomStatusHistory.findFirst({
           where: {

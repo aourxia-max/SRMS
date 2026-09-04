@@ -429,7 +429,9 @@ describe('CheckoutService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn().mockResolvedValue(null),
       },
-      checkoutRentRefundAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       rentBill: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(null),
@@ -437,15 +439,21 @@ describe('CheckoutService', () => {
       billAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
       securityAuditLog: { create: auditCreate },
     };
-    tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
-      const statement = query.strings?.join('?') ?? '';
-      if (statement.includes('FROM rooms')) return [{ id: 7 }];
-      if (statement.includes('FROM contracts')) return [{ id: 3, roomId: 7 }];
-      return [{ id: 9 }];
-    });
+    tx.$queryRaw.mockImplementation(
+      (query: { strings?: readonly string[] }) => {
+        const statement = query.strings?.join('?') ?? '';
+        if (statement.includes('FROM rooms')) return [{ id: 7 }];
+        if (statement.includes('FROM contracts')) return [{ id: 3, roomId: 7 }];
+        return [{ id: 9 }];
+      },
+    );
     const service = new CheckoutService({
       db: {
-        $transaction: jest.fn((callback) => callback(tx)),
+        $transaction: jest.fn(
+          (
+            callback: (client: typeof tx) => Promise<unknown>,
+          ): Promise<unknown> => callback(tx),
+        ),
       },
     } as never);
 
@@ -515,14 +523,22 @@ describe('CheckoutService', () => {
         findFirst: jest.fn().mockResolvedValue({ id: 4 }),
       },
     };
-    tx.$queryRaw.mockImplementation((query: { strings?: readonly string[] }) => {
-      const statement = query.strings?.join('?') ?? '';
-      if (statement.includes('FROM rooms')) return [{ id: 7 }];
-      if (statement.includes('FROM contracts')) return [{ id: 3, roomId: 7 }];
-      return [{ id: 9 }];
-    });
+    tx.$queryRaw.mockImplementation(
+      (query: { strings?: readonly string[] }) => {
+        const statement = query.strings?.join('?') ?? '';
+        if (statement.includes('FROM rooms')) return [{ id: 7 }];
+        if (statement.includes('FROM contracts')) return [{ id: 3, roomId: 7 }];
+        return [{ id: 9 }];
+      },
+    );
     const service = new CheckoutService({
-      db: { $transaction: jest.fn((callback) => callback(tx)) },
+      db: {
+        $transaction: jest.fn(
+          (
+            callback: (client: typeof tx) => Promise<unknown>,
+          ): Promise<unknown> => callback(tx),
+        ),
+      },
     } as never);
 
     await expect(

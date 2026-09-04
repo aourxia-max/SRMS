@@ -26,7 +26,9 @@ describe('CheckoutController preview route', () => {
       ':id/revoke-completed',
     );
 
-    const checkout = { revokeCompleted: jest.fn().mockResolvedValue({ id: 9 }) };
+    const checkout = {
+      revokeCompleted: jest.fn().mockResolvedValue({ id: 9 }),
+    };
     const controller = new CheckoutController(checkout as never);
     await expect(
       (controller as any).revokeCompleted(9, {

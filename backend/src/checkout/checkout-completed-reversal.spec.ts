@@ -18,16 +18,25 @@ describe('reverseCompletedCheckoutAccounting', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       depositTransaction: {
-        findFirst: jest.fn().mockResolvedValue({ balanceAfter: new Prisma.Decimal(0) }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ balanceAfter: new Prisma.Decimal(0) }),
         findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
       },
       prepaymentTransaction: {
-        findFirst: jest.fn().mockResolvedValue({ balanceAfter: new Prisma.Decimal(0) }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ balanceAfter: new Prisma.Decimal(0) }),
         create: jest.fn(),
       },
-      checkoutRentRefundAllocation: { findMany: jest.fn().mockResolvedValue([]) },
-      rentBill: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      rentBill: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       billAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
@@ -118,11 +127,16 @@ describe('reverseCompletedCheckoutAccounting', () => {
         create: jest.fn().mockResolvedValue({ id: 62 }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      rentBill: { update: jest.fn(), findUnique: jest.fn().mockResolvedValue(null) },
+      rentBill: {
+        update: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
       paymentAllocation: {
-        findMany: jest.fn().mockResolvedValue([
-          { id: 21, reversedAmount: new Prisma.Decimal('30.00') },
-        ]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 21, reversedAmount: new Prisma.Decimal('30.00') },
+          ]),
         update: jest.fn(),
       },
       payment: {
@@ -164,7 +178,10 @@ describe('reverseCompletedCheckoutAccounting', () => {
     });
     expect(tx.checkoutRentRefundAllocation.updateMany).toHaveBeenCalledWith({
       where: { id: 71, status: 'APPLIED' },
-      data: { status: 'RELEASED', releasedAt: new Date('2026-09-04T10:00:00.000Z') },
+      data: {
+        status: 'RELEASED',
+        releasedAt: new Date('2026-09-04T10:00:00.000Z'),
+      },
     });
     expect(tx.payment.update).toHaveBeenCalledWith({
       where: { id: 11 },
@@ -181,7 +198,9 @@ describe('reverseCompletedCheckoutAccounting', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
       prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
-      checkoutRentRefundAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       billAdjustment: {
         findMany: jest.fn().mockResolvedValue([
           {
@@ -200,7 +219,10 @@ describe('reverseCompletedCheckoutAccounting', () => {
         create: jest.fn().mockResolvedValue({ id: 82 }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      rentBill: { update: jest.fn(), findUnique: jest.fn().mockResolvedValue(null) },
+      rentBill: {
+        update: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
     };
 
     await expect(
@@ -228,7 +250,9 @@ describe('reverseCompletedCheckoutAccounting', () => {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
       depositTransaction: {
-        findFirst: jest.fn().mockResolvedValue({ balanceAfter: new Prisma.Decimal('0.00') }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ balanceAfter: new Prisma.Decimal('0.00') }),
         findMany: jest.fn().mockResolvedValue([
           {
             id: 91,
@@ -246,9 +270,14 @@ describe('reverseCompletedCheckoutAccounting', () => {
         create: jest.fn(),
       },
       prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
-      checkoutRentRefundAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       billAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
-      rentBill: { update: jest.fn(), findUnique: jest.fn().mockResolvedValue(null) },
+      rentBill: {
+        update: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
     };
 
     await expect(
@@ -290,7 +319,9 @@ describe('reverseCompletedCheckoutAccounting', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
       prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
-      checkoutRentRefundAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       billAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
       rentBill: {
         findUnique: jest.fn().mockResolvedValue({
