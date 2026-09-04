@@ -10,7 +10,6 @@ import request, { type Response } from 'supertest';
 import { App } from 'supertest/types';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
-import { AppModule } from '../src/app.module';
 import { DepositRefundsService } from '../src/checkout/deposit-refunds.service';
 import { ContractVoidPreviewService } from '../src/contracts/contract-void-preview.service';
 import { ContractVoidReversalWriter } from '../src/contracts/contract-void-reversal-writer';
@@ -68,7 +67,8 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   const suitePrefix = `T9RR${marker}`;
 
   beforeAll(async () => {
-    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(async () => {
+      const { AppModule } = await import('../src/app.module');
       process.env.JWT_ACCESS_SECRET =
         'test-access-secret-at-least-32-characters';
       process.env.JWT_REFRESH_SECRET =

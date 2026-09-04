@@ -8,7 +8,6 @@ import { Prisma, UserRole } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from '../src/app.module';
 import type { AuthUser } from '../src/auth/auth-user.type';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -112,7 +111,8 @@ describe('contract void correction API and financial invariants (e2e)', () => {
   const prefix = `合同纠错测试-Task10-${marker}`;
 
   beforeAll(async () => {
-    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(async () => {
+      const { AppModule } = await import('../src/app.module');
       process.env.JWT_ACCESS_SECRET =
         'test-access-secret-at-least-32-characters';
       process.env.JWT_REFRESH_SECRET =

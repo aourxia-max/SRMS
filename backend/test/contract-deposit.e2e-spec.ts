@@ -11,7 +11,6 @@ import type { AuthUser } from '../src/auth/auth-user.type';
 import { ContractsService } from '../src/contracts/contracts.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { AppModule } from '../src/app.module';
 import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 describe('contract deposit auto-receipt (e2e)', () => {
@@ -34,7 +33,8 @@ describe('contract deposit auto-receipt (e2e)', () => {
   let createdOperatorId: number | undefined;
 
   beforeAll(async () => {
-    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(() => {
+    const moduleFixture = await runAfterDisposableE2eDatabaseGuard(async () => {
+      const { AppModule } = await import('../src/app.module');
       process.env.JWT_ACCESS_SECRET =
         'test-access-secret-at-least-32-characters';
       process.env.JWT_REFRESH_SECRET =

@@ -64,6 +64,68 @@ describe('isolated e2e database safety', () => {
     }
   });
 
+  it.each([
+    ['contract deposit', './contract-deposit.e2e-spec'],
+    [
+      'approval tasks and contract remark',
+      './approval-tasks-contract-remark.e2e-spec',
+    ],
+    ['checkout rent refund', './checkout-rent-refund.e2e-spec'],
+    ['contract void correction', './contract-void-correction.e2e-spec'],
+    ['property affairs', './property-affairs.e2e-spec'],
+  ])(
+    'defers AppModule evaluation until guarded setup for %s',
+    (_scenario, suitePath) => {
+      let appModuleEvaluated = false;
+      const enumValues = new Proxy<Record<string, string>>(
+        {},
+        { get: (_target, property) => String(property) },
+      );
+      const prismaNamespace = new Proxy<Record<string, unknown>>(
+        {
+          Decimal: class MockDecimal {},
+          PrismaClientKnownRequestError: class MockPrismaError extends Error {},
+        },
+        { get: (target, property) => target[String(property)] ?? jest.fn() },
+      );
+      jest.resetModules();
+      jest.doMock(
+        '@prisma/client',
+        () =>
+          new Proxy<Record<string, unknown>>(
+            {
+              __esModule: true,
+              Prisma: prismaNamespace,
+              PrismaClient: class MockPrismaClient {},
+              UserRole: enumValues,
+            },
+            {
+              get: (target, property) => target[String(property)] ?? enumValues,
+            },
+          ),
+      );
+      jest.doMock('../src/app.module', () => {
+        appModuleEvaluated = true;
+        return { AppModule: class MockAppModule {} };
+      });
+      const describeSpy = jest
+        .spyOn(global, 'describe')
+        .mockImplementation(() => undefined);
+
+      try {
+        jest.isolateModules(() => {
+          void jest.requireActual<Record<string, unknown>>(suitePath);
+        });
+        expect(appModuleEvaluated).toBe(false);
+      } finally {
+        describeSpy.mockRestore();
+        jest.dontMock('../src/app.module');
+        jest.dontMock('@prisma/client');
+        jest.resetModules();
+      }
+    },
+  );
+
   it('parses quoted local test MySQL settings without exposing passwords', () => {
     const fixtureDirectory = mkdtempSync(join(tmpdir(), 'srms-e2e-config-'));
     const envPath = join(fixtureDirectory, '.env');
