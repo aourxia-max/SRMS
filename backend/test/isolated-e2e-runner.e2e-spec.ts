@@ -43,13 +43,10 @@ describe('isolated E2E runner dependencies', () => {
     if (typeof buildChildEnvironment !== 'function') return;
 
     expect(
-      buildChildEnvironment(
-        databaseUrl,
-        {
-          PATH: 'test-path',
-          TENANT_FILE_MAX_SIZE_BYTES: '1',
-        },
-      ),
+      buildChildEnvironment(databaseUrl, {
+        PATH: 'test-path',
+        TENANT_FILE_MAX_SIZE_BYTES: '1',
+      }),
     ).toEqual({
       PATH: 'test-path',
       DATABASE_URL: databaseUrl,
