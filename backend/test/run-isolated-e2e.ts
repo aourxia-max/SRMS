@@ -18,6 +18,15 @@ import {
 
 const DISPOSABLE_DATABASE_NAME = /^srms_e2e_[a-z0-9_]+$/;
 const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
+const SERIAL_ARGUMENT_ERROR = 'E2E 必须串行运行，不能设置工作进程参数';
+const POSITIVE_SERIAL_ARGUMENTS = new Set([
+  '--runInBand',
+  '--run-in-band',
+  '-i',
+]);
+const SERIAL_ASSIGNMENT = /^(?:--runInBand|--run-in-band|-i)=(.*)$/;
+const NEGATIVE_SERIAL_ARGUMENT = /^--no-(?:runInBand|run-in-band)(?:=.*)?$/;
+const WORKER_ARGUMENT = /^(?:--maxWorkers|--max-workers)(?:=|$)|^-w/;
 
 const FINGERPRINT_TABLES = [
   { table: 'buildings', monetaryColumns: [] },
@@ -99,11 +108,7 @@ export function buildJestCommand(
   backendRoot: string,
   jestArgs: string[],
 ): ChildCommand {
-  if (
-    jestArgs.some((arg) => /^(?:--maxWorkers(?:=|$)|-w|--runInBand=)/.test(arg))
-  ) {
-    throw new Error('E2E 必须串行运行，不能设置工作进程参数');
-  }
+  const normalizedJestArgs = normalizeJestArgs(jestArgs);
   return {
     command: process.execPath,
     args: [
@@ -111,10 +116,46 @@ export function buildJestCommand(
       commandPath(backendRoot, 'node_modules/jest/bin/jest.js'),
       '--config',
       commandPath(backendRoot, 'test/jest-e2e.json'),
-      ...(jestArgs.includes('--runInBand') ? [] : ['--runInBand']),
-      ...jestArgs,
+      ...normalizedJestArgs,
+      '--runInBand',
     ],
   };
+}
+
+function normalizeJestArgs(jestArgs: string[]): string[] {
+  const normalizedArgs: string[] = [];
+
+  for (let index = 0; index < jestArgs.length; index += 1) {
+    const argument = jestArgs[index];
+    if (
+      argument === '--' ||
+      WORKER_ARGUMENT.test(argument) ||
+      NEGATIVE_SERIAL_ARGUMENT.test(argument)
+    ) {
+      throw new Error(SERIAL_ARGUMENT_ERROR);
+    }
+
+    const assignment = SERIAL_ASSIGNMENT.exec(argument);
+    if (assignment) {
+      if (assignment[1].toLowerCase() !== 'true') {
+        throw new Error(SERIAL_ARGUMENT_ERROR);
+      }
+      continue;
+    }
+
+    if (POSITIVE_SERIAL_ARGUMENTS.has(argument)) {
+      const separatedValue = jestArgs[index + 1]?.toLowerCase();
+      if (separatedValue === 'false') {
+        throw new Error(SERIAL_ARGUMENT_ERROR);
+      }
+      if (separatedValue === 'true') index += 1;
+      continue;
+    }
+
+    normalizedArgs.push(argument);
+  }
+
+  return normalizedArgs;
 }
 
 export function buildChildEnvironment(

@@ -10,6 +10,29 @@ import {
   seedE2eUsers,
 } from './run-isolated-e2e';
 
+const SERIAL_ARGUMENT_ERROR = 'E2E 必须串行运行，不能设置工作进程参数';
+
+function readActualJestGlobalConfig(jestArgs: string[]): {
+  runInBand: unknown;
+  maxWorkers: unknown;
+} {
+  const backendRoot = resolve(__dirname, '..');
+  const command = buildJestCommand(backendRoot, [...jestArgs, '--showConfig']);
+  const child = spawnSync(command.command, command.args, {
+    cwd: backendRoot,
+    encoding: 'utf8',
+    shell: false,
+    env: buildChildEnvironment(
+      'mysql://127.0.0.1:13306/srms_e2e_show_config_probe',
+    ),
+  });
+  expect(child.status).toBe(0);
+  const config = JSON.parse(child.stdout) as {
+    globalConfig: { runInBand: unknown; maxWorkers: unknown };
+  };
+  return config.globalConfig;
+}
+
 describe('isolated E2E runner dependencies', () => {
   it('includes only a validated disposable name in failure diagnostics', () => {
     expect(formatRunnerFailure('srms_e2e_diagnostic_probe')).toBe(
@@ -197,23 +220,86 @@ describe('isolated E2E runner dependencies', () => {
     );
   });
 
-  it('does not duplicate an existing serial flag', () => {
+  it.each([
+    ['--runInBand'],
+    ['--run-in-band'],
+    ['-i'],
+    ['--runInBand=true'],
+    ['--run-in-band=true'],
+    ['-i=true'],
+    ['--runInBand', 'true'],
+    ['--run-in-band', 'true'],
+    ['-i', 'true'],
+    ['--runInBand', '--run-in-band', '-i'],
+  ])(
+    'normalizes positive serial aliases to one final canonical flag %j',
+    (...args) => {
+      const commandArgs = buildJestCommand('C:/repo/backend', args).args;
+
+      expect(commandArgs.at(-1)).toBe('--runInBand');
+      expect(
+        commandArgs.filter((arg) =>
+          ['--runInBand', '--run-in-band', '-i'].includes(arg),
+        ),
+      ).toEqual(['--runInBand']);
+    },
+  );
+
+  it('preserves harmless user arguments before the final canonical flag', () => {
     expect(
-      buildJestCommand('C:/repo/backend', ['--runInBand']).args.filter(
-        (arg) => arg === '--runInBand',
-      ),
-    ).toHaveLength(1);
+      buildJestCommand('C:/repo/backend', [
+        '--passWithNoTests',
+        '--testNamePattern=probe',
+      ]).args.slice(-3),
+    ).toEqual(['--passWithNoTests', '--testNamePattern=probe', '--runInBand']);
+  });
+
+  it.each([[[]], [['--passWithNoTests']]])(
+    'resolves actual Jest showConfig to serial execution without loading E2E suites %j',
+    (args: string[]) => {
+      expect(readActualJestGlobalConfig(args)).toEqual(
+        expect.objectContaining({ runInBand: true, maxWorkers: 1 }),
+      );
+    },
+  );
+
+  it.each([
+    ['--no-runInBand'],
+    ['--no-run-in-band'],
+    ['--no-runInBand=true'],
+    ['--no-run-in-band=true'],
+    ['--no-runInBand=false'],
+    ['--no-run-in-band=false'],
+    ['--runInBand=false'],
+    ['--run-in-band=false'],
+    ['-i=false'],
+    ['--runInBand=FALSE'],
+    ['--run-in-band=0'],
+    ['-i=0'],
+    ['--runInBand='],
+    ['--run-in-band='],
+    ['-i='],
+    ['--runInBand', 'false'],
+    ['--run-in-band', 'false'],
+    ['-i', 'false'],
+    ['--'],
+  ])('rejects serial mode override arguments %j', (...args) => {
+    expect(() => buildJestCommand('C:/repo/backend', args)).toThrow(
+      SERIAL_ARGUMENT_ERROR,
+    );
   });
 
   it.each([
     ['--maxWorkers', '2'],
     ['--maxWorkers=2'],
+    ['--max-workers', '2'],
+    ['--max-workers=2'],
     ['-w', '2'],
     ['-w2'],
-    ['--runInBand=false'],
+    ['-w=2'],
   ])('rejects conflicting worker arguments %j', (...args) => {
     expect(() => buildJestCommand('C:/repo/backend', args)).toThrow(
-      'E2E 必须串行运行，不能设置工作进程参数',
+      SERIAL_ARGUMENT_ERROR,
     );
   });
 });
