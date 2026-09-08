@@ -63,7 +63,9 @@ describe('finance overview authorization (e2e)', () => {
     await app.init();
   });
 
-  afterAll(async () => app.close());
+  afterAll(async () => {
+    if (app) await app.close();
+  });
 
   it('rejects an unauthenticated request', async () => {
     await request(app.getHttpServer()).get('/api/finance/overview').expect(401);

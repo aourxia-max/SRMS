@@ -1,10 +1,98 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import {
+  buildChildEnvironment,
+  formatRunnerFailure,
   buildJestCommand,
   buildMigrationCommand,
   seedE2eUsers,
 } from './run-isolated-e2e';
 
 describe('isolated E2E runner dependencies', () => {
+  it('includes only a validated disposable name in failure diagnostics', () => {
+    expect(formatRunnerFailure('srms_e2e_diagnostic_probe')).toBe(
+      'E2E 执行失败，临时数据库：srms_e2e_diagnostic_probe',
+    );
+    expect(formatRunnerFailure('untrusted\nconfiguration')).toBe(
+      'E2E 执行失败，请检查本地测试配置与测试结果',
+    );
+  });
+  it('reports a fixed Chinese diagnostic for a public CLI failure without leaking environment values', () => {
+    const backendRoot = resolve(__dirname, '..');
+    const child = spawnSync(
+      process.execPath,
+      [
+        join(backendRoot, 'node_modules/ts-node/dist/bin.js'),
+        '--project',
+        join(backendRoot, 'tsconfig.json'),
+        join(backendRoot, 'test/run-isolated-e2e.ts'),
+        '--maxWorkers=2',
+      ],
+      { cwd: backendRoot, encoding: 'utf8', shell: false },
+    );
+    expect(child.status).toBe(1);
+    expect(child.stderr.trim()).toBe(
+      'E2E 执行失败，请检查本地测试配置与测试结果',
+    );
+    expect(child.stdout.trim()).toBe('');
+  });
+  it.each([true, false])(
+    'loads only the validated datasource with hostile dotenv controls (safe=%s)',
+    (safe) => {
+      const directory = mkdtempSync(join(tmpdir(), 'srms-e2e-dotenv-'));
+      const hostilePath = join(directory, '.env');
+      const backendRoot = resolve(__dirname, '..');
+      const disposableUrl = 'mysql://127.0.0.1:13306/srms_e2e_config_probe';
+      const unsafeUrl = 'mysql://127.0.0.1:13306/srms_docker';
+      writeFileSync(hostilePath, `DATABASE_URL=${unsafeUrl}\n`);
+      const command = buildMigrationCommand(backendRoot);
+      const configIndex = command.args.indexOf('--config');
+      const configPath =
+        configIndex < 0
+          ? join(backendRoot, 'prisma.config.ts')
+          : command.args[configIndex + 1];
+      try {
+        const child = spawnSync(
+          process.execPath,
+          [
+            '-e',
+            `
+        const { loadConfigFromFile } = require('@prisma/config');
+        loadConfigFromFile({ configFile: process.argv[1] }).then(result => {
+          if (result.error) {
+            const message = result.error.error?.message ?? '';
+            console.log(JSON.stringify({ rejected: message.includes('E2E 只能运行在本机 13306') }));
+          } else {
+            console.log(JSON.stringify({ unchanged: result.config.datasource.url === process.argv[2] }));
+          }
+        }).catch(() => console.log(JSON.stringify({ unexpected: true })));
+      `,
+            configPath,
+            disposableUrl,
+          ],
+          {
+            cwd: backendRoot,
+            encoding: 'utf8',
+            shell: false,
+            env: {
+              ...buildChildEnvironment(disposableUrl),
+              DATABASE_URL: safe ? disposableUrl : unsafeUrl,
+              DOTENV_CONFIG_OVERRIDE: 'true',
+              DOTENV_CONFIG_PATH: hostilePath,
+            },
+          },
+        );
+        expect(child.status).toBe(0);
+        expect(JSON.parse(child.stdout.trim()) as unknown).toEqual(
+          safe ? { unchanged: true } : { rejected: true },
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it('builds the Prisma migration command as an executable and argument array', () => {
     expect(buildMigrationCommand('C:/repo/backend')).toEqual({
       command: process.execPath,
@@ -12,6 +100,8 @@ describe('isolated E2E runner dependencies', () => {
         'C:/repo/backend/node_modules/prisma/build/index.js',
         'migrate',
         'deploy',
+        '--config',
+        'C:/repo/backend/test/prisma-e2e.config.ts',
       ],
     });
   });
@@ -82,5 +172,48 @@ describe('isolated E2E runner dependencies', () => {
       'ADMIN',
       'ACTIVE',
     ]);
+  });
+
+  it('removes inherited dotenv controls before child processes start', () => {
+    const environment = buildChildEnvironment(
+      'mysql://127.0.0.1:13306/srms_e2e_20260904_ab12',
+      {
+        DOTENV_CONFIG_OVERRIDE: 'true',
+        DOTENV_CONFIG_PATH: 'hostile.env',
+        DOTENV_CONFIG_DEBUG: 'true',
+        dotenv_config_encoding: 'latin1',
+        PATH: 'test-path',
+      },
+    );
+    expect(
+      Object.keys(environment).filter((key) => /^dotenv_config_/i.test(key)),
+    ).toEqual([]);
+    expect(environment.PATH).toBe('test-path');
+  });
+
+  it('forces serial execution when the public command receives no arguments', () => {
+    expect(buildJestCommand('C:/repo/backend', []).args).toContain(
+      '--runInBand',
+    );
+  });
+
+  it('does not duplicate an existing serial flag', () => {
+    expect(
+      buildJestCommand('C:/repo/backend', ['--runInBand']).args.filter(
+        (arg) => arg === '--runInBand',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ['--maxWorkers', '2'],
+    ['--maxWorkers=2'],
+    ['-w', '2'],
+    ['-w2'],
+    ['--runInBand=false'],
+  ])('rejects conflicting worker arguments %j', (...args) => {
+    expect(() => buildJestCommand('C:/repo/backend', args)).toThrow(
+      'E2E 必须串行运行，不能设置工作进程参数',
+    );
   });
 });

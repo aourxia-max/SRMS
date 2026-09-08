@@ -66,6 +66,9 @@ describe('isolated e2e database safety', () => {
 
   it.each([
     ['contract deposit', './contract-deposit.e2e-spec'],
+    ['application', './app.e2e-spec'],
+    ['finance', './finance.e2e-spec'],
+    ['payments', './payments.e2e-spec'],
     [
       'approval tasks and contract remark',
       './approval-tasks-contract-remark.e2e-spec',
@@ -79,6 +82,7 @@ describe('isolated e2e database safety', () => {
       const previousDatabaseUrl = process.env.DATABASE_URL;
       let appModuleEvaluated = false;
       let suiteBeforeAll: jest.ProvidesHookCallback | undefined;
+      let suiteTeardown: jest.ProvidesHookCallback | undefined;
       const enumValues = new Proxy<Record<string, string>>(
         {},
         { get: (_target, property) => String(property) },
@@ -121,7 +125,19 @@ describe('isolated e2e database safety', () => {
         });
       const afterAllSpy = jest
         .spyOn(global, 'afterAll')
-        .mockImplementation(() => undefined);
+        .mockImplementation((hook) => {
+          suiteTeardown = hook;
+        });
+      const beforeEachSpy = jest
+        .spyOn(global, 'beforeEach')
+        .mockImplementation((hook) => {
+          suiteBeforeAll = hook;
+        });
+      const afterEachSpy = jest
+        .spyOn(global, 'afterEach')
+        .mockImplementation((hook) => {
+          suiteTeardown = hook;
+        });
       const itSpy = jest
         .spyOn(global, 'it')
         .mockImplementation(() => undefined);
@@ -140,7 +156,14 @@ describe('isolated e2e database safety', () => {
           'E2E 只能运行在本机 13306 端口的一次性 srms_e2e 数据库',
         );
         expect(appModuleEvaluated).toBe(false);
+        if (suiteTeardown) {
+          await expect(
+            (suiteTeardown as () => Promise<unknown>)(),
+          ).resolves.toBeUndefined();
+        }
       } finally {
+        beforeEachSpy.mockRestore();
+        afterEachSpy.mockRestore();
         itSpy.mockRestore();
         afterAllSpy.mockRestore();
         beforeAllSpy.mockRestore();

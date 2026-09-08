@@ -9,6 +9,7 @@ export type IsolatedE2eOptions = {
   databaseUrl: string;
   databaseName: string;
   jestArgs: string[];
+  signal?: AbortSignal;
 };
 
 export type IsolatedE2eDependencies = {
@@ -35,16 +36,24 @@ export async function runIsolatedE2e(
     console.log(`E2E 临时数据库：${options.databaseName}`);
 
     assertDisposableOptions(options);
+    options.signal?.throwIfAborted();
     await dependencies.createDatabase(options.databaseName);
+    options.signal?.throwIfAborted();
     await dependencies.migrate(options.databaseUrl);
+    options.signal?.throwIfAborted();
     await dependencies.seedUsers(options.databaseUrl);
+    options.signal?.throwIfAborted();
     jestExitCode = await dependencies.runJest(
       options.databaseUrl,
       options.jestArgs,
     );
+    options.signal?.throwIfAborted();
   } catch (error) {
+    const failure: unknown = options.signal?.aborted
+      ? options.signal.reason
+      : error;
     lifecycleFailure =
-      error instanceof Error ? error : new Error(LIFECYCLE_ERROR);
+      failure instanceof Error ? failure : new Error(LIFECYCLE_ERROR);
   } finally {
     assertDisposableOptions(options);
     await cleanupDatabase(options, dependencies);

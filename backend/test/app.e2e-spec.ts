@@ -2,12 +2,15 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
+import { runAfterDisposableE2eDatabaseGuard } from './support/isolated-e2e-database';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeEach(async () => {
+    const { AppModule } = await runAfterDisposableE2eDatabaseGuard(
+      () => import('../src/app.module'),
+    );
     process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-32-characters';
     process.env.JWT_REFRESH_SECRET =
       'test-refresh-secret-at-least-32-characters';
@@ -88,6 +91,6 @@ describe('AppController (e2e)', () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    if (app) await app.close();
   });
 });

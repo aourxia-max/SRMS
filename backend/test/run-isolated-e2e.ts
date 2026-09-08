@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import type { EventEmitter } from 'node:events';
 import { resolve } from 'node:path';
 import { argon2id, hash } from 'argon2';
 import { createPool, type Pool } from 'mariadb';
@@ -9,7 +10,11 @@ import {
   readLocalTestMySqlConfig,
   type LocalTestMySqlConfig,
 } from './support/isolated-e2e-database';
-import { runIsolatedE2e } from './support/isolated-e2e-lifecycle';
+import {
+  runIsolatedE2e,
+  type IsolatedE2eDependencies,
+  type IsolatedE2eOptions,
+} from './support/isolated-e2e-lifecycle';
 
 const DISPOSABLE_DATABASE_NAME = /^srms_e2e_[a-z0-9_]+$/;
 const SQL_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
@@ -84,6 +89,8 @@ export function buildMigrationCommand(backendRoot: string): ChildCommand {
       commandPath(backendRoot, 'node_modules/prisma/build/index.js'),
       'migrate',
       'deploy',
+      '--config',
+      commandPath(backendRoot, 'test/prisma-e2e.config.ts'),
     ],
   };
 }
@@ -92,6 +99,11 @@ export function buildJestCommand(
   backendRoot: string,
   jestArgs: string[],
 ): ChildCommand {
+  if (
+    jestArgs.some((arg) => /^(?:--maxWorkers(?:=|$)|-w|--runInBand=)/.test(arg))
+  ) {
+    throw new Error('E2E 必须串行运行，不能设置工作进程参数');
+  }
   return {
     command: process.execPath,
     args: [
@@ -99,6 +111,7 @@ export function buildJestCommand(
       commandPath(backendRoot, 'node_modules/jest/bin/jest.js'),
       '--config',
       commandPath(backendRoot, 'test/jest-e2e.json'),
+      ...(jestArgs.includes('--runInBand') ? [] : ['--runInBand']),
       ...jestArgs,
     ],
   };
@@ -110,7 +123,11 @@ export function buildChildEnvironment(
 ): NodeJS.ProcessEnv {
   assertDisposableE2eDatabaseUrl(databaseUrl);
   return {
-    ...environment,
+    ...Object.fromEntries(
+      Object.entries(environment).filter(
+        ([key]) => !/^dotenv_config_/i.test(key),
+      ),
+    ),
     DATABASE_URL: databaseUrl,
     TENANT_FILE_MAX_SIZE_BYTES: '10485760',
   };
@@ -142,6 +159,7 @@ export async function seedE2eUsers(
 
 async function main(): Promise<number> {
   const backendRoot = resolve(__dirname, '..');
+  buildJestCommand(backendRoot, process.argv.slice(2));
   const envPath = resolve(backendRoot, '..', 'deploy', '.env.test');
   const config = readLocalTestMySqlConfig(envPath);
   const now = new Date();
@@ -158,19 +176,22 @@ async function main(): Promise<number> {
   const rootPool = createRootPool(config);
 
   try {
-    return await runIsolatedE2e(
+    return await runWithTerminationSignals(
       { databaseUrl, databaseName, jestArgs: process.argv.slice(2) },
-      {
+      (signal) => ({
         fingerprintShared: () =>
           fingerprintShared(rootPool, config.sourceDatabase),
         createDatabase: (name) => createDatabase(rootPool, name),
-        migrate: (url) => migrateDatabase(backendRoot, url),
+        migrate: (url) => migrateDatabase(backendRoot, url, signal),
         seedUsers: (url) => seedUsers(url),
-        runJest: (url, args) => runJest(backendRoot, url, args),
+        runJest: (url, args) => runJest(backendRoot, url, args, signal),
         dropDatabase: (name) => dropDatabase(rootPool, name),
         databaseExists: (name) => databaseExists(rootPool, name),
-      },
+      }),
     );
+  } catch {
+    console.error(formatRunnerFailure(databaseName));
+    return 1;
   } finally {
     await rootPool.end();
   }
@@ -274,6 +295,7 @@ async function databaseExists(
 async function migrateDatabase(
   backendRoot: string,
   databaseUrl: string,
+  signal: AbortSignal,
 ): Promise<void> {
   assertDisposableE2eDatabaseUrl(databaseUrl);
   const exitCode = await runChild(
@@ -281,6 +303,7 @@ async function migrateDatabase(
     backendRoot,
     databaseUrl,
     'ignore',
+    signal,
   );
   if (exitCode !== 0) {
     throw new Error(`Prisma migration failed with exit code ${exitCode}`);
@@ -314,6 +337,7 @@ function runJest(
   backendRoot: string,
   databaseUrl: string,
   jestArgs: string[],
+  signal: AbortSignal,
 ): Promise<number> {
   assertDisposableE2eDatabaseUrl(databaseUrl);
   return runChild(
@@ -321,29 +345,86 @@ function runJest(
     backendRoot,
     databaseUrl,
     'inherit',
+    signal,
   );
 }
 
-function runChild(
+export function runChild(
   childCommand: ChildCommand,
   cwd: string,
   databaseUrl: string,
   stdio: 'ignore' | 'inherit',
+  signal?: AbortSignal,
 ): Promise<number> {
+  signal?.throwIfAborted();
   return new Promise((resolveExitCode, reject) => {
     const child = spawn(childCommand.command, childCommand.args, {
       cwd,
       env: buildChildEnvironment(databaseUrl),
       shell: false,
       stdio,
+      windowsHide: true,
     });
-    child.once('error', reject);
-    child.once('close', (code) => resolveExitCode(code ?? 1));
+    let childError: Error | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    const cancel = () => {
+      child.kill('SIGTERM');
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 1000);
+      killTimer.unref();
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    child.once('error', (error) => {
+      childError = error;
+    });
+    child.once('close', (code) => {
+      signal?.removeEventListener('abort', cancel);
+      if (killTimer) clearTimeout(killTimer);
+      if (childError) reject(childError);
+      else resolveExitCode(code ?? 1);
+    });
   });
+}
+
+export async function runWithTerminationSignals(
+  options: IsolatedE2eOptions,
+  dependencies: (signal: AbortSignal) => IsolatedE2eDependencies,
+  signalSource: Pick<EventEmitter, 'on' | 'removeListener'> = process,
+): Promise<number> {
+  const controller = new AbortController();
+  let signalExitCode: number | undefined;
+  const cancel = (code: number) => {
+    if (signalExitCode !== undefined) return;
+    signalExitCode = code;
+    controller.abort(new Error('E2E 已收到终止信号'));
+  };
+  const onInterrupt = () => cancel(130);
+  const onTerminate = () => cancel(143);
+  signalSource.on('SIGINT', onInterrupt);
+  signalSource.on('SIGTERM', onTerminate);
+  try {
+    const exitCode = await runIsolatedE2e(
+      { ...options, signal: controller.signal },
+      dependencies(controller.signal),
+    );
+    return signalExitCode ?? exitCode;
+  } catch (error) {
+    if (signalExitCode !== undefined && error === controller.signal.reason)
+      return signalExitCode;
+    throw error;
+  } finally {
+    signalSource.removeListener('SIGINT', onInterrupt);
+    signalSource.removeListener('SIGTERM', onTerminate);
+  }
 }
 
 function commandPath(backendRoot: string, relativePath: string): string {
   return `${backendRoot.replace(/[\\/]+$/, '').replace(/\\/g, '/')}/${relativePath}`;
+}
+
+export function formatRunnerFailure(databaseName?: string): string {
+  return databaseName && DISPOSABLE_DATABASE_NAME.test(databaseName)
+    ? `E2E 执行失败，临时数据库：${databaseName}`
+    : 'E2E 执行失败，请检查本地测试配置与测试结果';
 }
 
 function quoteDisposableDatabaseIdentifier(databaseName: string): string {
@@ -373,6 +454,7 @@ if (require.main === module) {
       process.exitCode = exitCode;
     })
     .catch(() => {
+      console.error(formatRunnerFailure());
       process.exitCode = 1;
     });
 }

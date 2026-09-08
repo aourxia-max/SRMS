@@ -44,7 +44,9 @@ describe('payments API authorization (e2e)', () => {
     await app.init();
   });
 
-  afterAll(async () => app.close());
+  afterAll(async () => {
+    if (app) await app.close();
+  });
 
   it('protects payment proof upload and download', async () => {
     await request(app.getHttpServer())
