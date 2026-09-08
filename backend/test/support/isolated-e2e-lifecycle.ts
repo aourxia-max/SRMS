@@ -32,6 +32,7 @@ export async function runIsolatedE2e(
   try {
     assertDisposableOptions(options);
     fingerprintBefore = await dependencies.fingerprintShared();
+    console.log(`E2E 临时数据库：${options.databaseName}`);
 
     assertDisposableOptions(options);
     await dependencies.createDatabase(options.databaseName);
@@ -47,9 +48,13 @@ export async function runIsolatedE2e(
   } finally {
     assertDisposableOptions(options);
     await cleanupDatabase(options, dependencies);
+    console.log('E2E 临时数据库已删除');
   }
 
   const fingerprintAfter = await dependencies.fingerprintShared();
+  if (fingerprintBefore === fingerprintAfter) {
+    console.log('共享测试库指纹未变化');
+  }
 
   if (lifecycleFailure) {
     throw lifecycleFailure;

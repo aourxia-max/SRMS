@@ -95,11 +95,24 @@ export function buildJestCommand(
   return {
     command: process.execPath,
     args: [
+      '--experimental-vm-modules',
       commandPath(backendRoot, 'node_modules/jest/bin/jest.js'),
       '--config',
       commandPath(backendRoot, 'test/jest-e2e.json'),
       ...jestArgs,
     ],
+  };
+}
+
+export function buildChildEnvironment(
+  databaseUrl: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  assertDisposableE2eDatabaseUrl(databaseUrl);
+  return {
+    ...environment,
+    DATABASE_URL: databaseUrl,
+    TENANT_FILE_MAX_SIZE_BYTES: '10485760',
   };
 }
 
@@ -320,7 +333,7 @@ function runChild(
   return new Promise((resolveExitCode, reject) => {
     const child = spawn(childCommand.command, childCommand.args, {
       cwd,
-      env: { ...process.env, DATABASE_URL: databaseUrl },
+      env: buildChildEnvironment(databaseUrl),
       shell: false,
       stdio,
     });

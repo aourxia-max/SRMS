@@ -20,11 +20,40 @@ describe('isolated E2E runner dependencies', () => {
     expect(buildJestCommand('C:/repo/backend', ['--runInBand'])).toEqual({
       command: process.execPath,
       args: [
+        '--experimental-vm-modules',
         'C:/repo/backend/node_modules/jest/bin/jest.js',
         '--config',
         'C:/repo/backend/test/jest-e2e.json',
         '--runInBand',
       ],
+    });
+  });
+
+  it('builds a deterministic isolated child environment for file-writing suites', () => {
+    const runnerModule =
+      jest.requireActual<Record<string, unknown>>('./run-isolated-e2e');
+    const buildChildEnvironment = runnerModule.buildChildEnvironment;
+    const databaseUrl = [
+      'mysql:',
+      '//127.0.0.1:13306',
+      '/srms_e2e_20260904_ab12',
+    ].join('');
+
+    expect(buildChildEnvironment).toEqual(expect.any(Function));
+    if (typeof buildChildEnvironment !== 'function') return;
+
+    expect(
+      buildChildEnvironment(
+        databaseUrl,
+        {
+          PATH: 'test-path',
+          TENANT_FILE_MAX_SIZE_BYTES: '1',
+        },
+      ),
+    ).toEqual({
+      PATH: 'test-path',
+      DATABASE_URL: databaseUrl,
+      TENANT_FILE_MAX_SIZE_BYTES: '10485760',
     });
   });
 

@@ -30,6 +30,26 @@ describe('isolated e2e lifecycle', () => {
     ]);
   });
 
+  it('reports the disposable name, cleanup, and unchanged shared fingerprint without credentials', async () => {
+    const { dependencies } = createDependencies();
+    const consoleLog = jest.spyOn(console, 'log').mockImplementation();
+
+    try {
+      await expect(runIsolatedE2e(options, dependencies)).resolves.toBe(0);
+
+      expect(consoleLog.mock.calls).toEqual([
+        ['E2E 临时数据库：srms_e2e_20260904_ab12'],
+        ['E2E 临时数据库已删除'],
+        ['共享测试库指纹未变化'],
+      ]);
+      expect(consoleLog.mock.calls.flat().join('\n')).not.toContain(
+        databaseUrl,
+      );
+    } finally {
+      consoleLog.mockRestore();
+    }
+  });
+
   it('cleans up the disposable database when migration fails', async () => {
     const migrationFailure = new Error('migration failed');
     const { dependencies, operations } = createDependencies({
@@ -151,7 +171,7 @@ describe('isolated e2e lifecycle', () => {
       'fingerprint-after',
     ]);
     expect(consoleError).not.toHaveBeenCalled();
-    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleLog.mock.calls.flat().join('\n')).not.toContain(databaseUrl);
   });
 });
 
