@@ -3,6 +3,7 @@ import { assertDisposableE2eDatabaseUrl } from './isolated-e2e-database';
 const DISPOSABLE_DATABASE_ERROR =
   'E2E 只能运行在本机 13306 端口的一次性 srms_e2e 数据库';
 const CLEANUP_ERROR = 'E2E 临时数据库清理失败';
+const LIFECYCLE_ERROR = 'E2E 生命周期执行失败';
 
 export type IsolatedE2eOptions = {
   databaseUrl: string;
@@ -26,7 +27,7 @@ export async function runIsolatedE2e(
 ): Promise<number> {
   let fingerprintBefore = '';
   let jestExitCode = 1;
-  let lifecycleFailure: unknown;
+  let lifecycleFailure: Error | undefined;
 
   try {
     assertDisposableOptions(options);
@@ -41,7 +42,8 @@ export async function runIsolatedE2e(
       options.jestArgs,
     );
   } catch (error) {
-    lifecycleFailure = error;
+    lifecycleFailure =
+      error instanceof Error ? error : new Error(LIFECYCLE_ERROR);
   } finally {
     assertDisposableOptions(options);
     await cleanupDatabase(options, dependencies);

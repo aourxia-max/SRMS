@@ -33,14 +33,14 @@ describe('isolated e2e lifecycle', () => {
   it('cleans up the disposable database when migration fails', async () => {
     const migrationFailure = new Error('migration failed');
     const { dependencies, operations } = createDependencies({
-      migrate: async () => {
+      migrate: () => {
         operations.push('migrate');
-        throw migrationFailure;
+        return Promise.reject(migrationFailure);
       },
     });
 
-    await expect(runIsolatedE2e(options, dependencies)).rejects.toThrow(
-      'migration failed',
+    await expect(runIsolatedE2e(options, dependencies)).rejects.toBe(
+      migrationFailure,
     );
 
     expect(operations).toEqual([
@@ -51,6 +51,18 @@ describe('isolated e2e lifecycle', () => {
       'assert-absent',
       'fingerprint-after',
     ]);
+  });
+
+  it('normalizes a non-Error lifecycle failure without exposing its value', async () => {
+    const nonErrorFailure: unknown = 'mysql://user:secret@database.example';
+    const rejectWithUnknown = Promise.reject.bind(Promise);
+    const { dependencies } = createDependencies({
+      migrate: () => rejectWithUnknown(nonErrorFailure),
+    });
+
+    await expect(runIsolatedE2e(options, dependencies)).rejects.toEqual(
+      new Error('E2E 生命周期执行失败'),
+    );
   });
 
   it('preserves a failing Jest exit code after successful cleanup', async () => {
@@ -83,9 +95,9 @@ describe('isolated e2e lifecycle', () => {
 
   it('reports the fixed cleanup error when dropping the disposable database fails', async () => {
     const { dependencies, operations } = createDependencies({
-      dropDatabase: async () => {
+      dropDatabase: () => {
         operations.push('drop');
-        throw new Error('drop failed');
+        return Promise.reject(new Error('drop failed'));
       },
     });
 
@@ -106,7 +118,7 @@ describe('isolated e2e lifecycle', () => {
 
   it('reports the fixed cleanup error when the disposable database remains', async () => {
     const { dependencies } = createDependencies({
-      databaseExists: async () => true,
+      databaseExists: () => Promise.resolve(true),
     });
 
     await expect(runIsolatedE2e(options, dependencies)).rejects.toThrow(
@@ -159,37 +171,41 @@ function createDependencies(
   return {
     operations,
     dependencies: {
-      fingerprintShared: async () => {
+      fingerprintShared: () => {
         operations.push(
           fingerprintIndex++ === 0 ? 'fingerprint-before' : 'fingerprint-after',
         );
-        return fingerprints[fingerprintIndex - 1];
+        return Promise.resolve(fingerprints[fingerprintIndex - 1]);
       },
-      createDatabase: async () => {
+      createDatabase: () => {
         operations.push('create');
+        return Promise.resolve();
       },
       migrate:
         overrides.migrate ??
-        (async () => {
+        (() => {
           operations.push('migrate');
+          return Promise.resolve();
         }),
-      seedUsers: async () => {
+      seedUsers: () => {
         operations.push('seed');
+        return Promise.resolve();
       },
-      runJest: async () => {
+      runJest: () => {
         operations.push('jest');
-        return overrides.jestExitCode ?? 0;
+        return Promise.resolve(overrides.jestExitCode ?? 0);
       },
       dropDatabase:
         overrides.dropDatabase ??
-        (async () => {
+        (() => {
           operations.push('drop');
+          return Promise.resolve();
         }),
       databaseExists:
         overrides.databaseExists ??
-        (async () => {
+        (() => {
           operations.push('assert-absent');
-          return false;
+          return Promise.resolve(false);
         }),
     },
   };
