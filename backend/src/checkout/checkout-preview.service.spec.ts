@@ -58,6 +58,7 @@ describe('CheckoutService.preview', () => {
         ],
       } as never),
     ).resolves.toEqual({
+      previewFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
       depositOffsetAmount: '1600.00',
       otherDeductionAmount: '2000.00',
       depositRefundableAmount: '6400.00',

@@ -7,6 +7,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as futureBillNormalization from './checkout-future-bill-normalization';
 import * as approvedCancellation from './checkout-approved-cancellation';
 
+async function submitWithPreview(
+  service: CheckoutService,
+  ...[id, dto, user]: Parameters<CheckoutService['submit']>
+) {
+  const preview = await service.preview(id, dto);
+  return service.submit(
+    id,
+    { ...dto, previewFingerprint: preview.previewFingerprint },
+    user,
+  );
+}
+
 function transactional<T extends object>(tx: T) {
   const client = {
     $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
@@ -341,6 +353,8 @@ describe('CheckoutService actual-date accounting', () => {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 3,
             status: 'PENDING_CHECKOUT',
+            startDate: new Date('2026-01-01'),
+            checkoutSettlements: [{ originContractStatus: 'ACTIVE' }],
             bills: [bill],
           }),
         },
@@ -1474,6 +1488,9 @@ describe('CheckoutService', () => {
       .fn()
       .mockResolvedValue({ id: 1, status: 'PENDING', items: [] });
     const tx = {
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentAllocation: { findMany: jest.fn().mockResolvedValue([]) },
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -1496,6 +1513,7 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        ...tx,
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
@@ -1503,7 +1521,8 @@ describe('CheckoutService', () => {
     } as never);
 
     await expect(
-      service.submit(
+      submitWithPreview(
+        service,
         1,
         {
           actualCheckoutDate: '2026-08-20',
@@ -2099,6 +2118,8 @@ describe('CheckoutService', () => {
         contract: {
           findUniqueOrThrow: jest.fn().mockResolvedValue({
             id: 3,
+            status: 'ACTIVE',
+            startDate: new Date('2026-01-01'),
             bills: [
               {
                 id: 21,
@@ -2160,6 +2181,8 @@ describe('CheckoutService', () => {
       contract: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 8,
+          status: 'ACTIVE',
+          startDate: new Date('2026-01-01'),
           bills: [
             {
               periodStart: new Date('2026-09-01'),
@@ -2227,6 +2250,7 @@ describe('CheckoutService', () => {
                 },
                 {
                   periodStart: new Date('2026-09-01'),
+                  periodEnd: new Date('2026-09-30'),
                   outstandingAmount: '300.00',
                   status: 'UNPAID',
                   billCategory: 'RENT',
@@ -2241,8 +2265,8 @@ describe('CheckoutService', () => {
         });
 
         await expect(snapshot(service)).resolves.toMatchObject({
-          rentOutstanding: '120.00',
-          futureBillCount: 1,
+          rentOutstanding: '420.00',
+          futureBillCount: 0,
         });
       },
     );
@@ -2253,6 +2277,8 @@ describe('CheckoutService', () => {
       contract: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 8,
+          status: 'ACTIVE',
+          startDate: new Date('2026-01-01'),
           bills: [
             {
               periodStart: new Date('2026-09-02'),
@@ -2547,6 +2573,8 @@ describe('CheckoutService', () => {
       ],
     });
     const tx = {
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
       $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -2594,6 +2622,7 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        ...tx,
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
@@ -2601,7 +2630,8 @@ describe('CheckoutService', () => {
     } as never);
 
     await expect(
-      service.submit(
+      submitWithPreview(
+        service,
         1,
         {
           actualCheckoutDate: '2026-08-20',
@@ -3138,6 +3168,8 @@ describe('CheckoutService', () => {
       ],
     });
     const tx = {
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
       $queryRaw: jest.fn().mockResolvedValue([]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -3192,13 +3224,15 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        ...tx,
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
       },
     } as never);
 
-    await service.submit(
+    await submitWithPreview(
+      service,
       9,
       {
         actualCheckoutDate: '2026-08-15',
@@ -3263,7 +3297,7 @@ describe('CheckoutService', () => {
       },
     ]);
     expect(tx.$queryRaw.mock.invocationCallOrder[3]).toBeLessThan(
-      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
+      tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[1],
     );
     expect(
       tx.checkoutSettlement.findUniqueOrThrow.mock.invocationCallOrder[0],
@@ -3274,7 +3308,7 @@ describe('CheckoutService', () => {
       tx.checkoutSettlementItem.deleteMany.mock.invocationCallOrder[0],
     ).toBeLessThan(settlementUpdate.mock.invocationCallOrder[0]);
     expect(tx.$queryRaw.mock.invocationCallOrder[9]).toBeLessThan(
-      tx.paymentAllocation.findMany.mock.invocationCallOrder[0],
+      tx.paymentAllocation.findMany.mock.invocationCallOrder[1],
     );
     expect(
       tx.paymentAllocation.findMany.mock.invocationCallOrder[0],
@@ -3763,6 +3797,9 @@ describe('CheckoutService', () => {
     });
     const release = jest.fn().mockResolvedValue({ count: 1 });
     const tx = {
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      paymentAllocation: { findMany: jest.fn().mockResolvedValue([]) },
       $queryRaw: jest.fn().mockResolvedValue([]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -3788,13 +3825,15 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        ...tx,
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
       },
     } as never);
 
-    const result = await service.submit(
+    const result = await submitWithPreview(
+      service,
       9,
       {
         actualCheckoutDate: '2026-08-15',
@@ -3856,6 +3895,8 @@ describe('CheckoutService', () => {
     });
     const reserveCreateMany = jest.fn().mockResolvedValue({ count: 1 });
     const tx = {
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
       $queryRaw: jest.fn().mockResolvedValue([]),
       checkoutSettlement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -3906,13 +3947,15 @@ describe('CheckoutService', () => {
     };
     const service = new CheckoutService({
       db: {
+        ...tx,
         $transaction: jest.fn(
           (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
         ),
       },
     } as never);
 
-    const result = await service.submit(
+    const result = await submitWithPreview(
+      service,
       9,
       {
         actualCheckoutDate: '2026-08-15',

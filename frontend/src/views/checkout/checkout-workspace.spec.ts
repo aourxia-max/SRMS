@@ -15,6 +15,12 @@ import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
 import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
 const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
 const approvalRefresh = vi.fn().mockResolvedValue(undefined);
+const reviewedPreview = {
+  previewFingerprint: 'server-preview', depositRefundableAmount: '0.00',
+  prepaymentRefundableAmount: '0.00', rentRefundableAmount: '0.00',
+  maxRentRefundAmount: '0.00', totalRefundAmount: '0.00', finalReceivable: '0.00',
+  rentRefundAllocations: [],
+};
 function checkoutTestPinia() {
   const pinia = createPinia();
   pinia.state.value.session = {
@@ -1159,8 +1165,11 @@ describe("CheckoutTopNav", () => {
       targetRoomStatus: "EMPTY",
       items: [],
     };
-    panel.vm.$emit("submit", 8, payload);
-    panel.vm.$emit("submit", 8, payload);
+    vi.mocked(checkoutApi.preview).mockResolvedValueOnce(reviewedPreview);
+    panel.vm.$emit("preview", 8, payload);
+    await flushPromises();
+    panel.vm.$emit("submit", 8, { ...payload, previewFingerprint: reviewedPreview.previewFingerprint });
+    panel.vm.$emit("submit", 8, { ...payload, previewFingerprint: reviewedPreview.previewFingerprint });
     await flushPromises();
     expect(api.submit).toHaveBeenCalledTimes(1);
     expect(panel.props("submitting")).toBe(true);
@@ -1380,7 +1389,10 @@ describe("CheckoutTopNav", () => {
       targetRoomStatus: "EMPTY",
       items: [],
     };
-    panel.vm.$emit("submit", 8, payload);
+    vi.mocked(checkoutApi.preview).mockResolvedValueOnce(reviewedPreview);
+    panel.vm.$emit("preview", 8, payload);
+    await flushPromises();
+    panel.vm.$emit("submit", 8, { ...payload, previewFingerprint: reviewedPreview.previewFingerprint });
     await flushPromises();
     panel.vm.$emit("cancel", 8);
     await flushPromises();
@@ -2275,6 +2287,7 @@ describe("CheckoutTopNav", () => {
   it("submits a clean zero-item settlement so a zero-refund checkout can continue", async () => {
     const wrapper = mount(CheckoutSettlementPanel, {
       props: {
+        preview: reviewedPreview,
         settlements: [
           {
             id: 10,
@@ -2323,6 +2336,7 @@ describe("CheckoutTopNav", () => {
   it("omits a blank optional remark when submitting a settlement", async () => {
     const wrapper = mount(CheckoutSettlementPanel, {
       props: {
+        preview: reviewedPreview,
         settlements: [
           {
             id: 10,
@@ -2372,6 +2386,9 @@ describe("CheckoutTopNav", () => {
     });
     await flushPromises();
     await wrapper.get("button:nth-child(2)").trigger("click");
+    vi.mocked(checkoutApi.preview).mockResolvedValueOnce(reviewedPreview);
+    await wrapper.get('[data-test="settlement-submit"]').trigger("click");
+    await flushPromises();
     await wrapper.get('[data-test="settlement-submit"]').trigger("click");
     await flushPromises();
 

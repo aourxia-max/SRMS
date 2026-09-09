@@ -201,13 +201,23 @@ watch(
       250,
     );
   },
-  { deep: true },
+  { deep: true, immediate: true },
 );
-onBeforeUnmount(() => previewTimer && clearTimeout(previewTimer));
+onBeforeUnmount(() => {
+  if (previewTimer) clearTimeout(previewTimer);
+  emit("clearPreview");
+});
 
 function submit() {
   errors.value = [];
   if (!selected.value) return;
+  if (!props.preview?.previewFingerprint || props.previewLoading) {
+    errors.value.push("实际退房日期或账单已变化，请重新预估结算金额");
+    if (previewReady() && !props.previewLoading) {
+      if (previewTimer) clearTimeout(previewTimer);
+      emit("preview", selected.value.id, payload());
+    }
+  }
   if (props.arrearsLoading || props.arrearsUnavailable)
     errors.value.push("请等待当前退房日期的欠租账单加载成功后再提交");
   if (!form.actualCheckoutDate || !form.handoverDate || !form.inspectionAt)
@@ -244,7 +254,10 @@ function submit() {
       );
   });
   if (errors.value.length) return;
-  emit("submit", selected.value.id, payload());
+  emit("submit", selected.value.id, {
+    ...payload(),
+    previewFingerprint: props.preview!.previewFingerprint,
+  });
 }
 function statusText(status: CheckoutSettlement["status"]) {
   return {

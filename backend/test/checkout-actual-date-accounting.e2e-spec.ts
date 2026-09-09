@@ -75,6 +75,7 @@ type Snapshot = {
   arrearsBills: { id: number; outstandingAmount: string }[];
 };
 type Preview = {
+  previewFingerprint: string;
   finalReceivable: string;
   rentRefundableAmount: string;
   maxRentRefundAmount: string;
@@ -514,15 +515,18 @@ describe('actual checkout date accounting across real HTTP and MySQL (e2e)', () 
     const fixture = await createFixture('edit-earlier');
     const settlement = await initiate(fixture, '2026-09-02');
     const oldPayload = payload('2026-09-02', [arrears(fixture)]);
-    expect(
-      await post<Preview>(
-        `/checkout-settlements/${settlement.id}/preview`,
-        oldPayload,
-      ),
-    ).toMatchObject({ finalReceivable: '1600.00' });
+    const oldPreview = await post<Preview>(
+      `/checkout-settlements/${settlement.id}/preview`,
+      oldPayload,
+    );
+    expect(oldPreview).toMatchObject({ finalReceivable: '1600.00' });
     const stale = await request(app.getHttpServer())
       .post(`/api/checkout-settlements/${settlement.id}/submit`)
-      .send({ ...oldPayload, actualCheckoutDate: '2026-09-01' })
+      .send({
+        ...oldPayload,
+        actualCheckoutDate: '2026-09-01',
+        previewFingerprint: oldPreview.previewFingerprint,
+      })
       .expect(409);
     expect((stale.body as { message: string }).message).toBe(conflictMessage);
     expect(
@@ -538,17 +542,16 @@ describe('actual checkout date accounting across real HTTP and MySQL (e2e)', () 
         where: { checkoutSettlementId: settlement.id },
       }),
     ).toBe(0);
+    const freshPreview = await post<Preview>(
+      `/checkout-settlements/${settlement.id}/preview`,
+      payload('2026-09-01'),
+    );
+    expect(freshPreview).toMatchObject({ finalReceivable: '0.00' });
     expect(
-      await post<Preview>(
-        `/checkout-settlements/${settlement.id}/preview`,
-        payload('2026-09-01'),
-      ),
-    ).toMatchObject({ finalReceivable: '0.00' });
-    expect(
-      await post(
-        `/checkout-settlements/${settlement.id}/submit`,
-        payload('2026-09-01'),
-      ),
+      await post(`/checkout-settlements/${settlement.id}/submit`, {
+        ...payload('2026-09-01'),
+        previewFingerprint: freshPreview.previewFingerprint,
+      }),
     ).toMatchObject({
       status: 'PENDING',
       actualCheckoutDate: '2026-09-01T00:00:00.000Z',
@@ -559,15 +562,17 @@ describe('actual checkout date accounting across real HTTP and MySQL (e2e)', () 
   it('requires newly performed arrears when moving the actual date later', async () => {
     const fixture = await createFixture('edit-later');
     const settlement = await initiate(fixture, '2026-09-01');
-    expect(
-      await post<Preview>(
-        `/checkout-settlements/${settlement.id}/preview`,
-        payload('2026-09-01'),
-      ),
-    ).toMatchObject({ finalReceivable: '0.00' });
+    const oldPreview = await post<Preview>(
+      `/checkout-settlements/${settlement.id}/preview`,
+      payload('2026-09-01'),
+    );
+    expect(oldPreview).toMatchObject({ finalReceivable: '0.00' });
     const stale = await request(app.getHttpServer())
       .post(`/api/checkout-settlements/${settlement.id}/submit`)
-      .send(payload('2026-09-02'))
+      .send({
+        ...payload('2026-09-02'),
+        previewFingerprint: oldPreview.previewFingerprint,
+      })
       .expect(409);
     expect((stale.body as { message: string }).message).toBe(conflictMessage);
     expect(await snapshot(fixture, '2026-09-02')).toMatchObject({
@@ -575,14 +580,16 @@ describe('actual checkout date accounting across real HTTP and MySQL (e2e)', () 
       arrearsBills: [expect.objectContaining({ id: fixture.billId })],
     });
     const freshPayload = payload('2026-09-02', [arrears(fixture)]);
+    const freshPreview = await post<Preview>(
+      `/checkout-settlements/${settlement.id}/preview`,
+      freshPayload,
+    );
+    expect(freshPreview).toMatchObject({ finalReceivable: '1600.00' });
     expect(
-      await post<Preview>(
-        `/checkout-settlements/${settlement.id}/preview`,
-        freshPayload,
-      ),
-    ).toMatchObject({ finalReceivable: '1600.00' });
-    expect(
-      await post(`/checkout-settlements/${settlement.id}/submit`, freshPayload),
+      await post(`/checkout-settlements/${settlement.id}/submit`, {
+        ...freshPayload,
+        previewFingerprint: freshPreview.previewFingerprint,
+      }),
     ).toMatchObject({
       status: 'PENDING',
       actualCheckoutDate: '2026-09-02T00:00:00.000Z',

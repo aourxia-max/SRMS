@@ -80,8 +80,9 @@ describe('CheckoutController preview route', () => {
       const errors = await validate(dto);
 
       expect(
-        errors.some((error) => error.property === 'actualCheckoutDate'),
-      ).toBe(true);
+        errors.find((error) => error.property === 'actualCheckoutDate')
+          ?.constraints?.isDateString,
+      ).toBe('实际退房日期格式不正确');
     },
   );
 
@@ -98,8 +99,7 @@ describe('CheckoutController preview route', () => {
       expect(errors[0]).toMatchObject({
         property: 'actualCheckoutDate',
         constraints: {
-          isDateString:
-            'actualCheckoutDate must be a valid ISO 8601 date string',
+          isDateString: '实际退房日期格式不正确',
         },
       });
     },

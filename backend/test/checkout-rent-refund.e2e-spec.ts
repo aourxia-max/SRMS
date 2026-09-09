@@ -354,11 +354,30 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     });
   }
 
-  function submitSettlement(fixture: Fixture, amount: string) {
+  async function reviewedSettlementPayload<
+    T extends ReturnType<typeof settlementPayload>,
+  >(fixture: Fixture, payload: T) {
+    const preview = await request(app.getHttpServer())
+      .post(`/api/checkout-settlements/${fixture.settlementId}/preview`)
+      .send(payload)
+      .expect(201);
+    const { previewFingerprint } = (
+      preview.body as { data: { previewFingerprint: string } }
+    ).data;
+    expect(previewFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    return { ...payload, previewFingerprint };
+  }
+
+  async function submitSettlement(fixture: Fixture, amount: string) {
     currentUser = asRole(UserRole.ADMIN);
+    const payload = await reviewedSettlementPayload(
+      fixture,
+      settlementPayload(amount),
+    );
     return request(app.getHttpServer())
       .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
-      .send(settlementPayload(amount));
+      .send(payload)
+      .expect(201);
   }
 
   function approveSettlement(fixture: Fixture) {
@@ -369,7 +388,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   }
 
   async function prepareApprovedSettlement(fixture: Fixture, amount: string) {
-    await submitSettlement(fixture, amount).expect(201);
+    await submitSettlement(fixture, amount);
     await approveSettlement(fixture).expect(201);
   }
 
@@ -481,7 +500,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
       totalRefundAmount: '2000.00',
     });
 
-    await submitSettlement(fixture, '1000.00').expect(201);
+    await submitSettlement(fixture, '1000.00');
     currentUser = operator;
     await request(app.getHttpServer())
       .post(`/api/checkout-settlements/${fixture.settlementId}/reject`)
@@ -490,7 +509,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/api/checkout-settlements/${fixture.settlementId}/return-to-draft`)
       .expect(201);
-    await submitSettlement(fixture, '1000.00').expect(201);
+    await submitSettlement(fixture, '1000.00');
 
     const reservationHistory =
       await prisma.db.checkoutRentRefundAllocation.findMany({
@@ -982,6 +1001,10 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   it('同一结算的两个并发提交只有一个成功且只创建一份有效预留', async () => {
     const fixture = await createFixture('double-submit');
     currentUser = asRole(UserRole.ADMIN);
+    const payload = await reviewedSettlementPayload(
+      fixture,
+      settlementPayload('1000.00'),
+    );
     const barrier = installTransactionStartBarrier();
     let responses: Response[];
     try {
@@ -989,10 +1012,10 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         Promise.all([
           request(app.getHttpServer())
             .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
-            .send(settlementPayload('1000.00')),
+            .send(payload),
           request(app.getHttpServer())
             .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
-            .send(settlementPayload('1000.00')),
+            .send(payload),
         ]),
       );
     } finally {
@@ -1066,6 +1089,10 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
   it('普通退款与退租提交竞争同一分配时只允许一个流程占满余额', async () => {
     const fixture = await createFixture('ordinary-race');
     currentUser = asRole(UserRole.ADMIN);
+    const payload = await reviewedSettlementPayload(
+      fixture,
+      settlementPayload('3000.00'),
+    );
     const barrier = installTransactionStartBarrier();
     let responses: Response[];
     try {
@@ -1073,7 +1100,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         Promise.all([
           request(app.getHttpServer())
             .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
-            .send(settlementPayload('3000.00')),
+            .send(payload),
           request(app.getHttpServer())
             .post('/api/payment-refunds')
             .send({
@@ -1120,7 +1147,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
 
   it('预留金额变化后拒绝确认且结算保持待确认', async () => {
     const fixture = await createFixture('reservation-change');
-    await submitSettlement(fixture, '1000.00').expect(201);
+    await submitSettlement(fixture, '1000.00');
     const reservation =
       await prisma.db.checkoutRentRefundAllocation.findFirstOrThrow({
         where: {
@@ -1146,7 +1173,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
 
   it('取消结算会释放有效预留并原子恢复合同和房态', async () => {
     const fixture = await createFixture('cancel-release');
-    await submitSettlement(fixture, '1000.00').expect(201);
+    await submitSettlement(fixture, '1000.00');
     currentUser = asRole(UserRole.ADMIN);
     await request(app.getHttpServer())
       .post(`/api/checkout-settlements/${fixture.settlementId}/cancel`)
@@ -1172,7 +1199,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
 
   it('合同纠错写入器会在真实事务中取消待处理结算并释放预留', async () => {
     const fixture = await createFixture('void-release');
-    await submitSettlement(fixture, '1000.00').expect(201);
+    await submitSettlement(fixture, '1000.00');
     const preview = await new ContractVoidPreviewService(prisma).preview(
       fixture.contractId,
       operator,
@@ -1322,18 +1349,20 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     currentUser = asRole(UserRole.ADMIN);
     await request(app.getHttpServer())
       .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
-      .send({
-        ...checkoutPayload,
-        items: [
-          ...checkoutPayload.items,
-          {
-            itemType: 'RENT_ARREARS',
-            amount: '1000.00',
-            rentBillId: historicalBillId,
-            description: 'Task 9 普通退款形成的已履行账单欠租',
-          },
-        ],
-      })
+      .send(
+        await reviewedSettlementPayload(fixture, {
+          ...checkoutPayload,
+          items: [
+            ...checkoutPayload.items,
+            {
+              itemType: 'RENT_ARREARS',
+              amount: '1000.00',
+              rentBillId: historicalBillId,
+              description: 'Task 9 普通退款形成的已履行账单欠租',
+            },
+          ],
+        }),
+      )
       .expect(201);
     currentUser = operator;
     await approveSettlement(fixture).expect(201);

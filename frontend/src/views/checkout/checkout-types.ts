@@ -60,6 +60,7 @@ export type CheckoutArrearsBill = {
 };
 
 export type CheckoutSettlementPayload = {
+  previewFingerprint?: string;
   actualCheckoutDate: string;
   handoverDate: string;
   inspectionAt: string;
@@ -132,6 +133,7 @@ export type CheckoutRentRefundAllocationDetail = {
 };
 
 export type CheckoutSettlementPreview = {
+  previewFingerprint: string;
   depositRefundableAmount: string;
   prepaymentRefundableAmount: string;
   rentRefundableAmount: string;

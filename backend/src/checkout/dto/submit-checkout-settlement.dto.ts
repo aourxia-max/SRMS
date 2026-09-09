@@ -39,6 +39,8 @@ export class CheckoutSettlementItemDto {
   @IsOptional() @IsBoolean() confirmedByTenant = false;
 }
 export class SubmitCheckoutSettlementDto {
+  // Preview accepts no version; submit enforces it as an accounting conflict.
+  @IsOptional() @IsString() previewFingerprint?: string;
   @IsDateString({ strict: true }, { message: '实际退房日期格式不正确' })
   actualCheckoutDate!: string;
   @IsDateString() handoverDate!: string;

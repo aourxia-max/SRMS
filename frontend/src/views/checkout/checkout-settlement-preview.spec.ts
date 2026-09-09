@@ -20,6 +20,7 @@ const settlement = {
 };
 
 const rentRefundPreview = {
+  previewFingerprint: 'server-preview',
   depositRefundableAmount: "7000.00",
   prepaymentRefundableAmount: "500.00",
   rentRefundableAmount: "3000.00",
@@ -185,6 +186,7 @@ describe("退租结算实时预估", () => {
       props: {
         settlements: [settlement],
         preview: {
+          previewFingerprint: 'server-preview',
           depositRefundableAmount: "7000.00",
           prepaymentRefundableAmount: "500.00",
           rentRefundableAmount: "0.00",

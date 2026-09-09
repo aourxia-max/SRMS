@@ -48,6 +48,7 @@ const arrearsLoading = ref(false);
 const arrearsError = ref("");
 let arrearsRequestVersion = 0;
 let previewRequestVersion = 0;
+let settlementPreviewContext = "";
 let financeSnapshotRequestVersion = 0;
 let refundRequestVersion = 0;
 let refundProofPreviewVersion = 0;
@@ -419,6 +420,17 @@ async function submitSettlement(
   payload: CheckoutSettlementPayload,
 ) {
   if (settlementMutationPending.value) return;
+  if (
+    previewLoading.value ||
+    !settlementPreview.value?.previewFingerprint ||
+    payload.previewFingerprint !== settlementPreview.value.previewFingerprint ||
+    settlementPreviewContext !== previewContextKey(id, payload)
+  ) {
+    clearSettlementPreview();
+    actionError.value = "实际退房日期或账单已变化，请重新预估结算金额";
+    return;
+  }
+  clearSettlementPreview();
   settlementMutationPending.value = true;
   actionError.value = "";
   try {
@@ -433,6 +445,7 @@ async function submitSettlement(
 }
 function clearSettlementPreview() {
   previewRequestVersion += 1;
+  settlementPreviewContext = "";
   settlementPreview.value = undefined;
   previewError.value = "";
   previewLoading.value = false;
@@ -466,13 +479,17 @@ async function previewSettlement(
   id: number,
   payload: CheckoutSettlementPayload,
 ) {
+  clearSettlementPreview();
   const requestVersion = ++previewRequestVersion;
+  const context = previewContextKey(id, payload);
   previewLoading.value = true;
   previewError.value = "";
   try {
     const preview = await checkoutApi.preview(id, payload);
-    if (requestVersion === previewRequestVersion)
+    if (requestVersion === previewRequestVersion) {
       settlementPreview.value = preview;
+      settlementPreviewContext = context;
+    }
   } catch (error) {
     if (requestVersion === previewRequestVersion) {
       settlementPreview.value = undefined;
@@ -482,7 +499,15 @@ async function previewSettlement(
     if (requestVersion === previewRequestVersion) previewLoading.value = false;
   }
 }
+function previewContextKey(id: number, payload: CheckoutSettlementPayload) {
+  // Request identity only; financial amounts and versions come from the server.
+  return JSON.stringify([
+    id, payload.actualCheckoutDate, payload.handoverDate, payload.inspectionAt,
+    payload.targetRoomStatus, payload.remark ?? "", payload.items,
+  ]);
+}
 async function returnToDraft(id: number) {
+  clearSettlementPreview();
   actionError.value = "";
   try {
     await checkoutApi.returnToDraft(id);
@@ -493,6 +518,7 @@ async function returnToDraft(id: number) {
   }
 }
 async function cancelSettlement(id: number) {
+  clearSettlementPreview();
   if (settlementMutationPending.value) return;
   settlementMutationPending.value = true;
   actionError.value = "";
