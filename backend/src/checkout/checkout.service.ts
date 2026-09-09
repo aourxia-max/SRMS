@@ -25,6 +25,8 @@ import {
 } from './dto/submit-checkout-settlement.dto';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { assertContractNotVoided } from '../contracts/contract-operability';
+import { contractBusinessDay } from '../contracts/contract-business-day';
+import { isRentBillPerformed } from './checkout-accounting-cutoff';
 
 @Injectable()
 export class CheckoutService {
@@ -331,7 +333,14 @@ export class CheckoutService {
       { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
     );
   }
-  async getFinanceSnapshot(contractId: number, at = new Date()) {
+  async getFinanceSnapshot(
+    contractId: number,
+    actualCheckoutDate?: string,
+    now = new Date(),
+  ) {
+    const cutoff = actualCheckoutDate
+      ? contractBusinessDay(new Date(actualCheckoutDate))
+      : contractBusinessDay(now);
     const contract = await this.prisma.db.contract.findUniqueOrThrow({
       where: { id: contractId },
       include: { bills: true },
@@ -351,7 +360,9 @@ export class CheckoutService {
         bill.billCategory === 'RENT' &&
         !['VOIDED', 'REFUNDED'].includes(bill.status),
     );
-    const currentBills = validBills.filter((bill) => bill.periodStart <= at);
+    const currentBills = validBills.filter((bill) =>
+      isRentBillPerformed(bill.periodStart, cutoff),
+    );
     return {
       depositBalance: this.money(deposit?.balanceAfter ?? 0),
       rentOutstanding: this.money(
@@ -361,8 +372,9 @@ export class CheckoutService {
         ),
       ),
       prepaymentBalance: this.money(prepayment?.balanceAfter ?? 0),
-      futureBillCount: validBills.filter((bill) => bill.periodStart > at)
-        .length,
+      futureBillCount: validBills.filter(
+        (bill) => !isRentBillPerformed(bill.periodStart, cutoff),
+      ).length,
     };
   }
   async getDetail(id: number) {
@@ -613,6 +625,12 @@ export class CheckoutService {
   async initiate(contractId: number, dto: InitiateCheckoutDto, user: AuthUser) {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
+    const actual = dto.actualCheckoutDate
+      ? contractBusinessDay(new Date(dto.actualCheckoutDate))
+      : null;
+    const today = contractBusinessDay();
+    if (actual && actual > today)
+      throw new BadRequestException('实际退房日期不能晚于当前日期');
     return this.prisma.db.$transaction(
       async (tx) => {
         await lockRoomAndTargetContract(tx, contractId);
@@ -626,6 +644,12 @@ export class CheckoutService {
         assertContractNotVoided(contract.status, '发起退租');
         if (!['PENDING_START', 'ACTIVE'].includes(contract.status))
           throw new BadRequestException('只有待开始或履行中的合同可以发起退租');
+        if (
+          actual &&
+          contract.status !== 'PENDING_START' &&
+          actual < contract.startDate
+        )
+          throw new BadRequestException('实际退房日期不能早于合同开始日期');
         const existing = await tx.checkoutSettlement.findFirst({
           where: {
             contractId,
@@ -640,6 +664,7 @@ export class CheckoutService {
             checkoutType: dto.checkoutType,
             originContractStatus: contract.status,
             plannedCheckoutDate: new Date(dto.plannedCheckoutDate),
+            ...(actual ? { actualCheckoutDate: actual } : {}),
             handoverDate: new Date(dto.handoverDate),
             inspectionAt: new Date(dto.inspectionAt),
             checkoutReason: dto.checkoutReason,

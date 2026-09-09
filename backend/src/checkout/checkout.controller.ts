@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../authorization/roles.decorator';
 import { RolesGuard } from '../authorization/roles.guard';
 import { CheckoutService } from './checkout.service';
+import { CheckoutFinanceSnapshotQueryDto } from './dto/checkout-finance-snapshot-query.dto';
 import { CompletedCheckoutContractsQueryDto } from './dto/completed-checkout-contracts-query.dto';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { SubmitCheckoutSettlementDto } from './dto/submit-checkout-settlement.dto';
@@ -28,11 +29,17 @@ export class CheckoutController {
     return { code: 200, message: 'success', data: await this.checkout.list() };
   }
   @Get('contract/:contractId/finance-snapshot')
-  async financeSnapshot(@Param('contractId', ParseIntPipe) contractId: number) {
+  async financeSnapshot(
+    @Param('contractId', ParseIntPipe) contractId: number,
+    @Query() query: CheckoutFinanceSnapshotQueryDto,
+  ) {
     return {
       code: 200,
       message: 'success',
-      data: await this.checkout.getFinanceSnapshot(contractId),
+      data: await this.checkout.getFinanceSnapshot(
+        contractId,
+        query.actualCheckoutDate,
+      ),
     };
   }
 

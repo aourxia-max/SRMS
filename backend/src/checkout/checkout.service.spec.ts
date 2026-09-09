@@ -1,6 +1,9 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { Test } from '@nestjs/testing';
 import { CheckoutService } from './checkout.service';
+import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
+import { PrismaService } from '../prisma/prisma.service';
 import * as futureBillNormalization from './checkout-future-bill-normalization';
 import * as approvedCancellation from './checkout-approved-cancellation';
 
@@ -81,6 +84,20 @@ function expectRoomBeforeTargetContractLock(queryRaw: jest.Mock) {
 
   expect(roomLock?.callOrder).toBeLessThan(contractLock?.callOrder ?? 0);
 }
+
+async function checkoutServiceWithDb(db: object) {
+  const moduleRef = await Test.createTestingModule({
+    providers: [
+      CheckoutService,
+      {
+        provide: PrismaService,
+        useValue: { db },
+      },
+    ],
+  }).compile();
+  return moduleRef.get(CheckoutService);
+}
+
 function mockRoomContractLocks(
   tx: {
     $queryRaw: jest.Mock;
@@ -110,6 +127,52 @@ function mockRoomContractLocks(
     }
     return [{ id: 1 }];
   });
+}
+
+async function checkoutInitiationHarness(
+  status: 'ACTIVE' | 'PENDING_START',
+  startDate = new Date('2026-08-01'),
+) {
+  const settlementCreate = jest.fn().mockResolvedValue({ id: 19 });
+  const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+    contract: {
+      findUnique: jest.fn().mockResolvedValue({ id: 8, roomId: 7 }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 8,
+        status,
+        startDate,
+        roomId: 7,
+        room: { id: 7, roomStatus: 'RENTED' },
+      }),
+      update: jest.fn(),
+    },
+    checkoutSettlement: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: settlementCreate,
+    },
+    room: { update: jest.fn() },
+    roomStatusHistory: { create: jest.fn() },
+  };
+  mockRoomContractLocks(tx, 8, 7);
+  const service = await checkoutServiceWithDb({
+    $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) =>
+      callback(tx),
+    ),
+  });
+  return { service, settlementCreate };
+}
+
+function initiationDto(actualCheckoutDate?: string): InitiateCheckoutDto {
+  return {
+    checkoutType: '提前退租',
+    plannedCheckoutDate: '2026-09-01',
+    ...(actualCheckoutDate ? { actualCheckoutDate } : {}),
+    handoverDate: '2026-09-01',
+    inspectionAt: '2026-09-01',
+    checkoutReason: '租户已退房，补录申请',
+    targetRoomStatus: 'EMPTY',
+  };
 }
 
 describe('CheckoutService', () => {
@@ -170,6 +233,9 @@ describe('CheckoutService', () => {
         originContractStatus: 'PENDING_START',
       }),
     });
+    expect(settlementCreate.mock.calls[0][0].data).not.toHaveProperty(
+      'actualCheckoutDate',
+    );
     expect(contractUpdate).toHaveBeenCalledWith({
       where: { id: 3 },
       data: { status: 'PENDING_CHECKOUT' },
@@ -196,6 +262,64 @@ describe('CheckoutService', () => {
     expectRoomBeforeTargetContractLock(tx.$queryRaw);
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
+  });
+
+  describe('actual checkout date at initiation', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-09-09T04:00:00.000Z'));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('stores an optional historical actual checkout date at initiation', async () => {
+      const { service, settlementCreate } =
+        await checkoutInitiationHarness('ACTIVE');
+
+      await service.initiate(8, initiationDto('2026-09-01'), user);
+
+      expect(settlementCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actualCheckoutDate: new Date('2026-09-01'),
+        }),
+      });
+    });
+
+    it('rejects an actual checkout date after the business day', async () => {
+      const { service, settlementCreate } =
+        await checkoutInitiationHarness('ACTIVE');
+
+      await expect(
+        service.initiate(8, initiationDto('2026-09-10'), user),
+      ).rejects.toThrow('实际退房日期不能晚于当前日期');
+      expect(settlementCreate).not.toHaveBeenCalled();
+    });
+
+    it('rejects an active-contract actual checkout date before contract start', async () => {
+      const { service, settlementCreate } =
+        await checkoutInitiationHarness('ACTIVE');
+
+      await expect(
+        service.initiate(8, initiationDto('2026-07-31'), user),
+      ).rejects.toThrow('实际退房日期不能早于合同开始日期');
+      expect(settlementCreate).not.toHaveBeenCalled();
+    });
+
+    it('allows a pending-start actual checkout date before contract start', async () => {
+      const { service, settlementCreate } =
+        await checkoutInitiationHarness('PENDING_START');
+
+      await expect(
+        service.initiate(8, initiationDto('2026-07-31'), user),
+      ).resolves.toEqual({ id: 19 });
+      expect(settlementCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actualCheckoutDate: new Date('2026-07-31'),
+        }),
+      });
     });
   });
 
@@ -1525,12 +1649,37 @@ describe('CheckoutService', () => {
       },
     } as never);
 
-    await expect(
-      service.getFinanceSnapshot(3, new Date('2026-08-15')),
-    ).resolves.toEqual({
+    await expect(service.getFinanceSnapshot(3, '2026-08-15')).resolves.toEqual({
       depositBalance: '800.00',
       rentOutstanding: '120.00',
       prepaymentBalance: '500.00',
+      futureBillCount: 1,
+    });
+  });
+
+  it('excludes a bill starting on the actual checkout date from arrears', async () => {
+    const service = await checkoutServiceWithDb({
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 8,
+          bills: [
+            {
+              periodStart: new Date('2026-09-01'),
+              outstandingAmount: '300.00',
+              status: 'UNPAID',
+              billCategory: 'RENT',
+            },
+          ],
+        }),
+      },
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+    });
+
+    await expect(
+      service.getFinanceSnapshot(8, '2026-09-01'),
+    ).resolves.toMatchObject({
+      rentOutstanding: '0.00',
       futureBillCount: 1,
     });
   });

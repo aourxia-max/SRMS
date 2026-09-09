@@ -1,9 +1,13 @@
 import 'reflect-metadata';
 import { PATH_METADATA } from '@nestjs/common/constants';
+import { Test } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { CheckoutFinanceSnapshotQueryDto } from './dto/checkout-finance-snapshot-query.dto';
+import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { SubmitCheckoutSettlementDto } from './dto/submit-checkout-settlement.dto';
 import { CheckoutController } from './checkout.controller';
+import { CheckoutService } from './checkout.service';
 
 const settlementDto = (item: Record<string, unknown>) =>
   plainToInstance(SubmitCheckoutSettlementDto, {
@@ -15,6 +19,68 @@ const settlementDto = (item: Record<string, unknown>) =>
   });
 
 describe('CheckoutController preview route', () => {
+  it('forwards the optional actual checkout date to the finance snapshot', async () => {
+    const getFinanceSnapshot = jest.fn().mockResolvedValue({
+      rentOutstanding: '0.00',
+      futureBillCount: 1,
+    });
+    const moduleRef = await Test.createTestingModule({
+      controllers: [CheckoutController],
+      providers: [
+        {
+          provide: CheckoutService,
+          useValue: { getFinanceSnapshot },
+        },
+      ],
+    }).compile();
+    const controller = moduleRef.get(CheckoutController);
+
+    await expect(
+      controller.financeSnapshot(8, {
+        actualCheckoutDate: '2026-09-01',
+      }),
+    ).resolves.toEqual({
+      code: 200,
+      message: 'success',
+      data: { rentOutstanding: '0.00', futureBillCount: 1 },
+    });
+    expect(getFinanceSnapshot).toHaveBeenCalledWith(8, '2026-09-01');
+  });
+
+  it('rejects an invalid actual checkout date at initiation through DTO validation', async () => {
+    const dto = plainToInstance(InitiateCheckoutDto, {
+      checkoutType: '提前退租',
+      plannedCheckoutDate: '2026-09-01',
+      actualCheckoutDate: 'not-a-date',
+      handoverDate: '2026-09-01',
+      inspectionAt: '2026-09-01',
+      checkoutReason: '租户已退房，补录申请',
+      targetRoomStatus: 'EMPTY',
+    });
+
+    const errors = await validate(dto);
+
+    expect(
+      errors.some((error) => error.property === 'actualCheckoutDate'),
+    ).toBe(true);
+  });
+
+  it('rejects an invalid finance snapshot date through query DTO validation', async () => {
+    const query = plainToInstance(CheckoutFinanceSnapshotQueryDto, {
+      actualCheckoutDate: 'not-a-date',
+    });
+
+    const errors = await validate(query);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      property: 'actualCheckoutDate',
+      constraints: {
+        isDateString: 'actualCheckoutDate must be a valid ISO 8601 date string',
+      },
+    });
+  });
+
   it('exposes a super-admin completed-checkout revoke endpoint', async () => {
     const revokeCompleted = (
       CheckoutController.prototype as unknown as {

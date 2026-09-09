@@ -1,7 +1,16 @@
 import { RoomStatus } from '@prisma/client';
-import { IsDateString, IsEnum, IsString, Length } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Length,
+} from 'class-validator';
 
 export class InitiateCheckoutDto {
+  @IsOptional()
+  @IsDateString()
+  actualCheckoutDate?: string;
   @IsString() @Length(1, 50) checkoutType!: string;
   @IsDateString() plannedCheckoutDate!: string;
   @IsDateString() handoverDate!: string;
