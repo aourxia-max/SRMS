@@ -356,6 +356,8 @@ onBeforeUnmount(() => {
 async function loadFinanceSnapshot(contractId: number) {
   selectedInitiateContractId.value = contractId;
   const requestVersion = ++financeSnapshotRequestVersion;
+  financeSnapshot.value = undefined;
+  actionError.value = "";
   try {
     const snapshot = initiateActualCheckoutDate.value
       ? await checkoutApi.financeSnapshot(
@@ -375,6 +377,12 @@ function refreshFinanceSnapshot(actualCheckoutDate: string) {
   if (selectedInitiateContractId.value)
     void loadFinanceSnapshot(selectedInitiateContractId.value);
 }
+function resetInitiateContext() {
+  financeSnapshotRequestVersion += 1;
+  selectedInitiateContractId.value = null;
+  initiateActualCheckoutDate.value = "";
+  financeSnapshot.value = undefined;
+}
 async function initiate(contractId: number, payload: CheckoutInitiatePayload) {
   actionError.value = "";
   try {
@@ -389,6 +397,7 @@ async function initiate(contractId: number, payload: CheckoutInitiatePayload) {
         : initiatedSettlement,
       ...settlements.value.filter((item) => item.id !== initiatedSettlement.id),
     ];
+    resetInitiateContext();
     activeTab.value = "settlement";
   } catch (error) {
     actionError.value = message(error, "发起退租失败，请稍后重试");
@@ -635,6 +644,7 @@ onMounted(initialize);
       :loading="loadingContracts"
       :snapshot="financeSnapshot"
       :selected-contract-id="selectedInitiateContractId"
+      :actual-checkout-date="initiateActualCheckoutDate"
       @contract-change="loadFinanceSnapshot"
       @actual-date-change="refreshFinanceSnapshot"
       @submit="initiate"

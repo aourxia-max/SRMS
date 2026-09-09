@@ -11,6 +11,7 @@ const props = defineProps<{
   loading?: boolean;
   snapshot?: CheckoutFinanceSnapshot;
   selectedContractId?: number | null;
+  actualCheckoutDate?: string;
 }>();
 const emit = defineEmits<{
   submit: [contractId: number, payload: CheckoutInitiatePayload];
@@ -18,7 +19,14 @@ const emit = defineEmits<{
   actualDateChange: [actualCheckoutDate: string];
 }>();
 
-const today = new Date().toISOString().slice(0, 10);
+function localCalendarDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+const today = localCalendarDate();
 const form = reactive<CheckoutInitiatePayload & {
   contractId: string;
   actualCheckoutDate: string;
@@ -26,7 +34,7 @@ const form = reactive<CheckoutInitiatePayload & {
   contractId: "",
   checkoutType: "提前退租",
   plannedCheckoutDate: today,
-  actualCheckoutDate: "",
+  actualCheckoutDate: props.actualCheckoutDate ?? "",
   handoverDate: today,
   inspectionAt: today,
   checkoutReason: "",
@@ -67,6 +75,12 @@ watch(
     emit("contractChange", contractId);
   },
   { immediate: true },
+);
+watch(
+  () => props.actualCheckoutDate,
+  (actualCheckoutDate) => {
+    form.actualCheckoutDate = actualCheckoutDate ?? "";
+  },
 );
 
 function contractChange() {

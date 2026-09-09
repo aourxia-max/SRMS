@@ -455,6 +455,182 @@ describe("CheckoutTopNav", () => {
     expect(wrapper.text()).not.toContain("111.00");
   });
 
+  it("切换页签后保留实际退房日期并继续使用同一日期快照", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await flushPromises();
+
+    await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
+    await wrapper.get('[data-test="checkout-tab-initiate"]').trigger("click");
+    await flushPromises();
+
+    expect(
+      (
+        wrapper.get('[data-test="initiate-actual-checkout-date"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("2026-09-01");
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(
+      1,
+      "2026-09-01",
+    );
+  });
+
+  it("重新选择合同时使用表单中可见的实际退房日期刷新快照", async () => {
+    vi.mocked(checkoutApi.contracts).mockResolvedValueOnce([
+      { id: 1, contractNo: "HT202608010001", status: "ACTIVE" },
+      { id: 2, contractNo: "HT202608010002", status: "ACTIVE" },
+    ]);
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
+    await wrapper.get('[data-test="checkout-tab-initiate"]').trigger("click");
+    await flushPromises();
+
+    const panel = wrapper.getComponent(CheckoutInitiatePanel);
+    panel.vm.$emit("contractChange", 2);
+    await flushPromises();
+
+    expect(
+      (
+        panel.get('[data-test="initiate-actual-checkout-date"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("2026-09-01");
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(
+      2,
+      "2026-09-01",
+    );
+  });
+
+  it("成功发起后清空合同日期和旧快照再等待重新选择", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await wrapper.get("textarea").setValue("补录已完成退房");
+    vi.mocked(checkoutApi.settlements).mockResolvedValueOnce([]);
+    vi.mocked(checkoutApi.initiate).mockResolvedValueOnce({
+      id: 19,
+      settlementNo: "TZ202609010019",
+      status: "DRAFT",
+      contractId: 1,
+      actualCheckoutDate: "2026-09-01T00:00:00.000Z",
+      handoverDate: "2026-09-01T00:00:00.000Z",
+      inspectionAt: "2026-09-01T09:00:00.000Z",
+      targetRoomStatus: "EMPTY",
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      finalReceivable: "0.00",
+    });
+    await wrapper.get('[data-test="initiate-submit"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-initiate"]').trigger("click");
+    await flushPromises();
+
+    const panel = wrapper.getComponent(CheckoutInitiatePanel);
+    expect(
+      (
+        panel.get('[data-test="initiate-actual-checkout-date"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("");
+    expect(panel.findComponent(ElSelect).props("modelValue")).toBe("");
+    expect(wrapper.find('[aria-label="财务快照"]').exists()).toBe(false);
+
+    panel.vm.$emit("contractChange", 1);
+    await flushPromises();
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(1);
+  });
+
+  it("上海凌晨使用本地日历日期作为实际退房日期上限", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-09T00:30:00+08:00"));
+    try {
+      const wrapper = mount(CheckoutInitiatePanel, {
+        props: { contracts: [] },
+        global: { plugins: [ElementPlus] },
+      });
+
+      expect(
+        wrapper
+          .get('[data-test="initiate-actual-checkout-date"]')
+          .attributes("max"),
+      ).toBe("2026-09-09");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("新快照仍在加载时不展示上一日期的金额", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    expect(wrapper.text()).toContain("1,000.00");
+    const slow = deferred<{
+      depositBalance: string;
+      rentOutstanding: string;
+      prepaymentBalance: string;
+      futureBillCount: number;
+    }>();
+    vi.mocked(checkoutApi.financeSnapshot).mockReturnValueOnce(slow.promise);
+
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+
+    expect(wrapper.text()).not.toContain("1,000.00");
+    expect(wrapper.find('[aria-label="财务快照"]').exists()).toBe(false);
+  });
+
+  it("快照刷新失败时不保留上一日期的金额", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    expect(wrapper.text()).toContain("1,000.00");
+    vi.mocked(checkoutApi.financeSnapshot).mockRejectedValueOnce(
+      new Error("snapshot failed"),
+    );
+
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("财务快照加载失败，请稍后重试");
+    expect(wrapper.text()).not.toContain("1,000.00");
+    expect(wrapper.find('[aria-label="财务快照"]').exists()).toBe(false);
+  });
+
+  it("快照失败后重新请求成功会清除旧错误并展示新金额", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    vi.mocked(checkoutApi.financeSnapshot)
+      .mockRejectedValueOnce(new Error("snapshot failed"))
+      .mockResolvedValueOnce({
+        depositBalance: "888.00",
+        rentOutstanding: "0.00",
+        prepaymentBalance: "0.00",
+        futureBillCount: 0,
+      });
+    const input = wrapper.get('[data-test="initiate-actual-checkout-date"]');
+
+    await input.setValue("2026-09-01");
+    await flushPromises();
+    expect(wrapper.text()).toContain("财务快照加载失败，请稍后重试");
+    await input.setValue("2026-08-31");
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("财务快照加载失败，请稍后重试");
+    expect(wrapper.text()).toContain("888.00");
+  });
+
   it("发起后结算页自动带入后端返回的实际退房日期", async () => {
     const wrapper = mountSelectedContractWorkspace();
     await flushPromises();
