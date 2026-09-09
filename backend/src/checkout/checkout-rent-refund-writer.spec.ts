@@ -764,7 +764,7 @@ describe('applyCheckoutRentRefund', () => {
 
     await expect(
       applyCheckoutRentRefund(harness.tx as never, input),
-    ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
+    ).rejects.toThrow('实际退房日期或账单已变化，请重新预估结算金额');
     expect(harness.tx.rentBill.update).not.toHaveBeenCalled();
   });
 
@@ -792,7 +792,7 @@ describe('applyCheckoutRentRefund', () => {
 
     await expect(
       applyCheckoutRentRefund(harness.tx as never, input),
-    ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
+    ).rejects.toThrow('实际退房日期或账单已变化，请重新预估结算金额');
     expect(harness.tx.rentBill.update).not.toHaveBeenCalled();
   });
 

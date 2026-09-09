@@ -10,6 +10,7 @@ import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.v
 import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
 import type {
+  CheckoutArrearsBill,
   CheckoutContract,
   CheckoutFinanceSnapshot,
   CheckoutInitiatePayload,
@@ -42,6 +43,10 @@ const completedDetail = ref<CheckoutSettlement>();
 const loadingCompletedContracts = ref(false);
 const settlementPreview = ref<CheckoutSettlementPreview>();
 const previewLoading = ref(false);
+const settlementArrearsBills = ref<CheckoutArrearsBill[]>([]);
+const arrearsLoading = ref(false);
+const arrearsError = ref("");
+let arrearsRequestVersion = 0;
 let previewRequestVersion = 0;
 let financeSnapshotRequestVersion = 0;
 let refundRequestVersion = 0;
@@ -191,6 +196,11 @@ async function openCompletedDetail(settlementId: number) {
   }
 }
 function changeTab(tab: CheckoutTab) {
+  if (tab !== activeTab.value) {
+    arrearsRequestVersion += 1;
+    arrearsError.value = "";
+    settlementArrearsBills.value = [];
+  }
   activeTab.value = tab;
   closeRefundProofPreview();
   clearSettlementPreview();
@@ -347,6 +357,7 @@ async function previewRefundProof(
   }
 }
 onBeforeUnmount(() => {
+  arrearsRequestVersion += 1;
   financeSnapshotRequestVersion += 1;
   completedDetailRequestVersion += 1;
   completedDetail.value = undefined;
@@ -425,6 +436,30 @@ function clearSettlementPreview() {
   settlementPreview.value = undefined;
   previewError.value = "";
   previewLoading.value = false;
+}
+
+async function refreshSettlementArrears(
+  contractId: number,
+  actualDate: string,
+) {
+  const requestVersion = ++arrearsRequestVersion;
+  settlementArrearsBills.value = [];
+  arrearsError.value = "";
+  arrearsLoading.value = true;
+  try {
+    if (!actualDate) return;
+    const snapshot = await checkoutApi.financeSnapshot(contractId, actualDate);
+    if (requestVersion === arrearsRequestVersion)
+      settlementArrearsBills.value = snapshot.arrearsBills ?? [];
+  } catch (error) {
+    if (requestVersion === arrearsRequestVersion)
+      arrearsError.value = message(
+        error,
+        "欠租账单加载失败，请重新选择实际退房日期后重试",
+      );
+  } finally {
+    if (requestVersion === arrearsRequestVersion) arrearsLoading.value = false;
+  }
 }
 
 async function previewSettlement(
@@ -632,11 +667,11 @@ onMounted(initialize);
   <main class="checkout-workspace">
     <CheckoutTopNav :active-tab="activeTab" @change="changeTab" />
     <p
-      v-if="actionError || previewError"
+      v-if="actionError || previewError || arrearsError"
       class="checkout-workspace__error"
       role="alert"
     >
-      {{ actionError || previewError }}
+      {{ actionError || previewError || arrearsError }}
     </p>
     <CheckoutInitiatePanel
       v-if="activeTab === 'initiate'"
@@ -656,6 +691,10 @@ onMounted(initialize);
       @submit="submitSettlement"
       :preview="settlementPreview"
       :preview-loading="previewLoading"
+      :arrears-bills="settlementArrearsBills"
+      :arrears-loading="arrearsLoading"
+      :arrears-unavailable="Boolean(arrearsError)"
+      @actual-date-change="refreshSettlementArrears"
       :submitting="settlementMutationPending"
       :cancelling="settlementMutationPending"
       @preview="previewSettlement"

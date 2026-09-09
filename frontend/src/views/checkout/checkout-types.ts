@@ -12,6 +12,7 @@ export type CheckoutContract = {
 };
 
 export type CheckoutFinanceSnapshot = {
+  arrearsBills?: CheckoutArrearsBill[];
   depositBalance: string;
   rentOutstanding: string;
   prepaymentBalance: string;

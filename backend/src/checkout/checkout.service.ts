@@ -30,9 +30,11 @@ import { contractBusinessDay } from '../contracts/contract-business-day';
 import { isRentBillPerformed } from './checkout-accounting-cutoff';
 import {
   assertCheckoutBillItemsCurrent,
+  assertCheckoutArrearsComplete,
   assertCheckoutFinalAccountingCurrent,
   assertCheckoutRentRefundPlanCurrent,
   CHECKOUT_ACCOUNTING_CHANGED_MESSAGE,
+  parseCheckoutActualDate,
 } from './checkout-accounting-validation';
 
 @Injectable()
@@ -379,6 +381,15 @@ export class CheckoutService {
     );
     return {
       depositBalance: this.money(deposit?.balanceAfter ?? 0),
+      arrearsBills: currentBills
+        .filter((bill) => new Prisma.Decimal(bill.outstandingAmount).gt(0))
+        .map((bill) => ({
+          id: bill.id,
+          billNo: bill.billNo,
+          periodStart: bill.periodStart.toISOString().slice(0, 10),
+          periodEnd: bill.periodEnd.toISOString().slice(0, 10),
+          outstandingAmount: this.money(bill.outstandingAmount),
+        })),
       rentOutstanding: this.money(
         currentBills.reduce(
           (sum, bill) => sum.plus(bill.outstandingAmount),
@@ -542,7 +553,7 @@ export class CheckoutService {
       throw new BadRequestException('当前退租结算单不能预估金额');
     if (settlement.contract.status !== 'PENDING_CHECKOUT')
       throw new BadRequestException('合同当前不处于待退房状态');
-    const actual = contractBusinessDay(new Date(dto.actualCheckoutDate));
+    const actual = parseCheckoutActualDate(dto.actualCheckoutDate);
     if (
       settlement.originContractStatus !== 'PENDING_START' &&
       actual < settlement.contract.startDate
@@ -737,7 +748,7 @@ export class CheckoutService {
         where: { id },
         include: { contract: { include: { bills: true } }, items: true },
       });
-      const actual = contractBusinessDay(new Date(dto.actualCheckoutDate));
+      const actual = parseCheckoutActualDate(dto.actualCheckoutDate);
       if (settlement.status !== 'DRAFT')
         throw new BadRequestException('只有草稿结算单可以提交');
       assertContractNotVoided(settlement.contract.status, '提交退租结算');
@@ -780,7 +791,7 @@ export class CheckoutService {
             '维修、损坏、清洁及其他扣款必须关联验收记录',
           );
       }
-      assertCheckoutBillItemsCurrent(
+      assertCheckoutArrearsComplete(
         dto.items,
         settlement.contract.bills.filter(
           (bill) =>
@@ -948,7 +959,7 @@ export class CheckoutService {
           bill.billCategory !== 'CHECKOUT_SUPPLEMENTAL' &&
           !['VOIDED', 'REFUNDED'].includes(bill.status),
       );
-      assertCheckoutBillItemsCurrent(settlement.items, eligibleBills);
+      assertCheckoutArrearsComplete(settlement.items, eligibleBills);
       const outstanding = eligibleBills.reduce(
         (sum, bill) => sum.plus(bill.outstandingAmount),
         new Prisma.Decimal(0),
@@ -956,12 +967,6 @@ export class CheckoutService {
       const arrearsItems = settlement.items.filter(
         (item) => item.itemType === 'RENT_ARREARS',
       );
-      const declaredArrears = arrearsItems.reduce(
-        (sum, item) => sum.plus(item.amount),
-        new Prisma.Decimal(0),
-      );
-      if (!declaredArrears.equals(outstanding))
-        throw new ConflictException(CHECKOUT_ACCOUNTING_CHANGED_MESSAGE);
       const otherCharges = settlement.items
         .filter(
           (item) => !['RENT_ARREARS', 'RENT_REFUND'].includes(item.itemType),

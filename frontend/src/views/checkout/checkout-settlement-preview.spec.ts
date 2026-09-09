@@ -41,9 +41,25 @@ const rentRefundPreview = {
 describe("退租结算实时预估", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("offers searchable arrears bills only through the actual checkout date", async () => {
+  it("offers only authoritative eligible arrears bills instead of the saved settlement list", async () => {
     const wrapper = mount(CheckoutSettlementPanel, {
       props: {
+        arrearsBills: [
+          {
+            id: 31,
+            billNo: "ZD2026070031",
+            periodStart: "2026-07-01",
+            periodEnd: "2026-07-31",
+            outstandingAmount: "300.00",
+          },
+          {
+            id: 32,
+            billNo: "ZD2026080032",
+            periodStart: "2026-08-01",
+            periodEnd: "2026-08-31",
+            outstandingAmount: "800.00",
+          },
+        ],
         settlements: [
           {
             ...settlement,
@@ -84,7 +100,9 @@ describe("退租结算实时预估", () => {
     const select = wrapper.getComponent(ElSelect);
     expect(select.props("filterable")).toBe(true);
     expect(
-      wrapper.findAllComponents(ElOption).map((option) => option.props("label")),
+      wrapper
+        .findAllComponents(ElOption)
+        .map((option) => option.props("label")),
     ).toEqual([
       "ZD2026070031｜2026/07/01–2026/07/31｜未收 ¥300.00",
       "ZD2026080032｜2026/08/01–2026/08/31｜未收 ¥800.00",

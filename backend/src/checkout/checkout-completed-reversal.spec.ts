@@ -2,6 +2,101 @@ import { Prisma } from '@prisma/client';
 import { reverseCompletedCheckoutAccounting } from './checkout-completed-reversal';
 
 describe('reverseCompletedCheckoutAccounting', () => {
+  it('restores an equal-boundary 800/300/500 bill through both normalization and rent-refund reversal', async () => {
+    const bill = {
+      id: 31,
+      periodStart: new Date('2026-09-01'),
+      dueDate: new Date('2026-09-01'),
+      payableAmount: new Prisma.Decimal(0),
+      receivedAmount: new Prisma.Decimal(0),
+      outstandingAmount: new Prisma.Decimal(0),
+      adjustmentAmount: new Prisma.Decimal('-800.00'),
+      status: 'REFUNDED',
+    };
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+      depositTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      checkoutRentRefundAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 71,
+            checkoutSettlementItemId: 81,
+            paymentAllocationId: 21,
+            paymentId: 11,
+            rentBillId: 31,
+            reservedAmount: new Prisma.Decimal('300.00'),
+            status: 'APPLIED',
+          },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      billAdjustment: {
+        findMany: jest.fn().mockImplementation(({ where }) =>
+          Promise.resolve([
+            {
+              id: where.adjustmentType === 'CORRECTION' ? 61 : 62,
+              rentBillId: 31,
+              checkoutSettlementItemId: 81,
+              amount: new Prisma.Decimal(
+                where.adjustmentType === 'CORRECTION' ? '500.00' : '300.00',
+              ),
+              rentBill: { ...bill },
+            },
+          ]),
+        ),
+        create: jest.fn().mockResolvedValue({ id: 63 }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      rentBill: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockImplementation(({ data }) => {
+          Object.assign(bill, data);
+          return Promise.resolve({ ...bill });
+        }),
+      },
+      paymentAllocation: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 21, reversedAmount: new Prisma.Decimal('300.00') },
+          ]),
+        update: jest.fn(),
+      },
+      payment: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          allocations: [
+            {
+              allocatedAmount: new Prisma.Decimal('300.00'),
+              refundAllocations: [],
+              checkoutRentRefundAllocations: [],
+            },
+          ],
+        }),
+        update: jest.fn(),
+      },
+    };
+    await reverseCompletedCheckoutAccounting(tx as never, {
+      settlementId: 9,
+      contractId: 3,
+      actualCheckoutDate: new Date('2026-09-01'),
+      operatorId: 2,
+      occurredAt: new Date('2026-09-03T12:00:00Z'),
+    });
+    expect([
+      bill.payableAmount.toFixed(2),
+      bill.receivedAmount.toFixed(2),
+      bill.outstandingAmount.toFixed(2),
+      bill.status,
+    ]).toEqual(['800.00', '300.00', '500.00', 'PARTIAL']);
+    expect(bill.adjustmentAmount.toFixed(2)).toBe('0.00');
+  });
+
   it('restores a legacy VOIDED bill starting exactly on checkout day after completed reversal', async () => {
     const actualCheckoutDate = new Date('2026-09-01');
     const bill = {

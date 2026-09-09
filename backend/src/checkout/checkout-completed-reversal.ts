@@ -226,6 +226,9 @@ export async function reverseCompletedCheckoutAccounting(
     const receivedAmount = money(bill.receivedAmount)
       .plus(amount)
       .toDecimalPlaces(2);
+    const outstandingAmount = afterAmount
+      .minus(receivedAmount)
+      .toDecimalPlaces(2);
     const reversal = await tx.billAdjustment.create({
       data: {
         adjustmentNo: `TZCXTH${input.occurredAt.getTime().toString(36)}${adjustment.id}`,
@@ -252,8 +255,13 @@ export async function reverseCompletedCheckoutAccounting(
           .toDecimalPlaces(2),
         payableAmount: afterAmount,
         receivedAmount,
-        outstandingAmount: new Prisma.Decimal(0),
-        status: 'PAID',
+        outstandingAmount,
+        status: restoredBillStatus(
+          receivedAmount,
+          outstandingAmount,
+          bill.dueDate,
+          input.occurredAt,
+        ),
       },
     });
     const claimed = await tx.billAdjustment.updateMany({

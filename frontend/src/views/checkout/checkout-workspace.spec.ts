@@ -10,6 +10,7 @@ import CheckoutTopNav from "./CheckoutTopNav.vue";
 import CheckoutWorkspace from "./CheckoutWorkspace.vue";
 import CheckoutInitiatePanel from "./CheckoutInitiatePanel.vue";
 import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
+import type { CheckoutFinanceSnapshot } from "./checkout-types";
 import CheckoutRefundPanel from "./CheckoutRefundPanel.vue";
 import CompletedCheckoutContractsPanel from "./CompletedCheckoutContractsPanel.vue";
 const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
@@ -710,6 +711,152 @@ describe("CheckoutTopNav", () => {
 
     expect(wrapper.text()).toContain("TZ202608010001");
   });
+  it("refreshes authoritative arrears choices when the entered settlement date moves past a saved cutoff", async () => {
+    vi.mocked(checkoutApi.settlements).mockResolvedValueOnce([
+      {
+        id: 8,
+        contractId: 1,
+        settlementNo: "TZ8",
+        status: "DRAFT",
+        actualCheckoutDate: "2026-09-01",
+        handoverDate: "2026-09-01",
+        inspectionAt: "2026-09-01",
+        arrearsBills: [],
+        items: [],
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    const empty = {
+      depositBalance: "0.00",
+      prepaymentBalance: "0.00",
+      rentOutstanding: "0.00",
+      futureBillCount: 1,
+      arrearsBills: [],
+    };
+    const changed = {
+      ...empty,
+      rentOutstanding: "100.00",
+      futureBillCount: 0,
+      arrearsBills: [
+        {
+          id: 21,
+          billNo: "ZD21",
+          periodStart: "2026-09-01",
+          periodEnd: "2026-09-30",
+          outstandingAmount: "100.00",
+        },
+      ],
+    };
+    vi.mocked(checkoutApi.financeSnapshot)
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValueOnce(changed);
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
+    await flushPromises();
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    await panel
+      .findAll("button")
+      .find((button) => button.text() === "添加欠租")!
+      .trigger("click");
+    await panel.get('input[type="date"]').setValue("2026-09-02");
+    await flushPromises();
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(
+      1,
+      "2026-09-02",
+    );
+    expect(
+      panel
+        .findAllComponents({ name: "ElOption" })
+        .map((option) => option.props("value")),
+    ).toContain(21);
+    panel.findComponent(ElSelect).vm.$emit("update:modelValue", 21);
+    panel.findComponent(ElSelect).vm.$emit("change", 21);
+    await flushPromises();
+    expect(
+      (panel.get('input[placeholder="金额"]').element as HTMLInputElement)
+        .value,
+    ).toBe("100.00");
+    await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
+    await flushPromises();
+    expect(
+      panel
+        .findAllComponents({ name: "ElOption" })
+        .map((option) => option.props("value")),
+    ).toContain(21);
+    wrapper.unmount();
+  });
+
+  it("discards older arrears responses after another settlement date change", async () => {
+    vi.mocked(checkoutApi.settlements).mockResolvedValueOnce([
+      {
+        id: 8,
+        contractId: 1,
+        settlementNo: "TZ8",
+        status: "DRAFT",
+        actualCheckoutDate: "2026-09-01",
+        handoverDate: "2026-09-01",
+        inspectionAt: "2026-09-01",
+        arrearsBills: [],
+        items: [],
+        depositRefundableAmount: "0.00",
+        prepaymentRefundableAmount: "0.00",
+        rentRefundableAmount: "0.00",
+        finalReceivable: "0.00",
+      },
+    ]);
+    const empty = {
+      depositBalance: "0.00",
+      prepaymentBalance: "0.00",
+      rentOutstanding: "0.00",
+      futureBillCount: 1,
+      arrearsBills: [],
+    };
+    const older = deferred<CheckoutFinanceSnapshot>();
+    vi.mocked(checkoutApi.financeSnapshot)
+      .mockResolvedValueOnce(empty)
+      .mockImplementationOnce(() => older.promise)
+      .mockResolvedValueOnce(empty);
+    const wrapper = mount(CheckoutWorkspace, {
+      global: { plugins: [checkoutTestPinia()] },
+    });
+    await flushPromises();
+    await wrapper.get('[data-test="checkout-tab-settlement"]').trigger("click");
+    await flushPromises();
+    const panel = wrapper.findComponent(CheckoutSettlementPanel);
+    await panel
+      .findAll("button")
+      .find((button) => button.text() === "添加欠租")!
+      .trigger("click");
+    await panel.get('input[type="date"]').setValue("2026-09-02");
+    await panel.get('input[type="date"]').setValue("2026-09-01");
+    await flushPromises();
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(
+      1,
+      "2026-09-01",
+    );
+    older.resolve({
+      ...empty,
+      arrearsBills: [
+        {
+          id: 21,
+          billNo: "ZD21",
+          periodStart: "2026-09-01",
+          periodEnd: "2026-09-30",
+          outstandingAmount: "100.00",
+        },
+      ],
+    });
+    await flushPromises();
+    expect(panel.findAllComponents({ name: "ElOption" })).toHaveLength(0);
+    wrapper.unmount();
+  });
+
   it("keeps the newest preview when an older workspace preview resolves last", async () => {
     let resolveFirst!: (value: Record<string, unknown>) => void;
     let resolveSecond!: (value: Record<string, unknown>) => void;
@@ -1522,8 +1669,12 @@ describe("CheckoutTopNav", () => {
       props: { result, canRevokeCompleted: false },
     });
 
-    expect(allowed.find('[data-test="completed-contract-revoke-9"]').exists()).toBe(true);
-    expect(denied.find('[data-test="completed-contract-revoke-9"]').exists()).toBe(false);
+    expect(
+      allowed.find('[data-test="completed-contract-revoke-9"]').exists(),
+    ).toBe(true);
+    expect(
+      denied.find('[data-test="completed-contract-revoke-9"]').exists(),
+    ).toBe(false);
   });
   it("shows the completed audit timestamp with seconds", () => {
     const wrapper = mount(CompletedCheckoutContractsPanel, {

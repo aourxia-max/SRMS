@@ -39,7 +39,8 @@ export class CheckoutSettlementItemDto {
   @IsOptional() @IsBoolean() confirmedByTenant = false;
 }
 export class SubmitCheckoutSettlementDto {
-  @IsDateString() actualCheckoutDate!: string;
+  @IsDateString({ strict: true }, { message: '实际退房日期格式不正确' })
+  actualCheckoutDate!: string;
   @IsDateString() handoverDate!: string;
   @IsDateString() inspectionAt!: string;
   @IsEnum(RoomStatus) targetRoomStatus!: RoomStatus;

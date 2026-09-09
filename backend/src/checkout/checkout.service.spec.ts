@@ -278,6 +278,94 @@ describe('CheckoutService actual-date accounting', () => {
     description: '欠租',
   };
 
+  it.each(['increased balance', 'new performed bill'])(
+    'rejects a stale submitted arrears set after %s before every mutation',
+    async (scenario) => {
+      const bills = [
+        accountingBill({
+          periodStart: new Date('2026-08-01'),
+          outstandingAmount: new Prisma.Decimal(
+            scenario === 'increased balance' ? '100.00' : '50.00',
+          ),
+        }),
+      ];
+      if (scenario === 'new performed bill')
+        bills.push(
+          accountingBill({
+            id: 22,
+            periodStart: new Date('2026-07-01'),
+            outstandingAmount: new Prisma.Decimal('50.00'),
+          }),
+        );
+      const { service, tx } = accountingHarness(bills);
+      await expect(
+        service.submit(
+          8,
+          { ...dto, items: [{ ...arrearsItem, amount: '50.00' }] },
+          user,
+        ),
+      ).rejects.toEqual(new ConflictException(conflict));
+      expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
+      expect(tx.checkoutSettlement.update).not.toHaveBeenCalled();
+      expect(tx.checkoutRentRefundAllocation.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['preview', '2099-01-01'],
+    ['submit', '2099-01-01'],
+    ['preview', '2026-02-30'],
+    ['submit', '2026-02-30'],
+  ])(
+    'rejects invalid %s date %s before writes',
+    async (entry, actualCheckoutDate) => {
+      const { service, tx } = accountingHarness([]);
+      const message = actualCheckoutDate.startsWith('2099')
+        ? '实际退房日期不能晚于当前日期'
+        : '实际退房日期格式不正确';
+      await expect(
+        entry === 'preview'
+          ? service.preview(8, { ...dto, actualCheckoutDate })
+          : service.submit(8, { ...dto, actualCheckoutDate }, user),
+      ).rejects.toThrow(message);
+      expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
+      expect(tx.checkoutSettlement.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns authoritative arrears options for the changed snapshot date despite an earlier saved cutoff', async () => {
+    const bill = accountingBill();
+    const service = new CheckoutService({
+      db: {
+        contract: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            id: 3,
+            status: 'PENDING_CHECKOUT',
+            bills: [bill],
+          }),
+        },
+        depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+        prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      },
+    } as never);
+    await expect(
+      service.getFinanceSnapshot(3, '2026-09-01'),
+    ).resolves.toMatchObject({ arrearsBills: [] });
+    await expect(
+      service.getFinanceSnapshot(3, '2026-09-02'),
+    ).resolves.toMatchObject({
+      arrearsBills: [
+        {
+          id: 21,
+          billNo: 'ZD21',
+          periodStart: '2026-09-01',
+          periodEnd: '2026-09-30',
+          outstandingAmount: '100.00',
+        },
+      ],
+    });
+  });
+
   it('excludes the checkout-day bill from preview outstanding and supplemental collection', async () => {
     const { service } = accountingHarness();
     await expect(service.preview(8, dto)).resolves.toMatchObject({
@@ -2013,7 +2101,10 @@ describe('CheckoutService', () => {
             id: 3,
             bills: [
               {
+                id: 21,
+                billNo: 'RENT-21',
                 periodStart: new Date('2026-08-01'),
+                periodEnd: new Date('2026-08-31'),
                 outstandingAmount: '120.00',
                 status: 'PARTIAL',
                 billCategory: 'RENT',
@@ -2052,6 +2143,15 @@ describe('CheckoutService', () => {
       rentOutstanding: '120.00',
       prepaymentBalance: '500.00',
       futureBillCount: 1,
+      arrearsBills: [
+        {
+          id: 21,
+          billNo: 'RENT-21',
+          periodStart: '2026-08-01',
+          periodEnd: '2026-08-31',
+          outstandingAmount: '120.00',
+        },
+      ],
     });
   });
 
@@ -2120,6 +2220,7 @@ describe('CheckoutService', () => {
               bills: [
                 {
                   periodStart: new Date('2026-08-31'),
+                  periodEnd: new Date('2026-08-31'),
                   outstandingAmount: '120.00',
                   status: 'UNPAID',
                   billCategory: 'RENT',

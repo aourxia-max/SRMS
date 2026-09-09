@@ -14,6 +14,9 @@ const props = defineProps<{
   role?: "SUPER_ADMIN" | "ADMIN" | "VISITOR";
   preview?: CheckoutSettlementPreview;
   previewLoading?: boolean;
+  arrearsBills?: CheckoutArrearsBill[];
+  arrearsLoading?: boolean;
+  arrearsUnavailable?: boolean;
   submitting?: boolean;
   cancelling?: boolean;
 }>();
@@ -24,6 +27,7 @@ const emit = defineEmits<{
   cancel: [id: number];
   preview: [id: number, payload: CheckoutSettlementPayload];
   clearPreview: [];
+  actualDateChange: [contractId: number, actualCheckoutDate: string];
 }>();
 
 const selectedId = ref<number | null>(null);
@@ -49,10 +53,8 @@ const selected = computed(
     actionableSettlements.value.find((item) => item.id === selectedId.value) ??
     actionableSettlements.value[0],
 );
-const eligibleArrearsBills = computed(() =>
-  (selected.value?.arrearsBills || []).filter(
-    (bill) => !form.actualCheckoutDate || bill.periodStart <= form.actualCheckoutDate,
-  ),
+const eligibleArrearsBills = computed(
+  () => props.arrearsBills ?? selected.value?.arrearsBills ?? [],
 );
 
 function arrearsBillLabel(bill: CheckoutArrearsBill) {
@@ -94,6 +96,21 @@ function resetForm(settlement?: CheckoutSettlement) {
   errors.value = [];
 }
 watch(selected, resetForm, { immediate: true });
+watch(
+  [selected, () => form.actualCheckoutDate],
+  ([settlement, actualDate], previous) => {
+    if (previous && settlement === previous[0] && actualDate !== previous[1]) {
+      for (const item of items.value) {
+        if (item.itemType === "RENT_ARREARS") {
+          item.rentBillId = undefined;
+          item.amount = "";
+        }
+      }
+    }
+    if (settlement) emit("actualDateChange", settlement.contractId, actualDate);
+  },
+  { immediate: true },
+);
 
 function addItem(type: CheckoutSettlementItem["itemType"] = "REPAIR") {
   items.value.push({
@@ -191,6 +208,8 @@ onBeforeUnmount(() => previewTimer && clearTimeout(previewTimer));
 function submit() {
   errors.value = [];
   if (!selected.value) return;
+  if (props.arrearsLoading || props.arrearsUnavailable)
+    errors.value.push("请等待当前退房日期的欠租账单加载成功后再提交");
   if (!form.actualCheckoutDate || !form.handoverDate || !form.inspectionAt)
     errors.value.push("请完整填写实际退房、交接和验房日期");
   items.value.forEach((item, index) => {
@@ -434,6 +453,7 @@ function cancelSelected() {
               <ElSelect
                 v-if="item.itemType === 'RENT_ARREARS'"
                 v-model="item.rentBillId"
+                :loading="arrearsLoading"
                 class="settlement-item__bill-select"
                 filterable
                 clearable
@@ -510,7 +530,9 @@ function cancelSelected() {
             </button>
             <button
               data-test="settlement-submit"
-              :disabled="submitting || cancelling"
+              :disabled="
+                submitting || cancelling || arrearsLoading || arrearsUnavailable
+              "
               type="button"
               class="primary-button"
               @click="submit"
@@ -519,7 +541,10 @@ function cancelSelected() {
             </button>
           </div>
         </template>
-        <p v-else-if="selected.status === 'DRAFT'" class="settlement-panel__hint">
+        <p
+          v-else-if="selected.status === 'DRAFT'"
+          class="settlement-panel__hint"
+        >
           访客仅可查看，不可编辑或提交退租结算。
         </p>
         <div

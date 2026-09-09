@@ -19,6 +19,23 @@ const settlementDto = (item: Record<string, unknown>) =>
   });
 
 describe('CheckoutController preview route', () => {
+  it.each(['2026-02-30', '2026-04-31'])(
+    'rejects impossible preview/submit calendar date %s in its DTO',
+    async (actualCheckoutDate) => {
+      const dto = settlementDto({
+        itemType: 'RENT_REFUND',
+        amount: '1.00',
+        description: '退款',
+      });
+      dto.actualCheckoutDate = actualCheckoutDate;
+      const errors = await validate(dto);
+      expect(
+        errors.find((error) => error.property === 'actualCheckoutDate')
+          ?.constraints?.isDateString,
+      ).toBe('实际退房日期格式不正确');
+    },
+  );
+
   it('forwards the optional actual checkout date to the finance snapshot', async () => {
     const getFinanceSnapshot = jest.fn().mockResolvedValue({
       rentOutstanding: '0.00',

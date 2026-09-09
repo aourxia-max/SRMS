@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { assertCheckoutRentRefundPlanCurrent } from './checkout-accounting-validation';
 import {
   CHECKOUT_RENT_REFUND_RESERVATION_CHANGED_MESSAGE,
   lockAndPlanCheckoutRentRefund,
@@ -218,33 +219,10 @@ export async function applyCheckoutRentRefund(
       );
     throw error;
   }
-  const storedPlan = activeReservations
-    .map((reservation) =>
-      [
-        reservation.paymentAllocationId,
-        reservation.paymentId,
-        reservation.rentBillId,
-        asMoney(reservation.reservedAmount).toFixed(2),
-      ].join(':'),
-    )
-    .sort();
-  const expectedPlan = lockedPlan.allocations
-    .map((allocation) =>
-      [
-        allocation.paymentAllocationId,
-        allocation.paymentId,
-        allocation.rentBillId,
-        asMoney(allocation.amount).toFixed(2),
-      ].join(':'),
-    )
-    .sort();
-  if (
-    storedPlan.length !== expectedPlan.length ||
-    storedPlan.some((entry, index) => entry !== expectedPlan[index])
-  )
-    throw new BadRequestException(
-      CHECKOUT_RENT_REFUND_RESERVATION_CHANGED_MESSAGE,
-    );
+  assertCheckoutRentRefundPlanCurrent(
+    activeReservations,
+    lockedPlan.allocations,
+  );
 
   const billIds = [
     ...new Set(activeReservations.map((reservation) => reservation.rentBillId)),
