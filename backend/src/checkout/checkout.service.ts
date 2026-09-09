@@ -625,15 +625,15 @@ export class CheckoutService {
   async initiate(contractId: number, dto: InitiateCheckoutDto, user: AuthUser) {
     if (!['EMPTY', 'MAINTENANCE', 'DISABLED'].includes(dto.targetRoomStatus))
       throw new BadRequestException('退房后目标房态只能为空置、维修中或停用');
-    const actual = dto.actualCheckoutDate
-      ? contractBusinessDay(new Date(dto.actualCheckoutDate))
-      : null;
-    const today = contractBusinessDay();
-    if (actual && actual > today)
-      throw new BadRequestException('实际退房日期不能晚于当前日期');
     return this.prisma.db.$transaction(
       async (tx) => {
         await lockRoomAndTargetContract(tx, contractId);
+        const actual = dto.actualCheckoutDate
+          ? contractBusinessDay(new Date(dto.actualCheckoutDate))
+          : null;
+        const today = contractBusinessDay();
+        if (actual && actual > today)
+          throw new BadRequestException('实际退房日期不能晚于当前日期');
         await tx.$queryRaw(
           Prisma.sql`SELECT id FROM checkout_settlements WHERE contract_id = ${contractId} ORDER BY id FOR UPDATE`,
         );

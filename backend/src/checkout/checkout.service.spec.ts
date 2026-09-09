@@ -155,12 +155,13 @@ async function checkoutInitiationHarness(
     roomStatusHistory: { create: jest.fn() },
   };
   mockRoomContractLocks(tx, 8, 7);
+  const transaction = jest.fn(
+    (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+  );
   const service = await checkoutServiceWithDb({
-    $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) =>
-      callback(tx),
-    ),
+    $transaction: transaction,
   });
-  return { service, settlementCreate };
+  return { service, settlementCreate, transaction, tx };
 }
 
 function initiationDto(actualCheckoutDate?: string): InitiateCheckoutDto {
@@ -289,13 +290,18 @@ describe('CheckoutService', () => {
     });
 
     it('rejects an actual checkout date after the business day', async () => {
-      const { service, settlementCreate } =
+      const { service, settlementCreate, transaction, tx } =
         await checkoutInitiationHarness('ACTIVE');
 
       await expect(
         service.initiate(8, initiationDto('2026-09-10'), user),
       ).rejects.toThrow('实际退房日期不能晚于当前日期');
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expectRoomBeforeTargetContractLock(tx.$queryRaw);
       expect(settlementCreate).not.toHaveBeenCalled();
+      expect(tx.contract.update).not.toHaveBeenCalled();
+      expect(tx.room.update).not.toHaveBeenCalled();
+      expect(tx.roomStatusHistory.create).not.toHaveBeenCalled();
     });
 
     it('rejects an active-contract actual checkout date before contract start', async () => {
@@ -320,6 +326,18 @@ describe('CheckoutService', () => {
           actualCheckoutDate: new Date('2026-07-31'),
         }),
       });
+    });
+
+    it('allows an active contract to initiate without an actual checkout date', async () => {
+      const { service, settlementCreate } =
+        await checkoutInitiationHarness('ACTIVE');
+
+      await expect(service.initiate(8, initiationDto(), user)).resolves.toEqual(
+        { id: 19 },
+      );
+      expect(settlementCreate.mock.calls[0][0].data).not.toHaveProperty(
+        'actualCheckoutDate',
+      );
     });
   });
 
@@ -1667,6 +1685,110 @@ describe('CheckoutService', () => {
               periodStart: new Date('2026-09-01'),
               outstandingAmount: '300.00',
               status: 'UNPAID',
+              billCategory: 'RENT',
+            },
+          ],
+        }),
+      },
+      depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+      prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+    });
+
+    await expect(
+      service.getFinanceSnapshot(8, '2026-09-01'),
+    ).resolves.toMatchObject({
+      rentOutstanding: '0.00',
+      futureBillCount: 1,
+    });
+  });
+
+  describe('finance snapshot current-business-day compatibility', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-08-31T16:30:00.000Z'));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    const calls: Array<{
+      label: string;
+      snapshot: (service: CheckoutService) => Promise<unknown>;
+    }> = [
+      {
+        label: 'a single contract id argument',
+        snapshot: (service) => service.getFinanceSnapshot(8),
+      },
+      {
+        label: 'an explicit undefined actual date',
+        snapshot: (service) => service.getFinanceSnapshot(8, undefined),
+      },
+      {
+        label: 'an empty actual date',
+        snapshot: (service) => service.getFinanceSnapshot(8, ''),
+      },
+    ];
+
+    it.each(calls)(
+      'uses the current business day with $label',
+      async ({ snapshot }) => {
+        const service = await checkoutServiceWithDb({
+          contract: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({
+              id: 8,
+              bills: [
+                {
+                  periodStart: new Date('2026-08-31'),
+                  outstandingAmount: '120.00',
+                  status: 'UNPAID',
+                  billCategory: 'RENT',
+                },
+                {
+                  periodStart: new Date('2026-09-01'),
+                  outstandingAmount: '300.00',
+                  status: 'UNPAID',
+                  billCategory: 'RENT',
+                },
+              ],
+            }),
+          },
+          depositTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+          prepaymentTransaction: {
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+        });
+
+        await expect(snapshot(service)).resolves.toMatchObject({
+          rentOutstanding: '120.00',
+          futureBillCount: 1,
+        });
+      },
+    );
+  });
+
+  it('does not count future voided or refunded rent bills', async () => {
+    const service = await checkoutServiceWithDb({
+      contract: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 8,
+          bills: [
+            {
+              periodStart: new Date('2026-09-02'),
+              outstandingAmount: '300.00',
+              status: 'UNPAID',
+              billCategory: 'RENT',
+            },
+            {
+              periodStart: new Date('2026-09-03'),
+              outstandingAmount: '400.00',
+              status: 'VOIDED',
+              billCategory: 'RENT',
+            },
+            {
+              periodStart: new Date('2026-09-04'),
+              outstandingAmount: '500.00',
+              status: 'REFUNDED',
               billCategory: 'RENT',
             },
           ],

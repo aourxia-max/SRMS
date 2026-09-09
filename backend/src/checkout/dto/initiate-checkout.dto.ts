@@ -9,7 +9,7 @@ import {
 
 export class InitiateCheckoutDto {
   @IsOptional()
-  @IsDateString()
+  @IsDateString({ strict: true })
   actualCheckoutDate?: string;
   @IsString() @Length(1, 50) checkoutType!: string;
   @IsDateString() plannedCheckoutDate!: string;

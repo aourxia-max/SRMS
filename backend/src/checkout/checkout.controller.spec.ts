@@ -47,39 +47,46 @@ describe('CheckoutController preview route', () => {
     expect(getFinanceSnapshot).toHaveBeenCalledWith(8, '2026-09-01');
   });
 
-  it('rejects an invalid actual checkout date at initiation through DTO validation', async () => {
-    const dto = plainToInstance(InitiateCheckoutDto, {
-      checkoutType: '提前退租',
-      plannedCheckoutDate: '2026-09-01',
-      actualCheckoutDate: 'not-a-date',
-      handoverDate: '2026-09-01',
-      inspectionAt: '2026-09-01',
-      checkoutReason: '租户已退房，补录申请',
-      targetRoomStatus: 'EMPTY',
-    });
+  it.each(['not-a-date', '2026-02-31'])(
+    'rejects invalid actual checkout date %s at initiation through DTO validation',
+    async (actualCheckoutDate) => {
+      const dto = plainToInstance(InitiateCheckoutDto, {
+        checkoutType: '提前退租',
+        plannedCheckoutDate: '2026-09-01',
+        actualCheckoutDate,
+        handoverDate: '2026-09-01',
+        inspectionAt: '2026-09-01',
+        checkoutReason: '租户已退房，补录申请',
+        targetRoomStatus: 'EMPTY',
+      });
 
-    const errors = await validate(dto);
+      const errors = await validate(dto);
 
-    expect(
-      errors.some((error) => error.property === 'actualCheckoutDate'),
-    ).toBe(true);
-  });
+      expect(
+        errors.some((error) => error.property === 'actualCheckoutDate'),
+      ).toBe(true);
+    },
+  );
 
-  it('rejects an invalid finance snapshot date through query DTO validation', async () => {
-    const query = plainToInstance(CheckoutFinanceSnapshotQueryDto, {
-      actualCheckoutDate: 'not-a-date',
-    });
+  it.each(['not-a-date', '2026-02-31'])(
+    'rejects invalid finance snapshot date %s through query DTO validation',
+    async (actualCheckoutDate) => {
+      const query = plainToInstance(CheckoutFinanceSnapshotQueryDto, {
+        actualCheckoutDate,
+      });
 
-    const errors = await validate(query);
+      const errors = await validate(query);
 
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({
-      property: 'actualCheckoutDate',
-      constraints: {
-        isDateString: 'actualCheckoutDate must be a valid ISO 8601 date string',
-      },
-    });
-  });
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({
+        property: 'actualCheckoutDate',
+        constraints: {
+          isDateString:
+            'actualCheckoutDate must be a valid ISO 8601 date string',
+        },
+      });
+    },
+  );
 
   it('exposes a super-admin completed-checkout revoke endpoint', async () => {
     const revokeCompleted = (
