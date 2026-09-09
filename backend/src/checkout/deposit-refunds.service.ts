@@ -10,9 +10,18 @@ import { assertNoPendingCheckoutSupplementalReversal } from '../payments/checkou
 import { SubmitDepositRefundDto } from './dto/submit-deposit-refund.dto';
 import { assertContractNotVoided } from '../contracts/contract-operability';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
-import { assertCheckoutRentRefundReservationMatches } from './checkout-rent-refund-reservations';
+import {
+  assertCheckoutRentRefundReservationMatches,
+  lockAndPlanCheckoutRentRefund,
+} from './checkout-rent-refund-reservations';
 import { applyCheckoutRentRefund } from './checkout-rent-refund-writer';
 import { normalizeFutureCheckoutBills } from './checkout-future-bill-normalization';
+import {
+  assertCheckoutFinalAccountingCurrent,
+  assertCheckoutRentRefundPlanCurrent,
+  CHECKOUT_ACCOUNTING_CHANGED_MESSAGE,
+} from './checkout-accounting-validation';
+import { contractBusinessDay } from '../contracts/contract-business-day';
 
 @Injectable()
 export class DepositRefundsService {
@@ -233,7 +242,7 @@ export class DepositRefundsService {
           include: {
             files: true,
             checkoutSettlement: {
-              include: { contract: { include: { room: true } } },
+              include: { contract: { include: { room: true } }, items: true },
             },
           },
         });
@@ -321,12 +330,19 @@ export class DepositRefundsService {
           !storedRentRefundAmount.equals(rentRefundableAmount)
         )
           throw new BadRequestException('退款申请的三类锁定金额与结算单不一致');
-        if (rentRefundableAmount.gt(0))
-          await assertCheckoutRentRefundReservationMatches(
-            tx,
-            settlement.id,
-            rentRefundableAmount,
-          );
+        if (rentRefundableAmount.gt(0)) {
+          try {
+            await assertCheckoutRentRefundReservationMatches(
+              tx,
+              settlement.id,
+              rentRefundableAmount,
+            );
+          } catch (error) {
+            if (error instanceof BadRequestException)
+              throw new ConflictException(CHECKOUT_ACCOUNTING_CHANGED_MESSAGE);
+            throw error;
+          }
+        }
         const latestDeposit = await tx.depositTransaction.findFirst({
           where: { contractId: refund.contractId },
           orderBy: { id: 'desc' },
@@ -351,6 +367,50 @@ export class DepositRefundsService {
             tx,
             settlement.contractId,
           );
+        if (!settlement.actualCheckoutDate)
+          throw new BadRequestException('结算单缺少实际退房日期');
+        const actualCheckoutDate = contractBusinessDay(
+          settlement.actualCheckoutDate,
+        );
+        const bills = await tx.rentBill.findMany({
+          where: {
+            contractId: settlement.contractId,
+            status: { notIn: ['VOIDED', 'REFUNDED'] },
+          },
+        });
+        assertCheckoutFinalAccountingCurrent(
+          settlement.items,
+          bills,
+          actualCheckoutDate,
+        );
+        if (rentRefundableAmount.gt(0)) {
+          let recalculated: Awaited<
+            ReturnType<typeof lockAndPlanCheckoutRentRefund>
+          >;
+          try {
+            recalculated = await lockAndPlanCheckoutRentRefund(tx, {
+              contractId: settlement.contractId,
+              currentSettlementId: settlement.id,
+              actualCheckoutDate,
+              requestedAmount: rentRefundableAmount,
+            });
+          } catch (error) {
+            if (error instanceof BadRequestException)
+              throw new ConflictException(CHECKOUT_ACCOUNTING_CHANGED_MESSAGE);
+            throw error;
+          }
+          const reservations = await tx.checkoutRentRefundAllocation.findMany({
+            where: {
+              status: 'RESERVED',
+              item: { checkoutSettlementId: settlement.id },
+            },
+            orderBy: { id: 'asc' },
+          });
+          assertCheckoutRentRefundPlanCurrent(
+            reservations,
+            recalculated.plan.allocations,
+          );
+        }
         const occurredAt = new Date();
         const claimedProofs = await tx.fileAsset.updateMany({
           where: {
@@ -372,12 +432,10 @@ export class DepositRefundsService {
         });
         if (claimedRefund.count !== 1)
           throw new ConflictException('退款申请已被处理，请刷新后重试');
-        if (!settlement.actualCheckoutDate)
-          throw new BadRequestException('结算单缺少实际退房日期');
         await normalizeFutureCheckoutBills(tx, {
           settlementId: settlement.id,
           contractId: settlement.contractId,
-          actualCheckoutDate: settlement.actualCheckoutDate,
+          actualCheckoutDate,
           operatorId: user.id,
           occurredAt,
         });

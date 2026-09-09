@@ -1,7 +1,10 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { calculatePaymentRefundStatus } from '../payments/payment-refund-status';
-import { reverseFutureCheckoutBillNormalization } from './checkout-future-bill-normalization';
+import {
+  reverseFutureCheckoutBillNormalization,
+  restoreLegacyFutureCheckoutBills,
+} from './checkout-future-bill-normalization';
 
 export type CompletedCheckoutReversalInput = {
   settlementId: number;
@@ -116,6 +119,7 @@ export async function reverseCompletedCheckoutAccounting(
   }
 
   const futureBills = await reverseFutureCheckoutBillNormalization(tx, input);
+  const legacyFutureBills = await restoreLegacyFutureCheckoutBills(tx, input);
 
   const depositOffsets = await tx.depositTransaction.findMany({
     where: {
@@ -320,7 +324,9 @@ export async function reverseCompletedCheckoutAccounting(
     restoredDepositAmount: restoredDepositAmount.toFixed(2),
     restoredPrepaymentAmount: restoredPrepaymentAmount.toFixed(2),
     restoredRentRefundAmount,
-    restoredFutureBillAmount: futureBills.restoredOutstandingAmount,
+    restoredFutureBillAmount: money(futureBills.restoredOutstandingAmount)
+      .plus(legacyFutureBills.restoredOutstandingAmount)
+      .toFixed(2),
     restoredDepositOffsetAmount: restoredDepositOffsetAmount.toFixed(2),
     voidedSupplementalBillId,
   };

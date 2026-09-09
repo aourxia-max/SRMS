@@ -54,6 +54,88 @@ function harness(bills = [futureBill()]) {
 }
 
 describe('future checkout bill normalization', () => {
+  it('locks and normalizes the checkout-day bill while preserving received cash', async () => {
+    const bill = futureBill({ periodStart: input.actualCheckoutDate });
+    const { tx } = harness([bill]);
+    tx.rentBill.findMany.mockImplementation(({ where }) =>
+      Promise.resolve(where.periodStart.gte ? [bill] : []),
+    );
+    const result = await normalizeFutureCheckoutBills(tx as never, input);
+    expect(result.cancelledOutstandingAmount).toBe('500.00');
+    expect(tx.rentBill.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          periodStart: { gte: input.actualCheckoutDate },
+        }),
+      }),
+    );
+    expect(tx.$queryRaw.mock.calls[0][0].strings.join('?')).toContain(
+      'period_start >= ?',
+    );
+    expect(tx.rentBill.update).toHaveBeenCalledWith({
+      where: { id: 260 },
+      data: expect.objectContaining({
+        payableAmount: new Prisma.Decimal('300.00'),
+        status: 'PAID',
+      }),
+    });
+    expect(tx.rentBill.update.mock.calls[0][0].data).not.toHaveProperty(
+      'receivedAmount',
+    );
+  });
+
+  it('keeps all real cash on an already paid checkout-day bill', async () => {
+    const { tx } = harness([
+      futureBill({
+        periodStart: input.actualCheckoutDate,
+        receivedAmount: new Prisma.Decimal('800.00'),
+        outstandingAmount: new Prisma.Decimal('0.00'),
+        status: 'PAID',
+      }),
+    ]);
+    await normalizeFutureCheckoutBills(tx as never, input);
+    expect(tx.rentBill.update).not.toHaveBeenCalled();
+    expect(tx.billAdjustment.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['0.00', '2026-09-01', 'PENDING', '800.00'],
+    ['0.00', '2026-08-31', 'PENDING', '800.00'],
+    ['300.00', '2026-09-01', 'PARTIAL', '500.00'],
+    ['0.00', '2026-08-20', 'OVERDUE', '800.00'],
+    ['800.00', '2026-08-20', 'PAID', '0.00'],
+  ])(
+    'restores checkout-day correction: received %s, due %s, status %s',
+    async (received, dueDate, status, outstanding) => {
+      const { tx } = harness([]);
+      tx.billAdjustment.findMany.mockResolvedValue([
+        {
+          id: 900,
+          rentBillId: 260,
+          amount: new Prisma.Decimal('800.00'),
+          rentBill: futureBill({
+            periodStart: input.actualCheckoutDate,
+            dueDate: new Date(dueDate),
+            adjustmentAmount: new Prisma.Decimal('-800.00'),
+            payableAmount: new Prisma.Decimal('0.00'),
+            receivedAmount: new Prisma.Decimal(received),
+            outstandingAmount: new Prisma.Decimal('0.00'),
+            status: 'VOIDED',
+          }),
+        },
+      ]);
+      await reverseFutureCheckoutBillNormalization(tx as never, input);
+      expect(tx.rentBill.update).toHaveBeenCalledWith({
+        where: { id: 260 },
+        data: expect.objectContaining({
+          payableAmount: new Prisma.Decimal('800.00'),
+          outstandingAmount: new Prisma.Decimal(outstanding),
+          status,
+        }),
+      });
+    },
+  );
+
   it('turns an 800/300/500 future bill into 300/300/0 with an approved correction', async () => {
     const { tx } = harness();
 

@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma, type RentBillStatus } from '@prisma/client';
+import { contractBusinessDay } from '../contracts/contract-business-day';
 
 type NormalizationInput = {
   settlementId: number;
@@ -23,7 +24,8 @@ const restoredStatus = (input: {
 }): RentBillStatus => {
   if (input.outstandingAmount.isZero()) return 'PAID';
   if (input.receivedAmount.gt(0)) return 'PARTIAL';
-  return input.dueDate.getTime() < input.occurredAt.getTime()
+  return contractBusinessDay(input.dueDate).getTime() <
+    contractBusinessDay(input.occurredAt).getTime()
     ? 'OVERDUE'
     : 'PENDING';
 };
@@ -33,13 +35,13 @@ export async function normalizeFutureCheckoutBills(
   input: NormalizationInput,
 ) {
   await tx.$queryRaw(
-    Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${input.contractId} AND bill_category = 'RENT' AND period_start > ${input.actualCheckoutDate} ORDER BY id FOR UPDATE`,
+    Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${input.contractId} AND bill_category = 'RENT' AND period_start >= ${input.actualCheckoutDate} AND status <> 'REFUNDED' ORDER BY id FOR UPDATE`,
   );
   const bills = await tx.rentBill.findMany({
     where: {
       contractId: input.contractId,
       billCategory: 'RENT',
-      periodStart: { gt: input.actualCheckoutDate },
+      periodStart: { gte: input.actualCheckoutDate },
       status: { not: 'REFUNDED' },
     },
     orderBy: { id: 'asc' },
@@ -181,5 +183,50 @@ export async function reverseFutureCheckoutBillNormalization(
     restoredOutstandingAmount: restoredOutstandingAmount
       .toDecimalPlaces(2)
       .toFixed(2),
+  };
+}
+
+// 兼容旧退租直接作废、但没有调整记录的全额未收账单。
+export async function restoreLegacyFutureCheckoutBills(
+  tx: Prisma.TransactionClient,
+  input: NormalizationInput,
+) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT id FROM rent_bills WHERE contract_id = ${input.contractId} AND bill_category = 'RENT' AND period_start >= ${input.actualCheckoutDate} AND status = 'VOIDED' AND received_amount = 0 AND outstanding_amount = 0 AND payable_amount > 0 ORDER BY id FOR UPDATE`,
+  );
+  const bills = await tx.rentBill.findMany({
+    where: {
+      contractId: input.contractId,
+      billCategory: 'RENT',
+      periodStart: { gte: input.actualCheckoutDate },
+      status: 'VOIDED',
+      receivedAmount: 0,
+      outstandingAmount: 0,
+      payableAmount: { gt: 0 },
+    },
+    orderBy: { id: 'asc' },
+  });
+  const restoredBillIds: number[] = [];
+  let restoredOutstandingAmount = new Prisma.Decimal(0);
+  for (const bill of bills) {
+    const payableAmount = money(bill.payableAmount);
+    await tx.rentBill.update({
+      where: { id: bill.id },
+      data: {
+        outstandingAmount: payableAmount,
+        status: restoredStatus({
+          receivedAmount: new Prisma.Decimal(0),
+          outstandingAmount: payableAmount,
+          dueDate: bill.dueDate,
+          occurredAt: input.occurredAt,
+        }),
+      },
+    });
+    restoredBillIds.push(bill.id);
+    restoredOutstandingAmount = restoredOutstandingAmount.plus(payableAmount);
+  }
+  return {
+    restoredBillIds,
+    restoredOutstandingAmount: restoredOutstandingAmount.toFixed(2),
   };
 }

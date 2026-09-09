@@ -1,6 +1,9 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma, type RentBillStatus } from '@prisma/client';
-import { reverseFutureCheckoutBillNormalization } from './checkout-future-bill-normalization';
+import {
+  reverseFutureCheckoutBillNormalization,
+  restoreLegacyFutureCheckoutBills,
+} from './checkout-future-bill-normalization';
 
 type ApprovedCheckoutCancellationInput = {
   settlementId: number;
@@ -156,37 +159,8 @@ export async function rollbackApprovedCheckout(
 
   await reverseFutureCheckoutBillNormalization(tx, input);
 
-  // 兼容修复前已经审批的结算：旧逻辑曾直接把未来全额未收账单标成作废，
-  // 但没有留下调整记录。这里只恢复特征完全匹配的旧数据。
-  const legacyFutureBills = await tx.rentBill.findMany({
-    where: {
-      contractId: input.contractId,
-      billCategory: 'RENT',
-      periodStart: { gt: input.actualCheckoutDate },
-      status: 'VOIDED',
-      receivedAmount: 0,
-      outstandingAmount: 0,
-      payableAmount: { gt: 0 },
-    },
-    orderBy: { id: 'asc' },
-  });
-  const restoredLegacyFutureBillIds: number[] = [];
-  for (const bill of legacyFutureBills) {
-    const payableAmount = money(bill.payableAmount);
-    await tx.rentBill.update({
-      where: { id: bill.id },
-      data: {
-        outstandingAmount: payableAmount,
-        status: restoredBillStatus({
-          receivedAmount: new Prisma.Decimal(0),
-          outstandingAmount: payableAmount,
-          dueDate: bill.dueDate,
-          occurredAt: input.occurredAt,
-        }),
-      },
-    });
-    restoredLegacyFutureBillIds.push(bill.id);
-  }
+  const { restoredBillIds: restoredLegacyFutureBillIds } =
+    await restoreLegacyFutureCheckoutBills(tx, input);
 
   const supplementalBill = await tx.rentBill.findUnique({
     where: { checkoutSettlementId: input.settlementId },

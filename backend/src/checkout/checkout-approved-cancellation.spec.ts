@@ -87,6 +87,44 @@ function harness() {
 }
 
 describe('approved checkout cancellation rollback', () => {
+  it.each([
+    ['2026-09-01', 'PENDING'],
+    ['2026-08-13', 'OVERDUE'],
+  ])(
+    'restores legacy checkout-day bills using due date %s as %s',
+    async (dueDate, status) => {
+      const { tx, billWrite } = harness();
+      const bill = {
+        id: 261,
+        billNo: 'ZD261',
+        periodStart: input.actualCheckoutDate,
+        dueDate: new Date(dueDate),
+        payableAmount: new Prisma.Decimal('800.00'),
+        receivedAmount: new Prisma.Decimal('0.00'),
+        outstandingAmount: new Prisma.Decimal('0.00'),
+        adjustmentAmount: new Prisma.Decimal('0.00'),
+        status: 'VOIDED',
+      };
+      tx.rentBill.findMany.mockImplementation(({ where }) =>
+        Promise.resolve(where.periodStart.gte ? [bill] : []),
+      );
+      const result = await rollbackApprovedCheckout(tx as never, input);
+      expect(result.restoredLegacyFutureBillIds).toEqual([261]);
+      expect(billWrite).toHaveBeenCalledWith({
+        where: { id: 261 },
+        data: {
+          outstandingAmount: new Prisma.Decimal('800.00'),
+          status,
+        },
+      });
+      expect(
+        tx.$queryRaw.mock.calls.some(([query]) =>
+          query.strings.join('?').includes('period_start >= ?'),
+        ),
+      ).toBe(true);
+    },
+  );
+
   it('cancels pending refund, releases reservation and restores linked ledgers', async () => {
     const state = harness();
 

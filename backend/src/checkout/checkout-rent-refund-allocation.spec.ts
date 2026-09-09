@@ -23,6 +23,25 @@ const candidate = (
 });
 
 describe('allocateCheckoutRentRefund', () => {
+  it('preserves full refund eligibility for a performed current period ending on checkout day', () => {
+    const plan = allocateCheckoutRentRefund({
+      actualCheckoutDate: new Date('2026-09-01'),
+      requestedAmount: '800.00',
+      candidates: [
+        candidate(1, '2026-08-02', '2026-09-01', '800.00', '2026-08-02'),
+      ],
+    });
+    expect(plan.maxRefundableAmount).toBe('800.00');
+    expect(plan.allocations).toEqual([
+      {
+        paymentAllocationId: 1,
+        paymentId: 10,
+        rentBillId: 100,
+        amount: '800.00',
+      },
+    ]);
+  });
+
   it('uses future rent periods before the checkout period', () => {
     expect(
       allocateCheckoutRentRefund({

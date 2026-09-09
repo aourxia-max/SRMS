@@ -272,6 +272,7 @@ describe('DepositRefundsService', () => {
             status: 'APPROVED',
             actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
             handoverDate: new Date('2026-08-01'),
+            items: [],
             finalReceivable: '0.00',
             depositRefundableAmount: '800.00',
             prepaymentRefundableAmount: '500.00',
@@ -377,6 +378,8 @@ describe('DepositRefundsService', () => {
             id: 8,
             contractId: 3,
             status: 'APPROVED',
+            actualCheckoutDate: new Date('2026-08-13'),
+            items: [],
             handoverDate: new Date('2026-08-01'),
             finalReceivable: '0.00',
             depositRefundableAmount: '800.00',
@@ -666,6 +669,11 @@ describe('DepositRefundsService', () => {
             prepaymentRefundableAmount: new Prisma.Decimal('500.00'),
             rentRefundableAmount: new Prisma.Decimal('100.00'),
             targetRoomStatus: 'EMPTY',
+            items: [] as Array<{
+              itemType: string;
+              rentBillId: number;
+              amount: Prisma.Decimal;
+            }>,
             contract: {
               id: 4,
               status: 'PENDING_CHECKOUT',
@@ -697,6 +705,29 @@ describe('DepositRefundsService', () => {
       rentBill: {
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
+      },
+      paymentAllocation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 101,
+            paymentId: 11,
+            rentBillId: 20,
+            allocatedAmount: new Prisma.Decimal('100.00'),
+            reversedAmount: new Prisma.Decimal(0),
+            payment: {
+              paymentDate: new Date('2026-08-01'),
+              receiptNo: 'SK11',
+              voidRequests: [],
+            },
+            rentBill: {
+              billNo: 'ZD20',
+              periodStart: new Date('2026-08-01'),
+              periodEnd: new Date('2026-08-31'),
+            },
+            refundAllocations: [],
+            checkoutRentRefundAllocations: [],
+          },
+        ]),
       },
       billAdjustment: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -736,6 +767,98 @@ describe('DepositRefundsService', () => {
       refundStatusWrite,
     };
   }
+
+  it.each([
+    'historical reservation',
+    'unpaid performed bill',
+    'unperformed linked deduction',
+  ])('rejects %s before claiming proof, refund or money', async (scenario) => {
+    const harness = combinedApprovalTx();
+    const refund = await harness.tx.depositRefund.findUniqueOrThrow({
+      where: { id: 33 },
+    });
+    refund.checkoutSettlement.actualCheckoutDate = new Date('2026-09-01');
+    if (scenario !== 'historical reservation') {
+      refund.refundAmount = new Prisma.Decimal('1300.00');
+      refund.rentRefundAmount = new Prisma.Decimal(0);
+      refund.checkoutSettlement.rentRefundableAmount = new Prisma.Decimal(0);
+      harness.tx.checkoutRentRefundAllocation.findMany.mockResolvedValue([]);
+      harness.tx.rentBill.findMany.mockResolvedValue([
+        {
+          id: 20,
+          billNo: 'ZD20',
+          billCategory: 'RENT',
+          periodStart: new Date(
+            scenario === 'unpaid performed bill' ? '2026-08-01' : '2026-09-01',
+          ),
+          status: scenario === 'unpaid performed bill' ? 'OVERDUE' : 'PAID',
+          payableAmount: new Prisma.Decimal('100.00'),
+          receivedAmount: new Prisma.Decimal(
+            scenario === 'unpaid performed bill' ? '0.00' : '100.00',
+          ),
+          outstandingAmount: new Prisma.Decimal(
+            scenario === 'unpaid performed bill' ? '100.00' : '0.00',
+          ),
+          adjustmentAmount: new Prisma.Decimal(0),
+        },
+      ]);
+      if (scenario === 'unperformed linked deduction')
+        refund.checkoutSettlement.items = [
+          {
+            itemType: 'REPAIR',
+            rentBillId: 20,
+            amount: new Prisma.Decimal('10.00'),
+          },
+        ];
+    }
+    const writer = jest
+      .spyOn(checkoutRentRefundWriter, 'applyCheckoutRentRefund')
+      .mockResolvedValue({
+        appliedAmount: '100.00',
+        affectedBillIds: [20],
+        affectedPaymentIds: [11],
+      });
+    const service = new DepositRefundsService({
+      db: transactional(harness.tx).db,
+    } as never);
+    try {
+      await expect(
+        service.approve(33, { id: 1, username: 'root', role: 'SUPER_ADMIN' }),
+      ).rejects.toEqual(
+        new ConflictException('实际退房日期或账单已变化，请重新预估结算金额'),
+      );
+      for (const write of [
+        harness.proofWrite,
+        harness.refundStatusWrite,
+        harness.depositLedgerWrite,
+        harness.prepaymentLedgerWrite,
+        harness.settlementWrite,
+        harness.contractWrite,
+        harness.roomWrite,
+        harness.tx.rentBill.update,
+      ])
+        expect(write).not.toHaveBeenCalled();
+      expect(writer).not.toHaveBeenCalled();
+    } finally {
+      writer.mockRestore();
+    }
+  });
+
+  it('rejects missing reserved refund detail with the accounting conflict before mutation', async () => {
+    const harness = combinedApprovalTx();
+    harness.tx.checkoutRentRefundAllocation.findMany.mockResolvedValue([]);
+    const service = new DepositRefundsService({
+      db: transactional(harness.tx).db,
+    } as never);
+    await expect(
+      service.approve(33, { id: 1, username: 'root', role: 'SUPER_ADMIN' }),
+    ).rejects.toEqual(
+      new ConflictException('实际退房日期或账单已变化，请重新预估结算金额'),
+    );
+    expect(harness.proofWrite).not.toHaveBeenCalled();
+    expect(harness.refundStatusWrite).not.toHaveBeenCalled();
+    expect(harness.depositLedgerWrite).not.toHaveBeenCalled();
+  });
 
   it('rejects a zero-rent refund whose contract differs from the settlement before any write', async () => {
     const harness = combinedApprovalTx();

@@ -176,6 +176,382 @@ function initiationDto(actualCheckoutDate?: string): InitiateCheckoutDto {
   };
 }
 
+function accountingBill(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 21,
+    contractId: 3,
+    billNo: 'ZD21',
+    billCategory: 'RENT',
+    periodSeq: 1,
+    periodStart: new Date('2026-09-01'),
+    periodEnd: new Date('2026-09-30'),
+    dueDate: new Date('2026-09-01'),
+    status: 'OVERDUE',
+    payableAmount: new Prisma.Decimal('100.00'),
+    receivedAmount: new Prisma.Decimal('0.00'),
+    outstandingAmount: new Prisma.Decimal('100.00'),
+    adjustmentAmount: new Prisma.Decimal(0),
+    ...overrides,
+  };
+}
+
+function accountingHarness(bills = [accountingBill()]) {
+  const settlement = {
+    id: 8,
+    contractId: 3,
+    settlementNo: 'TZ8',
+    status: 'DRAFT',
+    originContractStatus: 'ACTIVE',
+    actualCheckoutDate: new Date('2026-09-01'),
+    targetRoomStatus: 'EMPTY',
+    rentRefundableAmount: new Prisma.Decimal(0),
+    depositRefundableAmount: new Prisma.Decimal(0),
+    prepaymentRefundableAmount: new Prisma.Decimal(0),
+    finalReceivable: new Prisma.Decimal(0),
+    items: [] as Array<{
+      id: number;
+      itemType: string;
+      amount: Prisma.Decimal;
+      rentBillId: number | null;
+    }>,
+    contract: {
+      id: 3,
+      roomId: 7,
+      status: 'PENDING_CHECKOUT',
+      startDate: new Date('2026-01-01'),
+      room: { id: 7 },
+      bills,
+    },
+  };
+  const state = transactional({
+    checkoutSettlement: {
+      findMany: jest.fn().mockResolvedValue([settlement]),
+      findUniqueOrThrow: jest
+        .fn()
+        .mockImplementation(() => Promise.resolve(settlement)),
+      update: jest.fn().mockImplementation(() => Promise.resolve(settlement)),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    checkoutSettlementItem: { deleteMany: jest.fn(), update: jest.fn() },
+    rentBill: {
+      findMany: jest.fn().mockResolvedValue(bills),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
+    paymentAllocation: { findMany: jest.fn().mockResolvedValue([]) },
+    depositTransaction: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+    },
+    prepaymentTransaction: { findFirst: jest.fn().mockResolvedValue(null) },
+    contract: {
+      findUnique: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 3, roomId: 7 }),
+      update: jest.fn(),
+    },
+    room: { update: jest.fn() },
+    roomStatusHistory: { create: jest.fn() },
+    billAdjustment: { create: jest.fn() },
+  });
+  mockRoomContractLocks(state.client, 3, 7);
+  return {
+    settlement,
+    tx: state.client,
+    service: new CheckoutService({ db: state.db } as never),
+  };
+}
+
+describe('CheckoutService actual-date accounting', () => {
+  const user = { id: 2, username: 'admin', role: 'SUPER_ADMIN' } as const;
+  const conflict = '实际退房日期或账单已变化，请重新预估结算金额';
+  const dto = {
+    actualCheckoutDate: '2026-09-01',
+    handoverDate: '2026-09-01',
+    inspectionAt: '2026-09-01',
+    targetRoomStatus: 'EMPTY' as const,
+    items: [],
+  };
+  const arrearsItem = {
+    itemType: 'RENT_ARREARS' as const,
+    rentBillId: 21,
+    amount: '100.00',
+    description: '欠租',
+  };
+
+  it('excludes the checkout-day bill from preview outstanding and supplemental collection', async () => {
+    const { service } = accountingHarness();
+    await expect(service.preview(8, dto)).resolves.toMatchObject({
+      finalReceivable: '0.00',
+      supplementalArrearsAmount: '0.00',
+    });
+  });
+
+  it('only exposes performed bills as selectable arrears after a date is saved', async () => {
+    const { service } = accountingHarness([
+      accountingBill(),
+      accountingBill({ id: 20, periodStart: new Date('2026-08-01') }),
+    ]);
+    const result = await service.list();
+    expect(result[0].arrearsBills.map((bill) => bill.id)).toEqual([20]);
+  });
+
+  it.each(['preview', 'submit'] as const)(
+    '%s rejects an old arrears selection before mutation after the date changes',
+    async (entry) => {
+      const { service, tx } = accountingHarness();
+      const input = { ...dto, items: [arrearsItem] };
+      const result =
+        entry === 'preview'
+          ? service.preview(8, input)
+          : service.submit(8, input, user);
+      await expect(result).rejects.toEqual(new ConflictException(conflict));
+      expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
+      expect(tx.checkoutSettlement.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('approves the equal-boundary unpaid bill with zero receivable and no deduction or collection', async () => {
+    const { service, tx, settlement } = accountingHarness();
+    settlement.status = 'PENDING';
+    await service.approve(8, user);
+    const data = tx.checkoutSettlement.updateMany.mock.calls[0][0].data;
+    expect(data.rentReceivable.toFixed(2)).toBe('0.00');
+    expect(data.rentOutstanding.toFixed(2)).toBe('0.00');
+    expect(data.finalReceivable.toFixed(2)).toBe('0.00');
+    expect(tx.rentBill.update).not.toHaveBeenCalled();
+    expect(tx.depositTransaction.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['preview', 'submit', 'approve'] as const)(
+    '%s rejects a deduction linked to an unperformed bill',
+    async (entry) => {
+      const { service, settlement, tx } = accountingHarness([]);
+      const bill = accountingBill({
+        outstandingAmount: new Prisma.Decimal(0),
+        receivedAmount: new Prisma.Decimal('100.00'),
+        status: 'PAID',
+      });
+      settlement.contract.bills.push(bill);
+      settlement.status = entry === 'approve' ? 'PENDING' : 'DRAFT';
+      settlement.items = [
+        {
+          id: 81,
+          itemType: 'REPAIR',
+          rentBillId: 21,
+          amount: new Prisma.Decimal('10.00'),
+        },
+      ];
+      const input = {
+        ...dto,
+        items: [
+          {
+            itemType: 'REPAIR' as const,
+            rentBillId: 21,
+            amount: '10.00',
+            inspectionRecordRef: 'YS1',
+            description: '维修',
+          },
+        ],
+      };
+      const result =
+        entry === 'preview'
+          ? service.preview(8, input)
+          : entry === 'submit'
+            ? service.submit(8, input, user)
+            : service.approve(8, user);
+      await expect(result).rejects.toEqual(new ConflictException(conflict));
+      expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
+      expect(tx.checkoutSettlement.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects final confirmation when an already-offset arrears item became unperformed', async () => {
+    const { service, settlement, tx } = accountingHarness([
+      accountingBill({
+        outstandingAmount: new Prisma.Decimal(0),
+        receivedAmount: new Prisma.Decimal('100.00'),
+        status: 'PAID',
+      }),
+    ]);
+    settlement.status = 'APPROVED';
+    settlement.items = [
+      {
+        id: 81,
+        itemType: 'RENT_ARREARS',
+        rentBillId: 21,
+        amount: new Prisma.Decimal('100.00'),
+      },
+    ];
+    await expect(service.completeZeroRefund(8, user)).rejects.toEqual(
+      new ConflictException(conflict),
+    );
+    expect(tx.checkoutSettlement.updateMany).not.toHaveBeenCalled();
+    expect(tx.rentBill.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps valid received cash on a paid unperformed bill through approval', async () => {
+    const { service, tx, settlement } = accountingHarness([
+      accountingBill({
+        status: 'PAID',
+        receivedAmount: new Prisma.Decimal('100.00'),
+        outstandingAmount: new Prisma.Decimal(0),
+      }),
+    ]);
+    settlement.status = 'PENDING';
+    await service.approve(8, user);
+    const data = tx.checkoutSettlement.updateMany.mock.calls[0][0].data;
+    expect(data.rentReceivable.toFixed(2)).toBe('0.00');
+    expect(data.rentReceived.toFixed(2)).toBe('100.00');
+    expect(tx.rentBill.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects approval when linked arrears have the right total but the wrong bill', async () => {
+    const { service, tx, settlement } = accountingHarness([
+      accountingBill({ id: 20, periodStart: new Date('2026-08-01') }),
+    ]);
+    settlement.status = 'PENDING';
+    settlement.items = [
+      {
+        id: 81,
+        itemType: 'RENT_ARREARS',
+        rentBillId: 21,
+        amount: new Prisma.Decimal('100.00'),
+      },
+    ];
+    await expect(service.approve(8, user)).rejects.toEqual(
+      new ConflictException(conflict),
+    );
+    expect(tx.checkoutSettlement.updateMany).not.toHaveBeenCalled();
+    expect(tx.depositTransaction.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects approval when the bill balance changed since submit', async () => {
+    const { service, settlement } = accountingHarness([
+      accountingBill({
+        periodStart: new Date('2026-08-01'),
+        outstandingAmount: new Prisma.Decimal('50.00'),
+      }),
+    ]);
+    settlement.status = 'PENDING';
+    settlement.items = [
+      {
+        id: 81,
+        itemType: 'RENT_ARREARS',
+        rentBillId: 21,
+        amount: new Prisma.Decimal('100.00'),
+      },
+    ];
+    await expect(service.approve(8, user)).rejects.toEqual(
+      new ConflictException(conflict),
+    );
+  });
+
+  it('rejects zero final confirmation if a performed bill has become unpaid', async () => {
+    const { service, settlement, tx } = accountingHarness([
+      accountingBill({ periodStart: new Date('2026-08-01') }),
+    ]);
+    settlement.status = 'APPROVED';
+    await expect(service.completeZeroRefund(8, user)).rejects.toEqual(
+      new ConflictException(conflict),
+    );
+    expect(tx.rentBill.update).not.toHaveBeenCalled();
+    expect(tx.checkoutSettlement.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('finalizes an equal-boundary bill with the latest locked date and no rent collection', async () => {
+    const { service, settlement, tx } = accountingHarness();
+    settlement.status = 'APPROVED';
+    await expect(service.completeZeroRefund(8, user)).resolves.toMatchObject({
+      status: 'COMPLETED',
+    });
+    expect(tx.rentBill.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          periodStart: { gte: new Date('2026-09-01') },
+        }),
+      }),
+    );
+    expect(tx.rentBill.update).toHaveBeenCalledWith({
+      where: { id: 21 },
+      data: expect.objectContaining({ status: 'VOIDED' }),
+    });
+  });
+
+  it.each(['preview', 'submit', 'approve'] as const)(
+    '%s rejects a reservation whose bill became historical before financial writes',
+    async (entry) => {
+      const { service, settlement, tx } = accountingHarness([]);
+      settlement.status = entry === 'approve' ? 'PENDING' : 'DRAFT';
+      settlement.rentRefundableAmount = new Prisma.Decimal('100.00');
+      settlement.items = [
+        {
+          id: 81,
+          itemType: 'RENT_REFUND',
+          rentBillId: null,
+          amount: new Prisma.Decimal('100.00'),
+        },
+      ];
+      tx.checkoutRentRefundAllocation.findMany.mockResolvedValue([
+        {
+          id: 501,
+          paymentAllocationId: 101,
+          paymentId: 11,
+          rentBillId: 21,
+          reservedAmount: new Prisma.Decimal('100.00'),
+          item: {
+            checkoutSettlementId: 8,
+            itemType: 'RENT_REFUND',
+            amount: new Prisma.Decimal('100.00'),
+          },
+          paymentAllocation: { paymentId: 11, rentBillId: 21 },
+        },
+      ]);
+      tx.paymentAllocation.findMany.mockResolvedValue([
+        {
+          id: 101,
+          paymentId: 11,
+          rentBillId: 21,
+          allocatedAmount: new Prisma.Decimal('100.00'),
+          reversedAmount: new Prisma.Decimal(0),
+          payment: {
+            paymentDate: new Date('2026-08-01'),
+            receiptNo: 'SK11',
+            voidRequests: [],
+          },
+          rentBill: {
+            billNo: 'ZD21',
+            periodStart: new Date('2026-08-01'),
+            periodEnd: new Date('2026-08-31'),
+          },
+          refundAllocations: [],
+          checkoutRentRefundAllocations: [],
+        },
+      ]);
+      const input = {
+        ...dto,
+        items: [
+          {
+            itemType: 'RENT_REFUND' as const,
+            amount: '100.00',
+            description: '退租退款',
+          },
+        ],
+      };
+      const result =
+        entry === 'preview'
+          ? service.preview(8, input)
+          : entry === 'submit'
+            ? service.submit(8, input, user)
+            : service.approve(8, user);
+      await expect(result).rejects.toEqual(new ConflictException(conflict));
+      expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
+      expect(tx.checkoutSettlement.update).not.toHaveBeenCalled();
+      expect(tx.checkoutSettlement.updateMany).not.toHaveBeenCalled();
+      expect(tx.checkoutRentRefundAllocation.updateMany).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('CheckoutService', () => {
   const user = { id: 2, username: 'admin', role: 'ADMIN' } as const;
 
@@ -1233,7 +1609,7 @@ describe('CheckoutService', () => {
                 id: 11,
                 billNo: 'ZB2026080001',
                 periodSeq: 1,
-                periodStart: new Date('2026-08-01'),
+                periodStart: new Date('2026-07-01'),
                 payableAmount: new Prisma.Decimal('100.00'),
                 receivedAmount: new Prisma.Decimal('0.00'),
                 outstandingAmount: new Prisma.Decimal('100.00'),
@@ -1317,6 +1693,7 @@ describe('CheckoutService', () => {
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
           actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
+          items: [],
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '0.00',
@@ -1402,6 +1779,7 @@ describe('CheckoutService', () => {
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
           actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
+          items: [],
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '150.00',
@@ -1444,6 +1822,7 @@ describe('CheckoutService', () => {
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
           actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
+          items: [],
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '150.00',
@@ -1600,6 +1979,7 @@ describe('CheckoutService', () => {
           status: 'APPROVED',
           targetRoomStatus: 'EMPTY',
           actualCheckoutDate: new Date('2026-08-13T00:00:00.000Z'),
+          items: [],
           depositRefundableAmount: '0.00',
           prepaymentRefundableAmount: '0.00',
           finalReceivable: '0.00',
@@ -2792,15 +3172,22 @@ describe('CheckoutService', () => {
     expect(
       tx.checkoutSettlementItem.deleteMany.mock.invocationCallOrder[0],
     ).toBeLessThan(settlementUpdate.mock.invocationCallOrder[0]);
-    expect(settlementUpdate.mock.invocationCallOrder[0]).toBeLessThan(
-      tx.$queryRaw.mock.invocationCallOrder[4],
+    expect(tx.$queryRaw.mock.invocationCallOrder[9]).toBeLessThan(
+      tx.paymentAllocation.findMany.mock.invocationCallOrder[0],
     );
-    expect(tx.$queryRaw.mock.invocationCallOrder[10]).toBeLessThan(
+    expect(
+      tx.paymentAllocation.findMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      tx.checkoutSettlementItem.deleteMany.mock.invocationCallOrder[0],
+    );
+    expect(tx.$queryRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
       tx.checkoutRentRefundAllocation.updateMany.mock.invocationCallOrder[0],
     );
     expect(
       tx.checkoutRentRefundAllocation.updateMany.mock.invocationCallOrder[0],
-    ).toBeLessThan(tx.paymentAllocation.findMany.mock.invocationCallOrder[0]);
+    ).toBeLessThan(
+      tx.paymentAllocation.findMany.mock.invocationCallOrder.at(-1)!,
+    );
     expect(
       tx.paymentAllocation.findMany.mock.invocationCallOrder[0],
     ).toBeLessThan(reserveCreateMany.mock.invocationCallOrder[0]);
@@ -2963,7 +3350,9 @@ describe('CheckoutService', () => {
 
     await expect(
       service.approve(9, { ...user, role: 'SUPER_ADMIN' }),
-    ).rejects.toThrow('退租退款预留明细已变化，请退回草稿后重新提交。');
+    ).rejects.toEqual(
+      new ConflictException('实际退房日期或账单已变化，请重新预估结算金额'),
+    );
     expect(checkoutUpdate).not.toHaveBeenCalled();
   });
 
@@ -3128,6 +3517,29 @@ describe('CheckoutService', () => {
       checkoutRentRefundAllocation: {
         findMany: jest.fn().mockResolvedValue(reservations),
         updateMany: reservationStatusWrite,
+      },
+      paymentAllocation: {
+        findMany: jest.fn().mockResolvedValue(
+          reservations.map((reservation) => ({
+            id: reservation.paymentAllocationId,
+            paymentId: reservation.paymentId,
+            rentBillId: reservation.rentBillId,
+            allocatedAmount: reservation.reservedAmount,
+            reversedAmount: new Prisma.Decimal(0),
+            payment: {
+              paymentDate: new Date('2026-08-01'),
+              receiptNo: `SK${reservation.paymentId}`,
+              voidRequests: [],
+            },
+            rentBill: {
+              billNo: `ZD${reservation.rentBillId}`,
+              periodStart: new Date('2026-08-01'),
+              periodEnd: new Date('2026-08-31'),
+            },
+            refundAllocations: [],
+            checkoutRentRefundAllocations: [],
+          })),
+        ),
       },
       rentBill: {
         update: jest.fn(),
