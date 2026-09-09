@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { http } from '../services/http'
+import { rentBillStatusMap } from '../services/rentBillDisplay'
 
 type ReportType = 'overview' | 'rent-collection' | 'cash-flows' | 'commissions'
 type ExportFormat = 'XLSX' | 'PDF'
@@ -29,6 +30,7 @@ const statusLabels: Record<string, { label: string; type: 'success' | 'warning' 
   FAILED: { label: '失败', type: 'danger' },
 }
 const billStatusLabels: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
+  PENDING_CHECKOUT_REVIEW: rentBillStatusMap.PENDING_CHECKOUT_REVIEW,
   PENDING: { label: '待支付', type: 'info' },
   PARTIAL: { label: '部分支付', type: 'warning' },
   PAID: { label: '已支付', type: 'success' },

@@ -1,4 +1,8 @@
+import 'reflect-metadata';
 import { Prisma } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { ListRentBillsDto } from './dto/list-rent-bills.dto';
 import { RentBillsService } from './rent-bills.service';
 
 function bill(overrides: Record<string, unknown> = {}) {
@@ -19,6 +23,7 @@ function bill(overrides: Record<string, unknown> = {}) {
       id: 1,
       contractNo: 'HT2026080101',
       status: 'ACTIVE',
+      checkoutSettlements: [],
       room: {
         id: 11,
         fullHouseNo: '1栋101',
@@ -32,6 +37,216 @@ function bill(overrides: Record<string, unknown> = {}) {
 }
 
 describe('RentBillsService', () => {
+  function checkoutFixture() {
+    const settlement = {
+      status: 'DRAFT',
+      actualCheckoutDate: new Date('2026-09-01'),
+    };
+    const contract = { ...bill().contract, checkoutSettlements: [settlement] };
+    const rows = [
+      bill({
+        id: 1,
+        contract,
+        periodStart: new Date('2026-09-01'),
+        status: 'OVERDUE',
+        payableAmount: new Prisma.Decimal(1600),
+        receivedAmount: new Prisma.Decimal(0),
+        outstandingAmount: new Prisma.Decimal(1600),
+      }),
+      bill({
+        id: 2,
+        contract,
+        periodStart: new Date('2026-08-01'),
+        status: 'OVERDUE',
+        payableAmount: new Prisma.Decimal(1000),
+        receivedAmount: new Prisma.Decimal(200),
+        outstandingAmount: new Prisma.Decimal(800),
+      }),
+      bill({
+        id: 3,
+        contract,
+        periodStart: new Date('2026-10-01'),
+        status: 'PAID',
+        payableAmount: new Prisma.Decimal(1600),
+        receivedAmount: new Prisma.Decimal(1600),
+        outstandingAmount: new Prisma.Decimal(0),
+      }),
+      bill({
+        id: 4,
+        contract,
+        periodStart: new Date('2026-09-01'),
+        status: 'PARTIAL',
+        payableAmount: new Prisma.Decimal(1600),
+        receivedAmount: new Prisma.Decimal(600),
+        outstandingAmount: new Prisma.Decimal(1000),
+      }),
+    ];
+    const findMany = jest
+      .fn()
+      .mockImplementation((query: { select?: unknown }) =>
+        Promise.resolve(query.select ? [] : rows),
+      );
+    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    const service = new RentBillsService({
+      db: {
+        rentBill: {
+          findMany,
+          updateMany,
+          count: jest.fn().mockResolvedValue(rows.length),
+        },
+      },
+    } as never);
+    return { settlement, rows, service, findMany, updateMany };
+  }
+
+  it('projects equal and later checkout bills while retaining actual received cash and earlier arrears', async () => {
+    const { service, updateMany, rows } = checkoutFixture();
+    const result = await service.list({ page: 1, pageSize: 20 });
+    expect(result.summary).toEqual({
+      payable: '1000.00',
+      received: '2400.00',
+      outstanding: '800.00',
+      count: 1,
+      overdueCount: 1,
+    });
+    expect(result.items.map((item) => item.status)).toEqual([
+      'PENDING_CHECKOUT_REVIEW',
+      'OVERDUE',
+      'PENDING_CHECKOUT_REVIEW',
+      'PENDING_CHECKOUT_REVIEW',
+    ]);
+    expect(result.items[0]).toMatchObject({
+      payableAmount: '0.00',
+      outstandingAmount: '0.00',
+    });
+    expect(result.total).toBe(4);
+    expect(rows[0].status).toBe('OVERDUE');
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('filters status before pagination and counts projected rows only', async () => {
+    const { service, findMany } = checkoutFixture();
+    const overdue = await service.list({
+      status: 'OVERDUE',
+      page: 1,
+      pageSize: 20,
+    });
+    expect(overdue.items.map((item) => item.id)).toEqual([2]);
+    expect(overdue.total).toBe(1);
+    expect(overdue.summary.overdueCount).toBe(1);
+    const pending = await service.list(
+      plainToInstance(ListRentBillsDto, {
+        status: 'PENDING_CHECKOUT_REVIEW',
+        page: 2,
+        pageSize: 1,
+      }),
+    );
+    expect(pending.items.map((item) => item.id)).toEqual([3]);
+    expect(pending.total).toBe(3);
+    expect(pending.summary).toMatchObject({
+      payable: '0.00',
+      outstanding: '0.00',
+      received: '2200.00',
+      overdueCount: 0,
+    });
+    const paid = await service.list({ status: 'PAID', page: 1, pageSize: 20 });
+    expect(paid.items).toEqual([]);
+    expect(paid.total).toBe(0);
+    const unfiltered = await service.list({ page: 2, pageSize: 2 });
+    expect(unfiltered.items.map((item) => item.id)).toEqual([3, 4]);
+    expect(unfiltered.total).toBe(4);
+    const listQueries = findMany.mock.calls.filter(([query]) => !query.select);
+    for (const [query] of listQueries)
+      expect(query.where).not.toHaveProperty('status');
+  });
+
+  it('restores the same bills to accounting and overdue filters after cancellation', async () => {
+    const { service, settlement } = checkoutFixture();
+    expect(
+      (await service.list({ status: 'OVERDUE', page: 1, pageSize: 20 })).total,
+    ).toBe(1);
+    settlement.status = 'CANCELLED';
+    const result = await service.list({ page: 1, pageSize: 20 });
+    expect(result.summary).toEqual({
+      payable: '5800.00',
+      received: '2400.00',
+      outstanding: '3400.00',
+      count: 4,
+      overdueCount: 2,
+    });
+    expect(
+      (
+        await service.list({ status: 'OVERDUE', page: 1, pageSize: 20 })
+      ).items.map((item) => item.id),
+    ).toEqual([1, 2]);
+  });
+
+  it('updates only performed overdue candidates and resumes a cancelled checkout candidate', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-03T04:00:00Z'));
+    const { service, settlement, rows, findMany, updateMany } =
+      checkoutFixture();
+    const candidates = [{ ...rows[1], status: 'PARTIAL' }, rows[3]];
+    findMany.mockImplementation((query: { select?: unknown }) =>
+      Promise.resolve(query.select ? candidates : rows),
+    );
+    await service.list({ page: 1, pageSize: 20 });
+    expect(updateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: { in: [2] },
+        dueDate: { lt: new Date('2026-09-03') },
+        outstandingAmount: { gt: 0 },
+        status: { in: ['PENDING', 'PARTIAL'] },
+      },
+      data: { status: 'OVERDUE' },
+    });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          periodStart: true,
+          contract: {
+            select: {
+              checkoutSettlements: {
+                where: {
+                  status: { in: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED'] },
+                },
+                select: { status: true, actualCheckoutDate: true },
+                orderBy: { id: 'desc' },
+              },
+            },
+          },
+        }),
+      }),
+    );
+    settlement.status = 'CANCELLED';
+    await service.list({ page: 1, pageSize: 20 });
+    expect(updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: [2, 4] } }),
+      }),
+    );
+  });
+
+  it('accepts the API-only checkout status and rejects unknown filter values', async () => {
+    for (const status of [
+      'PENDING_CHECKOUT_REVIEW',
+      'PENDING',
+      'PARTIAL',
+      'PAID',
+      'OVERDUE',
+      'VOIDED',
+      'REFUNDED',
+    ]) {
+      expect(
+        await validate(plainToInstance(ListRentBillsDto, { status })),
+      ).toEqual([]);
+    }
+    expect(
+      await validate(plainToInstance(ListRentBillsDto, { status: 'UNKNOWN' })),
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ property: 'status' })]),
+    );
+  });
+
   afterEach(() => {
     jest.useRealTimers();
   });
@@ -47,7 +262,10 @@ describe('RentBillsService', () => {
       db: {
         rentBill: {
           updateMany,
-          findMany: jest.fn().mockResolvedValue(rows),
+          findMany: jest
+            .fn()
+            .mockResolvedValueOnce([bill()])
+            .mockResolvedValue(rows),
           count: jest.fn().mockResolvedValue(2),
         },
       },
@@ -61,6 +279,7 @@ describe('RentBillsService', () => {
 
     expect(updateMany).toHaveBeenCalledWith({
       where: {
+        id: { in: [1] },
         dueDate: { lt: new Date('2026-08-29T00:00:00.000Z') },
         outstandingAmount: { gt: 0 },
         status: { in: ['PENDING', 'PARTIAL'] },
@@ -105,7 +324,6 @@ describe('RentBillsService', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           billCategory: 'RENT',
-          status: 'PARTIAL',
           periodStart: { gte: expect.any(Date), lt: expect.any(Date) },
           OR: expect.any(Array),
         }),
@@ -115,12 +333,12 @@ describe('RentBillsService', () => {
     expect(result).toMatchObject({
       page: 1,
       pageSize: 10,
-      total: 2,
+      total: 1,
       summary: {
-        payable: '6000.00',
-        received: '4500.00',
+        payable: '3000.00',
+        received: '1500.00',
         outstanding: '1500.00',
-        count: 2,
+        count: 1,
         overdueCount: 0,
       },
     });

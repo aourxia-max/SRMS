@@ -3,10 +3,21 @@ import { Prisma, RentBillStatus } from '@prisma/client';
 import { contractBusinessDay } from '../contracts/contract-business-day';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListRentBillsDto } from './dto/list-rent-bills.dto';
+import {
+  ACTIVE_CHECKOUT_CUTOFF_STATUSES,
+  effectiveRentBillStatus,
+  isRentBillPerformed,
+  resolveCheckoutCutoff,
+} from '../checkout/checkout-accounting-cutoff';
 
 const rentBillInclude = {
   contract: {
     include: {
+      checkoutSettlements: {
+        where: { status: { in: [...ACTIVE_CHECKOUT_CUTOFF_STATUSES] } },
+        select: { status: true, actualCheckoutDate: true },
+        orderBy: { id: 'desc' },
+      },
       room: { include: { building: true } },
       members: {
         where: { memberRole: 'PRIMARY', isCurrent: true },
@@ -66,21 +77,44 @@ export class RentBillsService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async reconcileOverdueBills(now = new Date()) {
-    await this.prisma.db.rentBill.updateMany({
-      where: {
-        dueDate: { lt: contractBusinessDay(now) },
-        outstandingAmount: { gt: 0 },
-        status: { in: ['PENDING', 'PARTIAL'] },
+    const where: Prisma.RentBillWhereInput = {
+      dueDate: { lt: contractBusinessDay(now) },
+      outstandingAmount: { gt: 0 },
+      status: { in: ['PENDING', 'PARTIAL'] },
+    };
+    const candidates = await this.prisma.db.rentBill.findMany({
+      where,
+      select: {
+        id: true,
+        periodStart: true,
+        contract: {
+          select: {
+            checkoutSettlements:
+              rentBillInclude.contract.include.checkoutSettlements,
+          },
+        },
       },
-      data: { status: 'OVERDUE' },
     });
+    const ids = candidates
+      .filter((bill) =>
+        isRentBillPerformed(
+          bill.periodStart,
+          resolveCheckoutCutoff(bill.contract.checkoutSettlements ?? []),
+        ),
+      )
+      .map((bill) => bill.id);
+    if (ids.length) {
+      await this.prisma.db.rentBill.updateMany({
+        where: { ...where, id: { in: ids } },
+        data: { status: 'OVERDUE' },
+      });
+    }
   }
 
   private where(dto: ListRentBillsDto): Prisma.RentBillWhereInput {
     const keyword = dto.keyword?.trim();
     const where: Prisma.RentBillWhereInput = {
       billCategory: 'RENT',
-      ...(dto.status ? { status: dto.status } : {}),
       ...(dto.buildingId
         ? { contract: { room: { buildingId: dto.buildingId } } }
         : {}),
@@ -115,6 +149,10 @@ export class RentBillsService {
 
   private mapRow(bill: RentBillRow) {
     const member = bill.contract.members[0];
+    const cutoff = resolveCheckoutCutoff(
+      bill.contract.checkoutSettlements ?? [],
+    );
+    const performed = isRentBillPerformed(bill.periodStart, cutoff);
     return {
       id: bill.id,
       billNo: bill.billNo,
@@ -134,35 +172,38 @@ export class RentBillsService {
       baseRentAmount: money(bill.baseRentAmount),
       rentFreeAmount: money(bill.rentFreeAmount),
       discountAmount: money(bill.discountAmount),
-      payableAmount: money(bill.payableAmount),
+      payableAmount: money(performed ? bill.payableAmount : 0),
       receivedAmount: money(bill.receivedAmount),
-      outstandingAmount: money(bill.outstandingAmount),
-      status: bill.status,
+      outstandingAmount: money(performed ? bill.outstandingAmount : 0),
+      status: effectiveRentBillStatus(bill.status, bill.periodStart, cutoff),
     };
   }
 
   async list(dto: ListRentBillsDto) {
     const where = this.where(dto);
     await this.reconcileOverdueBills();
-    const [all, total] = await Promise.all([
-      this.prisma.db.rentBill.findMany({
-        where,
-        include: rentBillInclude,
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-      }),
-      this.prisma.db.rentBill.count({ where }),
-    ]);
+    const bills = await this.prisma.db.rentBill.findMany({
+      where,
+      include: rentBillInclude,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    });
+    const all = bills
+      .map((bill) => ({ bill, row: this.mapRow(bill) }))
+      .filter(({ row }) => !dto.status || row.status === dto.status);
     const businessRows = all.filter(
-      (item) =>
-        !(['VOIDED', 'REFUNDED'] as RentBillStatus[]).includes(item.status) &&
-        item.contract.status !== 'VOIDED',
+      ({ bill }) =>
+        !(['VOIDED', 'REFUNDED'] as RentBillStatus[]).includes(bill.status) &&
+        bill.contract.status !== 'VOIDED',
     );
     const summary = businessRows.reduce(
-      (result, bill) => {
-        result.payable = result.payable.plus(bill.payableAmount);
+      (result, { bill, row }) => {
         result.received = result.received.plus(bill.receivedAmount);
-        result.outstanding = result.outstanding.plus(bill.outstandingAmount);
-        if (bill.status === 'OVERDUE') result.overdueCount += 1;
+        if (row.status !== 'PENDING_CHECKOUT_REVIEW') {
+          result.payable = result.payable.plus(row.payableAmount);
+          result.outstanding = result.outstanding.plus(row.outstandingAmount);
+          result.count += 1;
+          if (row.status === 'OVERDUE') result.overdueCount += 1;
+        }
         return result;
       },
       {
@@ -170,6 +211,7 @@ export class RentBillsService {
         received: new Prisma.Decimal(0),
         outstanding: new Prisma.Decimal(0),
         overdueCount: 0,
+        count: 0,
       },
     );
     const page = dto.page ?? 1;
@@ -177,15 +219,15 @@ export class RentBillsService {
     return {
       items: all
         .slice((page - 1) * pageSize, page * pageSize)
-        .map((bill) => this.mapRow(bill)),
+        .map(({ row }) => row),
       page,
       pageSize,
-      total,
+      total: all.length,
       summary: {
         payable: money(summary.payable),
         received: money(summary.received),
         outstanding: money(summary.outstanding),
-        count: businessRows.length,
+        count: summary.count,
         overdueCount: summary.overdueCount,
       },
     };

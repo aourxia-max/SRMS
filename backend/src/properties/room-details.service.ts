@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { contractBusinessDay } from '../contracts/contract-business-day';
+import {
+  ACTIVE_CHECKOUT_CUTOFF_STATUSES,
+  effectiveRentBillStatus,
+  isRentBillPerformed,
+  resolveCheckoutCutoff,
+} from '../checkout/checkout-accounting-cutoff';
 
 const activeStatuses = ['ACTIVE', 'PENDING_START', 'PENDING_CHECKOUT'];
 
@@ -18,10 +25,16 @@ export class RoomDetailsService {
         contracts: {
           orderBy: { startDate: 'desc' },
           include: {
+            checkoutSettlements: {
+              where: { status: { in: [...ACTIVE_CHECKOUT_CUTOFF_STATUSES] } },
+              select: { status: true, actualCheckoutDate: true },
+              orderBy: { id: 'desc' },
+            },
             members: { where: { isCurrent: true }, include: { tenant: true } },
             bills: {
               select: {
                 id: true,
+                periodStart: true,
                 dueDate: true,
                 outstandingAmount: true,
                 status: true,
@@ -80,6 +93,8 @@ export class RoomDetailsService {
       }),
     ]);
     const now = new Date();
+    const today = contractBusinessDay(now);
+    const focusCutoff = resolveCheckoutCutoff(focus?.checkoutSettlements ?? []);
     const riskLabels: string[] = [];
     if (room.roomStatus === 'MAINTENANCE') riskLabels.push('维修中');
     const addPendingLabel = (count: number, label: string) => {
@@ -97,7 +112,8 @@ export class RoomDetailsService {
       focus?.bills.some(
         (bill) =>
           bill.billCategory === 'RENT' &&
-          bill.dueDate < now &&
+          isRentBillPerformed(bill.periodStart, focusCutoff) &&
+          bill.dueDate < today &&
           new Prisma.Decimal(bill.outstandingAmount).gt(0) &&
           !['VOIDED', 'REFUNDED'].includes(bill.status),
       )
@@ -116,7 +132,11 @@ export class RoomDetailsService {
       hasOverdueBill: bills.some(
         (bill) =>
           bill.billCategory === 'RENT' &&
-          bill.dueDate < now &&
+          isRentBillPerformed(
+            bill.periodStart,
+            resolveCheckoutCutoff(contract.checkoutSettlements ?? []),
+          ) &&
+          bill.dueDate < today &&
           new Prisma.Decimal(bill.outstandingAmount).gt(0) &&
           !['VOIDED', 'REFUNDED'].includes(bill.status),
       ),
@@ -150,7 +170,22 @@ export class RoomDetailsService {
           orderBy: { id: 'desc' },
         }),
       ]);
-      const total = bills.reduce(
+      const projectedBills = bills.map((bill) => {
+        const performed = isRentBillPerformed(bill.periodStart, focusCutoff);
+        return {
+          ...bill,
+          status: effectiveRentBillStatus(
+            bill.status,
+            bill.periodStart,
+            focusCutoff,
+          ),
+          payableAmount: performed ? bill.payableAmount : new Prisma.Decimal(0),
+          outstandingAmount: performed
+            ? bill.outstandingAmount
+            : new Prisma.Decimal(0),
+        };
+      });
+      const total = projectedBills.reduce(
         (sum, bill) => ({
           payable: sum.payable.plus(bill.payableAmount),
           received: sum.received.plus(bill.receivedAmount),
@@ -165,7 +200,7 @@ export class RoomDetailsService {
       result.financial = {
         contractId: focus.id,
         summary: total,
-        bills,
+        bills: projectedBills,
         payments,
         prepaymentBalance:
           prepayments[0]?.balanceAfter ?? new Prisma.Decimal(0),

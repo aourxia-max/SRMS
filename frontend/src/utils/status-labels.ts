@@ -1,3 +1,5 @@
+import { rentBillStatusMap } from '../services/rentBillDisplay';
+
 type StatusMap = Record<string, string>;
 
 const fallback = (map: StatusMap, value?: string | null) => {
@@ -21,6 +23,7 @@ export const paymentStatusLabels: StatusMap = {
 };
 
 export const rentBillStatusLabels: StatusMap = {
+  PENDING_CHECKOUT_REVIEW: rentBillStatusMap.PENDING_CHECKOUT_REVIEW.label,
   PENDING: "\u5f85\u6536\u6b3e",
   PARTIAL: "\u90e8\u5206\u6536\u6b3e",
   PAID: "\u5df2\u7ed3\u6e05",

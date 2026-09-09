@@ -16,7 +16,7 @@ vi.mock('../services/http', () => ({
 
 const billStatuses = ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE', 'VOIDED', 'REFUNDED']
 
-function mockFinanceResponses(depositTotals = ['10000.00']) {
+function mockFinanceResponses(depositTotals = ['10000.00'], statuses = billStatuses) {
   let overviewIndex = 0
   vi.mocked(http.get).mockImplementation(async (url) => {
     if (url === '/finance/overview') {
@@ -28,7 +28,7 @@ function mockFinanceResponses(depositTotals = ['10000.00']) {
       return {
         data: {
           data: {
-            rows: billStatuses.map((status, index) => ({
+            rows: statuses.map((status, index) => ({
               billNo: 'BILL-' + index,
               contractNo: 'HT-' + index,
               houseNo: '1栋10' + index,
@@ -64,6 +64,17 @@ describe('财务报表账单状态中文显示', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFinanceResponses()
+  })
+
+  it('renders the checkout accounting state as a Chinese warning in the finance table', async () => {
+    mockFinanceResponses(['10000.00'], ['PENDING_CHECKOUT_REVIEW'])
+    const wrapper = mount(FinanceView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.find('.el-table').text()).toContain('待退租核算')
+    expect(wrapper.find('.el-table .el-tag--warning').text()).toBe('待退租核算')
+    expect(wrapper.text()).not.toContain('未知状态')
+    expect(wrapper.text()).not.toContain('PENDING_CHECKOUT_REVIEW')
+    wrapper.unmount()
   })
 
   it('displays all six rent bill statuses with Chinese labels', async () => {

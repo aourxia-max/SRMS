@@ -5,6 +5,30 @@ import { FinanceService } from '../finance/finance.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PropertyAffairsService } from '../property-affairs/property-affairs.service';
 import { currentMonthPeriod } from './rent-collection-overview';
+import { contractBusinessDay } from '../contracts/contract-business-day';
+import {
+  ACTIVE_CHECKOUT_CUTOFF_STATUSES,
+  isRentBillPerformed,
+  resolveCheckoutCutoff,
+} from '../checkout/checkout-accounting-cutoff';
+
+const rentBillInclude = {
+  contract: {
+    include: {
+      checkoutSettlements: {
+        where: { status: { in: [...ACTIVE_CHECKOUT_CUTOFF_STATUSES] } },
+        select: { status: true, actualCheckoutDate: true },
+        orderBy: { id: 'desc' },
+      },
+      room: true,
+      members: {
+        where: { memberRole: 'PRIMARY', isCurrent: true },
+        include: { tenant: true },
+      },
+    },
+  },
+} satisfies Prisma.RentBillInclude;
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -19,6 +43,7 @@ export class DashboardService {
     statuses?: string[],
   ): Promise<Record<string, unknown>> {
     const now = new Date();
+    const today = contractBusinessDay(now);
     const settings = await this.prisma.db.systemSetting.findMany({
       where: {
         settingKey: {
@@ -34,8 +59,8 @@ export class DashboardService {
     const longVacancyDays = settingValues.longVacancyDays || 30;
     const longVacancyBefore = new Date(now);
     longVacancyBefore.setDate(longVacancyBefore.getDate() - longVacancyDays);
-    const in7 = new Date(now);
-    in7.setDate(in7.getDate() + rentReminderDays);
+    const in7 = new Date(today);
+    in7.setUTCDate(in7.getUTCDate() + rentReminderDays);
     const in30 = new Date(now);
     in30.setDate(in30.getDate() + contractExpiryDays);
     const monthPeriod = currentMonthPeriod(now);
@@ -108,8 +133,8 @@ export class DashboardService {
       {},
     );
     const [
-      reminders,
-      arrears,
+      reminderCandidates,
+      arrearsCandidates,
       expiring,
       longVacancyRooms,
       rentCollection,
@@ -120,43 +145,23 @@ export class DashboardService {
       this.prisma.db.rentBill.findMany({
         where: {
           billCategory: 'RENT',
-          dueDate: { gte: now, lte: in7 },
+          dueDate: { gte: today, lte: in7 },
           outstandingAmount: { gt: 0 },
           status: { notIn: ['VOIDED', 'REFUNDED'] },
           contract: { status: { not: 'VOIDED' } },
         },
-        include: {
-          contract: {
-            include: {
-              room: true,
-              members: {
-                where: { memberRole: 'PRIMARY', isCurrent: true },
-                include: { tenant: true },
-              },
-            },
-          },
-        },
+        include: rentBillInclude,
         orderBy: { dueDate: 'asc' },
       }),
       this.prisma.db.rentBill.findMany({
         where: {
           billCategory: 'RENT',
-          dueDate: { lt: now },
+          dueDate: { lt: today },
           outstandingAmount: { gt: 0 },
           status: { notIn: ['VOIDED', 'REFUNDED'] },
           contract: { status: { not: 'VOIDED' } },
         },
-        include: {
-          contract: {
-            include: {
-              room: true,
-              members: {
-                where: { memberRole: 'PRIMARY', isCurrent: true },
-                include: { tenant: true },
-              },
-            },
-          },
-        },
+        include: rentBillInclude,
         orderBy: { dueDate: 'asc' },
       }),
       this.prisma.db.contract.findMany({
@@ -200,6 +205,13 @@ export class DashboardService {
         ? this.propertyAffairs.dashboardItems(8)
         : Promise.resolve([]),
     ]);
+    const isPerformed = (bill: (typeof arrearsCandidates)[number]) =>
+      isRentBillPerformed(
+        bill.periodStart,
+        resolveCheckoutCutoff(bill.contract.checkoutSettlements ?? []),
+      );
+    const reminders = reminderCandidates.filter(isPerformed);
+    const arrears = arrearsCandidates.filter(isPerformed);
     const result: Record<string, unknown> = {
       roomSummary: {
         total: rooms.length,

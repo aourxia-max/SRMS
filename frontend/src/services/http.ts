@@ -6,7 +6,7 @@ export const http = axios.create({
   withCredentials: true,
 })
 
-export type RentBillStatus = 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'VOIDED' | 'REFUNDED'
+export type RentBillStatus = 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'VOIDED' | 'REFUNDED' | 'PENDING_CHECKOUT_REVIEW'
 export type RentBillQuery = { keyword?: string; buildingId?: number; status?: RentBillStatus; month?: string; page?: number; pageSize?: number }
 export type RentBillListItem = {
   id: number; billNo: string

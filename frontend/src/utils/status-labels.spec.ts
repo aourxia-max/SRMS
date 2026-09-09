@@ -17,6 +17,10 @@ import {
 } from "./status-labels";
 
 describe("status label helpers", () => {
+  it("translates unperformed checkout bills for room financial details", () => {
+    expect(rentBillStatusLabel("PENDING_CHECKOUT_REVIEW")).toBe("待退租核算");
+  });
+
   it("translates common internal status codes to Chinese labels", () => {
     expect(approvalStatusLabel("PENDING")).toBe("\u5f85\u786e\u8ba4");
     expect(approvalStatusLabel("APPROVED")).toBe("\u5df2\u786e\u8ba4");

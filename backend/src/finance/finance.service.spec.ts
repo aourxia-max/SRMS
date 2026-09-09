@@ -2,6 +2,169 @@ import { FinanceService } from './finance.service';
 import { Prisma } from '@prisma/client';
 
 describe('FinanceService rent collection category isolation', () => {
+  function checkoutFixture() {
+    const settlement = {
+      status: 'DRAFT',
+      actualCheckoutDate: new Date('2026-09-01'),
+    };
+    const contract = {
+      contractNo: 'HT-CUTOFF',
+      room: { fullHouseNo: '1-101' },
+      members: [],
+      checkoutSettlements: [settlement],
+    };
+    const payments = [200, 1600, 600].map((amount, index) => ({
+      id: index + 1,
+      amount: new Prisma.Decimal(amount),
+      receiptNo: `SK-${index}`,
+      paymentCategory: 'RENT',
+      status: 'CONFIRMED',
+      paymentDate: new Date('2026-08-20'),
+    }));
+    const allocation = (index: number) => ({
+      allocatedAmount: payments[index].amount,
+      reversedAmount: new Prisma.Decimal(0),
+      payment: payments[index],
+    });
+    const rows = [
+      {
+        billNo: 'EQUAL',
+        periodStart: new Date('2026-09-01'),
+        payableAmount: new Prisma.Decimal(1600),
+        baseRentAmount: new Prisma.Decimal(1700),
+        rentFreeAmount: new Prisma.Decimal(100),
+        discountAmount: new Prisma.Decimal(0),
+        status: 'OVERDUE',
+        allocations: [],
+        adjustments: [],
+        contract,
+      },
+      {
+        billNo: 'EARLIER',
+        periodStart: new Date('2026-08-01'),
+        payableAmount: new Prisma.Decimal(1000),
+        baseRentAmount: new Prisma.Decimal(1100),
+        rentFreeAmount: new Prisma.Decimal(100),
+        discountAmount: new Prisma.Decimal(0),
+        status: 'OVERDUE',
+        allocations: [allocation(0)],
+        adjustments: [],
+        contract,
+      },
+      {
+        billNo: 'PAID',
+        periodStart: new Date('2026-10-01'),
+        payableAmount: new Prisma.Decimal(1600),
+        baseRentAmount: new Prisma.Decimal(1600),
+        rentFreeAmount: new Prisma.Decimal(0),
+        discountAmount: new Prisma.Decimal(0),
+        status: 'PAID',
+        allocations: [allocation(1)],
+        adjustments: [],
+        contract,
+      },
+      {
+        billNo: 'PARTIAL',
+        periodStart: new Date('2026-09-01'),
+        payableAmount: new Prisma.Decimal(1600),
+        baseRentAmount: new Prisma.Decimal(1600),
+        rentFreeAmount: new Prisma.Decimal(0),
+        discountAmount: new Prisma.Decimal(0),
+        status: 'PARTIAL',
+        allocations: [allocation(2)],
+        adjustments: [],
+        contract,
+      },
+    ];
+    const findMany = jest.fn().mockResolvedValue(rows);
+    const refundFindMany = jest.fn().mockResolvedValue([]);
+    const service = new FinanceService({
+      db: {
+        rentBill: { findMany },
+        payment: { findMany: jest.fn().mockResolvedValue(payments) },
+        paymentRefund: { findMany: refundFindMany },
+        depositRefund: { findMany: jest.fn().mockResolvedValue([]) },
+        depositTransaction: { findMany: jest.fn().mockResolvedValue([]) },
+        contractVoidReversal: { findMany: jest.fn().mockResolvedValue([]) },
+      },
+    } as never);
+    return { service, settlement, rows, payments, findMany, refundFindMany };
+  }
+
+  it('excludes checkout-day receivable and concessions while preserving unrefunded paid and partial cash', async () => {
+    const { service, findMany } = checkoutFixture();
+    const result = await service.rentCollection();
+    expect(result.total).toEqual({
+      originalReceivable: new Prisma.Decimal(1100),
+      concessionAmount: new Prisma.Decimal(100),
+      netReceivable: new Prisma.Decimal(1000),
+      validReceived: new Prisma.Decimal(2400),
+      outstanding: new Prisma.Decimal(800),
+    });
+    expect(result.rows[0]).toMatchObject({
+      status: 'PENDING_CHECKOUT_REVIEW',
+      originalReceivable: new Prisma.Decimal(0),
+      outstanding: new Prisma.Decimal(0),
+    });
+    expect(result.rows[2].validReceived).toEqual(new Prisma.Decimal(1600));
+    const cash = await service.cashFlows();
+    expect(cash.inflow.toFixed(2)).toBe('2400.00');
+    expect(cash.netCashFlow.toFixed(2)).toBe('2400.00');
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          contract: expect.objectContaining({
+            include: expect.objectContaining({
+              checkoutSettlements: {
+                where: {
+                  status: { in: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED'] },
+                },
+                select: { status: true, actualCheckoutDate: true },
+                orderBy: { id: 'desc' },
+              },
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('reduces unperformed cash only after an actual allocation reversal and refund', async () => {
+    const { service, rows, payments, refundFindMany } = checkoutFixture();
+    expect(
+      (await service.rentCollection()).total.netReceivable.toFixed(2),
+    ).toBe('1000.00');
+    rows[2].allocations[0].reversedAmount = new Prisma.Decimal(400);
+    payments[1].status = 'PARTIALLY_REFUNDED';
+    refundFindMany.mockResolvedValue([
+      {
+        id: 9,
+        refundDate: new Date('2026-09-03'),
+        refundAmount: new Prisma.Decimal(400),
+        refundNo: 'TK-9',
+        payment: { paymentCategory: 'RENT' },
+      },
+    ]);
+    expect(
+      (await service.rentCollection()).total.validReceived.toFixed(2),
+    ).toBe('2000.00');
+    expect((await service.cashFlows()).netCashFlow.toFixed(2)).toBe('2000.00');
+  });
+
+  it('restores original receivable and arrears after the same checkout is cancelled', async () => {
+    const { service, settlement } = checkoutFixture();
+    expect((await service.rentCollection()).total.outstanding.toFixed(2)).toBe(
+      '800.00',
+    );
+    settlement.status = 'CANCELLED';
+    const result = await service.rentCollection();
+    expect(result.total.originalReceivable.toFixed(2)).toBe('6000.00');
+    expect(result.total.netReceivable.toFixed(2)).toBe('5800.00');
+    expect(result.total.outstanding.toFixed(2)).toBe('3400.00');
+    expect(result.total.validReceived.toFixed(2)).toBe('2400.00');
+    expect(result.rows[0].status).toBe('OVERDUE');
+  });
+
   it('queries only rental bills when calculating rent collection', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const service = new FinanceService({

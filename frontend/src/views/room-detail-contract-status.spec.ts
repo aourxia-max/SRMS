@@ -19,14 +19,14 @@ vi.mock('../services/http', () => ({
   http: { get: vi.fn(), patch: vi.fn() },
 }))
 
-function adminPinia() {
+function adminPinia(role: 'ADMIN' | 'SUPER_ADMIN' = 'ADMIN') {
   const pinia = createPinia()
   const session = useSessionStore(pinia)
   session.user = {
     id: 2,
     username: 'admin',
     displayName: '普通管理员',
-    role: 'ADMIN',
+    role,
   }
   session.accessToken = 'test-token'
   return pinia
@@ -47,14 +47,16 @@ function contract(id: number, contractNo: string, status: string) {
 }
 
 describe('房源详情合同状态中文化', () => {
+  let financialResponse: Record<string, unknown> | null = null
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(http.get).mockResolvedValue({
+    financialResponse = null
+    vi.mocked(http.get).mockImplementation(async () => ({
       data: {
         data: {
           focusContractId: 101,
           riskLabels: [],
-          financial: null,
+          financial: financialResponse,
           room: {
             id: 11,
             fullHouseNo: '1栋603',
@@ -79,7 +81,23 @@ describe('房源详情合同状态中文化', () => {
           },
         },
       },
-    })
+    }))
+  })
+
+  it('renders unperformed bill status in Chinese in the room financial table', async () => {
+    financialResponse = {
+      summary: { payable: '0.00', received: '600.00', outstanding: '0.00' },
+      prepaymentBalance: '0.00',
+      bills: [{ id: 1, periodSeq: 1, dueDate: '2026-09-01', payableAmount: '0.00', receivedAmount: '600.00', outstandingAmount: '0.00', status: 'PENDING_CHECKOUT_REVIEW' }],
+      payments: [],
+    }
+    const wrapper = mount(RoomDetailView, { global: { plugins: [adminPinia('SUPER_ADMIN'), ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.find('.financial-summary').text()).toContain('600.00')
+    expect(wrapper.find('.el-table').text()).toContain('待退租核算')
+    expect(wrapper.text()).not.toContain('未知状态')
+    expect(wrapper.text()).not.toContain('PENDING_CHECKOUT_REVIEW')
+    wrapper.unmount()
   })
 
   it('当前合同和历史合同都使用统一中文状态', async () => {

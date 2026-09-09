@@ -1,6 +1,56 @@
 import { DashboardService } from './dashboard.service';
 
 describe('DashboardService room map monthly rent visibility', () => {
+  it('removes checkout-day room risks and reminders while preserving earlier bills for administrators', async () => {
+    const { prisma, finance } = dependencies([]);
+    prisma.db.room.findMany.mockResolvedValue([]);
+    const settlement = {
+      status: 'DRAFT',
+      actualCheckoutDate: new Date('2026-09-01'),
+    };
+    const contract = { checkoutSettlements: [settlement] };
+    const equal = {
+      id: 1,
+      periodStart: new Date('2026-09-01'),
+      status: 'OVERDUE',
+      outstandingAmount: '1600.00',
+      contract,
+    };
+    const earlier = {
+      id: 2,
+      periodStart: new Date('2026-08-01'),
+      status: 'OVERDUE',
+      outstandingAmount: '800.00',
+      contract,
+    };
+    prisma.db.rentBill.findMany.mockResolvedValue([equal, earlier]);
+    const service = new DashboardService(prisma, finance);
+    const active = await service.summary({ id: 2, role: 'ADMIN' });
+    expect(active.rentReminders).toEqual([earlier]);
+    expect(active.arrears).toEqual([earlier]);
+    const queries = prisma.db.rentBill.findMany.mock.calls as Array<
+      [{ include: unknown }]
+    >;
+    for (const [query] of queries)
+      expect(query.include).toMatchObject({
+        contract: {
+          include: {
+            checkoutSettlements: {
+              where: {
+                status: { in: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED'] },
+              },
+              select: { status: true, actualCheckoutDate: true },
+              orderBy: { id: 'desc' },
+            },
+          },
+        },
+      });
+    settlement.status = 'CANCELLED';
+    const cancelled = await service.summary({ id: 2, role: 'ADMIN' });
+    expect(cancelled.rentReminders).toEqual([equal, earlier]);
+    expect(cancelled.arrears).toEqual([equal, earlier]);
+  });
+
   function dependencies(rooms: any[]) {
     const roomFindMany = jest
       .fn()

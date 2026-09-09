@@ -2,6 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { ContractVoidReversalCategory, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { contractBusinessDateRange } from '../contracts/contract-business-day';
+import {
+  ACTIVE_CHECKOUT_CUTOFF_STATUSES,
+  effectiveRentBillStatus,
+  isRentBillPerformed,
+  resolveCheckoutCutoff,
+} from '../checkout/checkout-accounting-cutoff';
 
 const financialReversalCategories: ContractVoidReversalCategory[] = [
   'RENT_BILL',
@@ -87,6 +93,11 @@ export class FinanceService {
       include: {
         contract: {
           include: {
+            checkoutSettlements: {
+              where: { status: { in: [...ACTIVE_CHECKOUT_CUTOFF_STATUSES] } },
+              select: { status: true, actualCheckoutDate: true },
+              orderBy: { id: 'desc' },
+            },
             room: true,
             members: {
               where: { memberRole: 'PRIMARY', isCurrent: true },
@@ -108,6 +119,10 @@ export class FinanceService {
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
     const rows = bills.map((bill) => {
+      const cutoff = resolveCheckoutCutoff(
+        bill.contract.checkoutSettlements ?? [],
+      );
+      const performed = isRentBillPerformed(bill.periodStart, cutoff);
       const validReceived = bill.allocations
         .filter((item) =>
           ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.payment.status),
@@ -121,23 +136,29 @@ export class FinanceService {
             ),
           new Prisma.Decimal(0),
         );
-      const netReceivable = new Prisma.Decimal(bill.payableAmount);
-      const concessionAmount = bill.adjustments.reduce(
-        (sum, adjustment) => sum.plus(adjustment.amount),
-        new Prisma.Decimal(bill.rentFreeAmount).plus(bill.discountAmount),
+      const netReceivable = new Prisma.Decimal(
+        performed ? bill.payableAmount : 0,
       );
+      const concessionAmount = performed
+        ? bill.adjustments.reduce(
+            (sum, adjustment) => sum.plus(adjustment.amount),
+            new Prisma.Decimal(bill.rentFreeAmount).plus(bill.discountAmount),
+          )
+        : new Prisma.Decimal(0);
       return {
         billNo: bill.billNo,
         contractNo: bill.contract.contractNo,
         houseNo: bill.contract.room.fullHouseNo,
         tenantName: bill.contract.members[0]?.tenant.name ?? '',
         periodStart: bill.periodStart,
-        originalReceivable: bill.baseRentAmount,
+        originalReceivable: performed
+          ? bill.baseRentAmount
+          : new Prisma.Decimal(0),
         concessionAmount,
         netReceivable,
         validReceived,
         outstanding: Prisma.Decimal.max(0, netReceivable.minus(validReceived)),
-        status: bill.status,
+        status: effectiveRentBillStatus(bill.status, bill.periodStart, cutoff),
       };
     });
     const total = rows.reduce(
