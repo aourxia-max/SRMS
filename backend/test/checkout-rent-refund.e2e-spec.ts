@@ -44,8 +44,8 @@ type CleanupScope = {
   fileIds: number[];
 };
 
-const actualCheckoutDate = '2035-01-15';
-const refundDate = '2035-01-20';
+const actualCheckoutDate = '2025-01-15';
+const refundDate = '2025-01-20';
 
 function deferred() {
   let resolve!: () => void;
@@ -222,14 +222,14 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
           contractNo: `${suitePrefix}-${tag}`,
           externalContractNo: `${suitePrefix}-EXT-${tag}`,
           roomId: room.id,
-          startDate: new Date('2035-01-01T00:00:00.000Z'),
-          endDate: new Date('2035-12-31T00:00:00.000Z'),
+          startDate: new Date('2025-01-01T00:00:00.000Z'),
+          endDate: new Date('2025-12-31T00:00:00.000Z'),
           monthlyRent: new Prisma.Decimal(billAmount),
           pricingMode: 'FIXED',
           paymentCycleMonths: 1,
           depositRequired: new Prisma.Decimal(depositBalance),
           status: 'PENDING_CHECKOUT',
-          activatedAt: new Date('2035-01-01T00:00:00.000Z'),
+          activatedAt: new Date('2025-01-01T00:00:00.000Z'),
           remark: 'Task 9 退租退款 E2E',
           members: {
             create: {
@@ -245,9 +245,9 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
           billNo: `${suitePrefix}-B-${tag}`,
           contractId: contract.id,
           periodSeq: 1,
-          periodStart: new Date('2035-02-01T00:00:00.000Z'),
-          periodEnd: new Date('2035-02-28T00:00:00.000Z'),
-          dueDate: new Date('2035-01-25T00:00:00.000Z'),
+          periodStart: new Date('2025-02-01T00:00:00.000Z'),
+          periodEnd: new Date('2025-02-28T00:00:00.000Z'),
+          dueDate: new Date('2025-01-25T00:00:00.000Z'),
           unitMonthlyRent: new Prisma.Decimal(billAmount),
           baseRentAmount: new Prisma.Decimal(billAmount),
           payableAmount: new Prisma.Decimal(billAmount),
@@ -261,7 +261,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
           receiptNo: `${suitePrefix}-P-${tag}`.slice(0, 40),
           contractId: contract.id,
           paymentCategory: 'RENT',
-          paymentDate: new Date('2035-01-05T00:00:00.000Z'),
+          paymentDate: new Date('2025-01-05T00:00:00.000Z'),
           amount: new Prisma.Decimal(billAmount),
           method: 'BANK_TRANSFER',
           operatorId: operator.id,
@@ -525,7 +525,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         refundMethod: 'BANK_TRANSFER',
         approvalStatus: 'REJECTED',
         submittedBy: operator.id,
-        submittedAt: new Date('2035-01-22T00:00:00.000Z'),
+        submittedAt: new Date('2025-01-22T00:00:00.000Z'),
         cancelledReason: 'Task 9 相反状态历史记录',
       },
     });
@@ -546,11 +546,14 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
       .post(`/api/deposit-refunds/${refundId}/approve`)
       .expect(201);
     const financeAfterRefund = await financeSnapshot();
+    // APPROVED hides unperformed receivables while retaining actual receipts.
+    // COMPLETED ends that temporary projection and restores the audited paid
+    // historical bill (base 3000, payable 2000 after the confirmed 1000 refund).
     expectFinanceDelta(financeBeforeRefund, financeAfterRefund, {
       depositBalance: '-800.00',
       prepaymentBalance: '-200.00',
-      originalReceivable: '0.00',
-      netReceivable: '-1000.00',
+      originalReceivable: '3000.00',
+      netReceivable: '2000.00',
       validReceived: '-1000.00',
       outstanding: '0.00',
     });
@@ -747,9 +750,9 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         billNo: `${suitePrefix}-PF-B-${fixture.contractId}`.slice(0, 140),
         contractId: fixture.contractId,
         periodSeq: 2,
-        periodStart: new Date('2035-03-01T00:00:00.000Z'),
-        periodEnd: new Date('2035-03-31T00:00:00.000Z'),
-        dueDate: new Date('2035-02-25T00:00:00.000Z'),
+        periodStart: new Date('2025-03-01T00:00:00.000Z'),
+        periodEnd: new Date('2025-03-31T00:00:00.000Z'),
+        dueDate: new Date('2025-02-25T00:00:00.000Z'),
         unitMonthlyRent: new Prisma.Decimal('800.00'),
         baseRentAmount: new Prisma.Decimal('800.00'),
         payableAmount: new Prisma.Decimal('800.00'),
@@ -763,7 +766,7 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         receiptNo: `${suitePrefix}-PF-P-${fixture.contractId}`.slice(0, 40),
         contractId: fixture.contractId,
         paymentCategory: 'RENT',
-        paymentDate: new Date('2035-01-06T00:00:00.000Z'),
+        paymentDate: new Date('2025-01-06T00:00:00.000Z'),
         amount: new Prisma.Decimal('300.00'),
         method: 'BANK_TRANSFER',
         operatorId: operator.id,
@@ -1129,8 +1132,10 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
       where: { id: reservation.id },
       data: { reservedAmount: new Prisma.Decimal('999.00') },
     });
-    const response = await approveSettlement(fixture).expect(400);
-    expect(response.body.message).toContain('预留明细已变化');
+    const response = await approveSettlement(fixture).expect(409);
+    expect(response.body.message).toBe(
+      '实际退房日期或账单已变化，请重新预估结算金额',
+    );
     await expect(
       prisma.db.checkoutSettlement.findUniqueOrThrow({
         where: { id: fixture.settlementId },
@@ -1242,9 +1247,9 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
             billNo: `${suitePrefix}-H-${fixture.billId}`.slice(0, 40),
             contractId: fixture.contractId,
             periodSeq: 2,
-            periodStart: new Date('2035-01-01T00:00:00.000Z'),
-            periodEnd: new Date('2035-01-14T00:00:00.000Z'),
-            dueDate: new Date('2035-01-01T00:00:00.000Z'),
+            periodStart: new Date('2025-01-01T00:00:00.000Z'),
+            periodEnd: new Date('2025-01-14T00:00:00.000Z'),
+            dueDate: new Date('2025-01-01T00:00:00.000Z'),
             unitMonthlyRent: new Prisma.Decimal('2000.00'),
             baseRentAmount: new Prisma.Decimal('1000.00'),
             payableAmount: new Prisma.Decimal('1000.00'),
