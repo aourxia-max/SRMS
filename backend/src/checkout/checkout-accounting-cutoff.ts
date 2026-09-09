@@ -1,11 +1,7 @@
 import type { CheckoutSettlementStatus, RentBillStatus } from '@prisma/client';
 
-export const ACTIVE_CHECKOUT_CUTOFF_STATUSES: CheckoutSettlementStatus[] = [
-  'DRAFT',
-  'PENDING',
-  'APPROVED',
-  'REJECTED',
-];
+export const ACTIVE_CHECKOUT_CUTOFF_STATUSES: readonly CheckoutSettlementStatus[] =
+  Object.freeze(['DRAFT', 'PENDING', 'APPROVED', 'REJECTED']);
 
 type CutoffSettlement = {
   status: CheckoutSettlementStatus;

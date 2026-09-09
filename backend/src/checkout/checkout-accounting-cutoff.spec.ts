@@ -1,4 +1,5 @@
 import {
+  ACTIVE_CHECKOUT_CUTOFF_STATUSES,
   effectiveRentBillStatus,
   isRentBillPerformed,
   resolveCheckoutCutoff,
@@ -6,6 +7,10 @@ import {
 
 describe('checkout accounting cutoff', () => {
   const cutoff = new Date('2026-09-01T00:00:00.000Z');
+
+  it('exposes checkout cutoff statuses as an immutable runtime rule', () => {
+    expect(Object.isFrozen(ACTIVE_CHECKOUT_CUTOFF_STATUSES)).toBe(true);
+  });
 
   it('treats checkout day and later bill periods as unperformed', () => {
     expect(isRentBillPerformed(new Date('2026-08-01'), cutoff)).toBe(true);
