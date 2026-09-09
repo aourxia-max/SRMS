@@ -8,6 +8,7 @@ import { RentBillsService } from './rent-bills.service';
 function bill(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,
+    billCategory: 'RENT',
     billNo: 'ZD202608-0101',
     periodStart: new Date('2026-08-01'),
     periodEnd: new Date('2026-08-31'),
@@ -121,6 +122,95 @@ describe('RentBillsService', () => {
     });
     expect(result.total).toBe(4);
     expect(rows[0].status).toBe('OVERDUE');
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 'PENDING', received: 0, outstanding: 500 },
+    { status: 'PARTIAL', received: 200, outstanding: 300 },
+    { status: 'OVERDUE', received: 200, outstanding: 300 },
+  ])(
+    'preserves $status checkout supplemental detail on the actual checkout day',
+    async ({ status, received, outstanding }) => {
+      const { rows } = checkoutFixture();
+      const row = {
+        ...rows[0],
+        billCategory: 'CHECKOUT_SUPPLEMENTAL',
+        status,
+        payableAmount: new Prisma.Decimal(500),
+        receivedAmount: new Prisma.Decimal(received),
+        outstandingAmount: new Prisma.Decimal(outstanding),
+        adjustments: [],
+        allocations: [],
+        prepaymentTransactions: [],
+      };
+      const service = new RentBillsService({
+        db: { rentBill: { findUnique: jest.fn().mockResolvedValue(row) } },
+      } as never);
+      expect(await service.detail(row.id)).toMatchObject({
+        payableAmount: '500.00',
+        receivedAmount: received === 0 ? '0.00' : '200.00',
+        outstandingAmount: outstanding === 500 ? '500.00' : '300.00',
+        status,
+      });
+    },
+  );
+
+  it('reconciles due checkout supplemental debt while excluding unperformed rental candidates and rental summaries', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-03T04:00:00Z'));
+    const { rows, service, findMany, updateMany } = checkoutFixture();
+    const candidates = [
+      { ...rows[0], status: 'PENDING' },
+      { ...rows[1], status: 'PARTIAL' },
+      {
+        ...rows[0],
+        id: 5,
+        billCategory: 'CHECKOUT_SUPPLEMENTAL',
+        status: 'PENDING',
+      },
+    ];
+    findMany.mockImplementation((query: { select?: unknown }) =>
+      Promise.resolve(query.select ? candidates : rows),
+    );
+    const result = await service.list({ page: 1, pageSize: 20 });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: [2, 5] },
+        dueDate: { lt: new Date('2026-09-03') },
+        outstandingAmount: { gt: 0 },
+        status: { in: ['PENDING', 'PARTIAL'] },
+      },
+      data: { status: 'OVERDUE' },
+    });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ billCategory: true }),
+      }),
+    );
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ billCategory: 'RENT' }),
+        include: expect.any(Object),
+      }),
+    );
+    expect(result.summary).toEqual({
+      payable: '1000.00',
+      received: '2400.00',
+      outstanding: '800.00',
+      count: 1,
+      overdueCount: 1,
+    });
+    expect(result.total).toBe(4);
+    expect(
+      (
+        await service.list({ page: 1, pageSize: 20, status: 'OVERDUE' })
+      ).items.map((item) => item.id),
+    ).toEqual([2]);
+    updateMany.mockClear();
+    findMany.mockImplementation((query: { select?: unknown }) =>
+      Promise.resolve(query.select ? [candidates[0]] : rows),
+    );
+    await service.list({ page: 1, pageSize: 20 });
     expect(updateMany).not.toHaveBeenCalled();
   });
 

@@ -78,7 +78,7 @@ export class FinanceExportService {
         value(row.netReceivable),
         value(row.validReceived),
         value(row.outstanding),
-        row.status,
+        row.status === 'PENDING_CHECKOUT_REVIEW' ? '待退租核算' : row.status,
       ]),
     );
     sheet.addRow([

@@ -3,6 +3,107 @@ import { Prisma, UserRole } from '@prisma/client';
 import { FinanceExportService } from './finance-export.service';
 
 describe('FinanceExportService contract correction cash flow', () => {
+  it('exports the checkout review state in Chinese without changing existing rent columns or status labels', async () => {
+    const statuses = [
+      'PENDING_CHECKOUT_REVIEW',
+      'PENDING',
+      'PARTIAL',
+      'PAID',
+      'OVERDUE',
+      'VOIDED',
+      'REFUNDED',
+    ];
+    const finance = {
+      rentCollection: jest.fn().mockResolvedValue({
+        rows: statuses.map((status, index) => ({
+          billNo: `BILL-${index}`,
+          contractNo: 'HT-1',
+          houseNo: '1栋101',
+          tenantName: '测试租户',
+          periodStart: new Date('2026-09-01'),
+          originalReceivable: new Prisma.Decimal(0),
+          concessionAmount: new Prisma.Decimal(0),
+          netReceivable: new Prisma.Decimal(0),
+          validReceived: new Prisma.Decimal(index === 0 ? 600 : 0),
+          outstanding: new Prisma.Decimal(0),
+          status,
+        })),
+        total: {
+          originalReceivable: new Prisma.Decimal(0),
+          concessionAmount: new Prisma.Decimal(0),
+          netReceivable: new Prisma.Decimal(0),
+          validReceived: new Prisma.Decimal(600),
+          outstanding: new Prisma.Decimal(0),
+        },
+        collectionRate: null,
+      }),
+    };
+    const system = { recordFinancialExport: jest.fn().mockResolvedValue({}) };
+    const service = new FinanceExportService(
+      finance as never,
+      system as never,
+      {} as never,
+    );
+    const bytes = await service.rentCollectionWorkbook(undefined, undefined, {
+      id: 1,
+      displayName: '管理员',
+      role: UserRole.SUPER_ADMIN,
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const sheet = workbook.getWorksheet('租金收缴报表')!;
+    expect(sheet.getRow(3).values).toEqual([
+      undefined,
+      '账单编号',
+      '合同编号',
+      '房号',
+      '承租人',
+      '账期开始',
+      '原应收',
+      '优惠减免',
+      '净应收',
+      '有效实收',
+      '未收',
+      '状态',
+    ]);
+    expect(sheet.getRow(4).values).toEqual([
+      undefined,
+      'BILL-0',
+      'HT-1',
+      '1栋101',
+      '测试租户',
+      '2026-09-01',
+      '0',
+      '0',
+      '0',
+      '600',
+      '0',
+      '待退租核算',
+    ]);
+    expect(sheet.getRows(5, 6)!.map((row) => row.getCell(11).value)).toEqual([
+      'PENDING',
+      'PARTIAL',
+      'PAID',
+      'OVERDUE',
+      'VOIDED',
+      'REFUNDED',
+    ]);
+    expect(sheet.getRow(11).values).toEqual([
+      undefined,
+      '合计',
+      '',
+      '',
+      '',
+      '',
+      '0',
+      '0',
+      '0',
+      '600',
+      '0',
+      '收租率：—',
+    ]);
+  });
+
   it('exports the same correction label, signed amount, dates and source links as detail', async () => {
     const correctionOccurredAt = new Date('2026-08-26T10:00:00.000Z');
     const originalOccurredAt = new Date('2026-08-02T09:00:00.000Z');

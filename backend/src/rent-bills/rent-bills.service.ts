@@ -86,6 +86,7 @@ export class RentBillsService {
       where,
       select: {
         id: true,
+        billCategory: true,
         periodStart: true,
         contract: {
           select: {
@@ -96,11 +97,13 @@ export class RentBillsService {
       },
     });
     const ids = candidates
-      .filter((bill) =>
-        isRentBillPerformed(
-          bill.periodStart,
-          resolveCheckoutCutoff(bill.contract.checkoutSettlements ?? []),
-        ),
+      .filter(
+        (bill) =>
+          bill.billCategory !== 'RENT' ||
+          isRentBillPerformed(
+            bill.periodStart,
+            resolveCheckoutCutoff(bill.contract.checkoutSettlements ?? []),
+          ),
       )
       .map((bill) => bill.id);
     if (ids.length) {
@@ -149,9 +152,10 @@ export class RentBillsService {
 
   private mapRow(bill: RentBillRow) {
     const member = bill.contract.members[0];
-    const cutoff = resolveCheckoutCutoff(
-      bill.contract.checkoutSettlements ?? [],
-    );
+    const cutoff =
+      bill.billCategory === 'RENT'
+        ? resolveCheckoutCutoff(bill.contract.checkoutSettlements ?? [])
+        : null;
     const performed = isRentBillPerformed(bill.periodStart, cutoff);
     return {
       id: bill.id,
