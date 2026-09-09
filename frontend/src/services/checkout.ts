@@ -1,6 +1,8 @@
 import { http } from "./http";
 import type {
   CheckoutContract,
+  CheckoutFinanceSnapshot,
+  CheckoutInitiatePayload,
   CheckoutSettlement,
   CheckoutSettlementPreview,
   CheckoutSettlementPayload,
@@ -9,13 +11,6 @@ import type {
 
 type Envelope<T> = { code: number; message: string; data: T };
 const data = <T>(response: { data: Envelope<T> }) => response.data.data;
-
-type CheckoutFinanceSnapshot = {
-  depositBalance: string;
-  rentOutstanding: string;
-  prepaymentBalance: string;
-  futureBillCount: number;
-};
 
 export const checkoutApi = {
   contracts: async () =>
@@ -47,13 +42,17 @@ export const checkoutApi = {
         `/checkout-settlements/${id}`,
       ),
     ),
-  financeSnapshot: async (contractId: number) =>
+  financeSnapshot: async (
+    contractId: number,
+    actualCheckoutDate?: string,
+  ) =>
     data(
       await http.get<Envelope<CheckoutFinanceSnapshot>>(
         `/checkout-settlements/contract/${contractId}/finance-snapshot`,
+        { params: actualCheckoutDate ? { actualCheckoutDate } : undefined },
       ),
     ),
-  initiate: async (contractId: number, payload: Record<string, unknown>) =>
+  initiate: async (contractId: number, payload: CheckoutInitiatePayload) =>
     data(
       await http.post<Envelope<CheckoutSettlement>>(
         `/checkout-settlements/contract/${contractId}/initiate`,

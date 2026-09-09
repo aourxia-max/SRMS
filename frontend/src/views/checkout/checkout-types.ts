@@ -11,6 +11,23 @@ export type CheckoutContract = {
   }>;
 };
 
+export type CheckoutFinanceSnapshot = {
+  depositBalance: string;
+  rentOutstanding: string;
+  prepaymentBalance: string;
+  futureBillCount: number;
+};
+
+export type CheckoutInitiatePayload = {
+  actualCheckoutDate?: string;
+  checkoutType: string;
+  plannedCheckoutDate: string;
+  handoverDate: string;
+  inspectionAt: string;
+  checkoutReason: string;
+  targetRoomStatus: "EMPTY" | "MAINTENANCE" | "DISABLED";
+};
+
 export type CheckoutSettlementItem = {
   id?: number;
   itemType:

@@ -11,6 +11,8 @@ import CheckoutSettlementPanel from "./CheckoutSettlementPanel.vue";
 import CheckoutTopNav from "./CheckoutTopNav.vue";
 import type {
   CheckoutContract,
+  CheckoutFinanceSnapshot,
+  CheckoutInitiatePayload,
   CheckoutSettlement,
   CheckoutTab,
   CheckoutSettlementPreview,
@@ -27,12 +29,7 @@ const contracts = ref<CheckoutContract[]>([]);
 const settlements = ref<CheckoutSettlement[]>([]);
 const refundSettlements = ref<CheckoutSettlement[]>([]);
 const refundSettlement = ref<CheckoutSettlement>();
-const financeSnapshot = ref<{
-  depositBalance: string;
-  rentOutstanding: string;
-  prepaymentBalance: string;
-  futureBillCount: number;
-}>();
+const financeSnapshot = ref<CheckoutFinanceSnapshot>();
 const loadingContracts = ref(false);
 const completedContracts = ref<CompletedCheckoutContractsResult>({
   items: [],
@@ -46,6 +43,7 @@ const loadingCompletedContracts = ref(false);
 const settlementPreview = ref<CheckoutSettlementPreview>();
 const previewLoading = ref(false);
 let previewRequestVersion = 0;
+let financeSnapshotRequestVersion = 0;
 let refundRequestVersion = 0;
 let refundProofPreviewVersion = 0;
 let completedDetailRequestVersion = 0;
@@ -58,6 +56,7 @@ const refundApproving = ref(false);
 const refundCancelling = ref(false);
 const completedRevoking = ref(false);
 const selectedInitiateContractId = ref<number | null>(null);
+const initiateActualCheckoutDate = ref("");
 const refundPanel = ref<{ addProof: (id: number) => void } | null>(null);
 const refundProofPreview = ref<{
   url: string;
@@ -348,23 +347,48 @@ async function previewRefundProof(
   }
 }
 onBeforeUnmount(() => {
+  financeSnapshotRequestVersion += 1;
   completedDetailRequestVersion += 1;
   completedDetail.value = undefined;
   closeRefundProofPreview();
 });
 
 async function loadFinanceSnapshot(contractId: number) {
+  selectedInitiateContractId.value = contractId;
+  const requestVersion = ++financeSnapshotRequestVersion;
   try {
-    financeSnapshot.value = await checkoutApi.financeSnapshot(contractId);
+    const snapshot = initiateActualCheckoutDate.value
+      ? await checkoutApi.financeSnapshot(
+          contractId,
+          initiateActualCheckoutDate.value,
+        )
+      : await checkoutApi.financeSnapshot(contractId);
+    if (requestVersion === financeSnapshotRequestVersion)
+      financeSnapshot.value = snapshot;
   } catch (error) {
-    actionError.value = message(error, "财务快照加载失败，请稍后重试");
+    if (requestVersion === financeSnapshotRequestVersion)
+      actionError.value = message(error, "财务快照加载失败，请稍后重试");
   }
 }
-async function initiate(contractId: number, payload: Record<string, string>) {
+function refreshFinanceSnapshot(actualCheckoutDate: string) {
+  initiateActualCheckoutDate.value = actualCheckoutDate;
+  if (selectedInitiateContractId.value)
+    void loadFinanceSnapshot(selectedInitiateContractId.value);
+}
+async function initiate(contractId: number, payload: CheckoutInitiatePayload) {
   actionError.value = "";
   try {
-    await checkoutApi.initiate(contractId, payload);
+    const initiatedSettlement = await checkoutApi.initiate(contractId, payload);
     await loadData();
+    const loadedSettlement = settlements.value.find(
+      (item) => item.id === initiatedSettlement.id,
+    );
+    settlements.value = [
+      loadedSettlement
+        ? { ...loadedSettlement, ...initiatedSettlement }
+        : initiatedSettlement,
+      ...settlements.value.filter((item) => item.id !== initiatedSettlement.id),
+    ];
     activeTab.value = "settlement";
   } catch (error) {
     actionError.value = message(error, "发起退租失败，请稍后重试");
@@ -612,6 +636,7 @@ onMounted(initialize);
       :snapshot="financeSnapshot"
       :selected-contract-id="selectedInitiateContractId"
       @contract-change="loadFinanceSnapshot"
+      @actual-date-change="refreshFinanceSnapshot"
       @submit="initiate"
     />
     <CheckoutSettlementPanel

@@ -1,29 +1,32 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import type { CheckoutContract } from "./checkout-types";
+import type {
+  CheckoutContract,
+  CheckoutFinanceSnapshot,
+  CheckoutInitiatePayload,
+} from "./checkout-types";
 
-type CheckoutSnapshot = {
-  depositBalance: string;
-  rentOutstanding: string;
-  prepaymentBalance: string;
-  futureBillCount: number;
-};
 const props = defineProps<{
   contracts: CheckoutContract[];
   loading?: boolean;
-  snapshot?: CheckoutSnapshot;
+  snapshot?: CheckoutFinanceSnapshot;
   selectedContractId?: number | null;
 }>();
 const emit = defineEmits<{
-  submit: [contractId: number, payload: Record<string, string>];
+  submit: [contractId: number, payload: CheckoutInitiatePayload];
   contractChange: [contractId: number];
+  actualDateChange: [actualCheckoutDate: string];
 }>();
 
 const today = new Date().toISOString().slice(0, 10);
-const form = reactive({
+const form = reactive<CheckoutInitiatePayload & {
+  contractId: string;
+  actualCheckoutDate: string;
+}>({
   contractId: "",
   checkoutType: "提前退租",
   plannedCheckoutDate: today,
+  actualCheckoutDate: "",
   handoverDate: today,
   inspectionAt: today,
   checkoutReason: "",
@@ -87,9 +90,10 @@ function submit() {
   if (!form.contractId) errors.value.push("请选择待开始或正在履行的合同");
   if (!form.checkoutReason.trim()) errors.value.push("请填写退租原因");
   if (errors.value.length) return;
-  emit("submit", Number(form.contractId), {
-    ...form,
-    contractId: undefined as never,
+  const { contractId, actualCheckoutDate, ...requiredPayload } = form;
+  emit("submit", Number(contractId), {
+    ...requiredPayload,
+    ...(actualCheckoutDate ? { actualCheckoutDate } : {}),
   });
 }
 </script>
@@ -160,6 +164,18 @@ function submit() {
         <label class="form-field">
           <span><i>*</i>计划退房日期</span>
           <input v-model="form.plannedCheckoutDate" type="date" lang="zh-CN" />
+        </label>
+        <label class="form-field">
+          <span>实际退房日期</span>
+          <input
+            data-test="initiate-actual-checkout-date"
+            v-model="form.actualCheckoutDate"
+            type="date"
+            lang="zh-CN"
+            :max="today"
+            @change="emit('actualDateChange', form.actualCheckoutDate)"
+          />
+          <small>已经退房后补录时填写；尚未退房可留空</small>
         </label>
         <label class="form-field">
           <span><i>*</i>交接日期</span>
@@ -262,6 +278,10 @@ function submit() {
 .form-field textarea {
   min-height: 92px;
   resize: vertical;
+}
+.form-field small {
+  color: #66758b;
+  font-size: 12px;
 }
 .initiate-panel__actions {
   display: flex;

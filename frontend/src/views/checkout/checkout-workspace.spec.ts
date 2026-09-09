@@ -31,6 +31,22 @@ function checkoutTestPinia() {
     },
   };
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function mountSelectedContractWorkspace() {
+  routeQuery.value = { contractId: "1" };
+  return mount(CheckoutWorkspace, {
+    global: { plugins: [checkoutTestPinia()] },
+  });
+}
+
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: routeQuery.value }),
   useRouter: () => ({ push: vi.fn() }),
@@ -308,6 +324,167 @@ describe("CheckoutTopNav", () => {
       "HT202609010001｜1栋201｜张三01",
       "HT202609010002｜2栋301｜李四02",
     ]);
+  });
+
+  it("显示可留空的实际退房日期和中文说明", () => {
+    const wrapper = mount(CheckoutInitiatePanel, {
+      props: {
+        contracts: [{ id: 1, contractNo: "HT202608010001", status: "ACTIVE" }],
+      },
+      global: { plugins: [ElementPlus] },
+    });
+
+    const input = wrapper.get('[data-test="initiate-actual-checkout-date"]');
+    expect(input.attributes("type")).toBe("date");
+    expect(input.attributes("required")).toBeUndefined();
+    expect(input.attributes("max")).toBe(new Date().toISOString().slice(0, 10));
+    expect(wrapper.text()).toContain("实际退房日期");
+    expect(wrapper.text()).toContain("已经退房后补录时填写；尚未退房可留空");
+  });
+
+  it("尚未退房时提交不携带空的实际退房日期", async () => {
+    const wrapper = mount(CheckoutInitiatePanel, {
+      props: {
+        contracts: [{ id: 1, contractNo: "HT202608010001", status: "ACTIVE" }],
+        selectedContractId: 1,
+      },
+      global: { plugins: [ElementPlus] },
+    });
+    await flushPromises();
+    const actualDateInput = wrapper.get(
+      '[data-test="initiate-actual-checkout-date"]',
+    );
+    await actualDateInput.setValue("2026-09-01");
+    await actualDateInput.setValue("");
+    await wrapper.get("textarea").setValue("尚未退房，提前发起");
+    await wrapper.get('[data-test="initiate-submit"]').trigger("click");
+
+    const submitted = wrapper.emitted("submit")?.[0]?.[1];
+    expect(submitted).not.toHaveProperty("actualCheckoutDate");
+  });
+
+  it("发起退租时提交填写的实际退房日期", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await wrapper.get("textarea").setValue("租户已搬离");
+    await wrapper.get('[data-test="initiate-submit"]').trigger("click");
+    await flushPromises();
+
+    expect(checkoutApi.initiate).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ actualCheckoutDate: "2026-09-01" }),
+    );
+  });
+
+  it("修改实际退房日期时按该日期刷新财务快照", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await flushPromises();
+
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(
+      1,
+      "2026-09-01",
+    );
+  });
+
+  it("清空实际退房日期时恢复当前业务日财务快照", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    const input = wrapper.get('[data-test="initiate-actual-checkout-date"]');
+
+    await input.setValue("2026-09-01");
+    await flushPromises();
+    await input.setValue("");
+    await flushPromises();
+
+    expect(checkoutApi.financeSnapshot).toHaveBeenLastCalledWith(1);
+  });
+
+  it("快速切换实际退房日期时旧快照响应不会覆盖新响应", async () => {
+    const older = deferred<{
+      depositBalance: string;
+      rentOutstanding: string;
+      prepaymentBalance: string;
+      futureBillCount: number;
+    }>();
+    const newer = deferred<{
+      depositBalance: string;
+      rentOutstanding: string;
+      prepaymentBalance: string;
+      futureBillCount: number;
+    }>();
+    vi.mocked(checkoutApi.financeSnapshot)
+      .mockResolvedValueOnce({
+        depositBalance: "100.00",
+        rentOutstanding: "0.00",
+        prepaymentBalance: "0.00",
+        futureBillCount: 1,
+      })
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    const input = wrapper.get('[data-test="initiate-actual-checkout-date"]');
+
+    await input.setValue("2026-09-01");
+    await input.setValue("2026-08-31");
+    newer.resolve({
+      depositBalance: "222.00",
+      rentOutstanding: "0.00",
+      prepaymentBalance: "0.00",
+      futureBillCount: 2,
+    });
+    await flushPromises();
+    older.resolve({
+      depositBalance: "111.00",
+      rentOutstanding: "0.00",
+      prepaymentBalance: "0.00",
+      futureBillCount: 1,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("222.00");
+    expect(wrapper.text()).not.toContain("111.00");
+  });
+
+  it("发起后结算页自动带入后端返回的实际退房日期", async () => {
+    const wrapper = mountSelectedContractWorkspace();
+    await flushPromises();
+    await wrapper
+      .get('[data-test="initiate-actual-checkout-date"]')
+      .setValue("2026-09-01");
+    await wrapper.get("textarea").setValue("补录已完成退房");
+    vi.mocked(checkoutApi.settlements).mockResolvedValueOnce([]);
+    vi.mocked(checkoutApi.initiate).mockResolvedValueOnce({
+      id: 18,
+      settlementNo: "TZ202609010018",
+      status: "DRAFT",
+      contractId: 1,
+      actualCheckoutDate: "2026-09-01T00:00:00.000Z",
+      handoverDate: "2026-09-01T00:00:00.000Z",
+      inspectionAt: "2026-09-01T09:00:00.000Z",
+      targetRoomStatus: "EMPTY",
+      depositRefundableAmount: "0.00",
+      prepaymentRefundableAmount: "0.00",
+      rentRefundableAmount: "0.00",
+      finalReceivable: "0.00",
+    });
+    await wrapper.get('[data-test="initiate-submit"]').trigger("click");
+    await flushPromises();
+
+    const settlementPanel = wrapper.getComponent(CheckoutSettlementPanel);
+    expect(
+      (settlementPanel.get('input[type="date"]').element as HTMLInputElement)
+        .value,
+    ).toBe("2026-09-01");
   });
 
   it("renders the locked combined refund breakdown and reserved rent allocations", () => {
