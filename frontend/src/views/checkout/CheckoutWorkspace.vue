@@ -489,6 +489,7 @@ async function previewSettlement(
     if (requestVersion === previewRequestVersion) {
       settlementPreview.value = preview;
       settlementPreviewContext = context;
+      actionError.value = "";
     }
   } catch (error) {
     if (requestVersion === previewRequestVersion) {
@@ -502,8 +503,13 @@ async function previewSettlement(
 function previewContextKey(id: number, payload: CheckoutSettlementPayload) {
   // Request identity only; financial amounts and versions come from the server.
   return JSON.stringify([
-    id, payload.actualCheckoutDate, payload.handoverDate, payload.inspectionAt,
-    payload.targetRoomStatus, payload.remark ?? "", payload.items,
+    id,
+    payload.actualCheckoutDate,
+    payload.handoverDate,
+    payload.inspectionAt,
+    payload.targetRoomStatus,
+    payload.remark ?? "",
+    payload.items,
   ]);
 }
 async function returnToDraft(id: number) {

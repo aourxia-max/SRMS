@@ -53,16 +53,21 @@ export function assertCheckoutArrearsComplete(
   const outstandingBills = eligibleBills.filter((bill) =>
     bill.outstandingAmount.gt(0),
   );
-  if (
-    arrears.length !== outstandingBills.length ||
-    outstandingBills.some((bill) => {
-      const item = arrears.find((item) => item.rentBillId === bill.id);
-      return (
-        !item || !new Prisma.Decimal(item.amount).equals(bill.outstandingAmount)
+  for (const bill of outstandingBills) {
+    const item = arrears.find((item) => item.rentBillId === bill.id);
+    if (!item)
+      throw new ConflictException(
+        `欠租结算缺少账单 ${bill.id}，请添加欠租项目，金额为 ${bill.outstandingAmount.toFixed(2)} 元`,
       );
-    })
-  )
-    throw new ConflictException(CHECKOUT_ACCOUNTING_CHANGED_MESSAGE);
+    if (!new Prisma.Decimal(item.amount).equals(bill.outstandingAmount))
+      throw new ConflictException(
+        `欠租账单 ${bill.id} 的结算金额应为 ${bill.outstandingAmount.toFixed(2)} 元，请按实际未收金额填写`,
+      );
+  }
+  if (arrears.length !== outstandingBills.length)
+    throw new ConflictException(
+      '欠租项目包含已结清账单，请重新加载欠租账单后提交',
+    );
 }
 
 export function assertCheckoutFinalAccountingCurrent(

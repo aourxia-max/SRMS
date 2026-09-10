@@ -316,7 +316,9 @@ describe('CheckoutService actual-date accounting', () => {
           { ...dto, items: [{ ...arrearsItem, amount: '50.00' }] },
           user,
         ),
-      ).rejects.toEqual(new ConflictException(conflict));
+      ).rejects.toThrow(
+        scenario === 'increased balance' ? /21.*100\.00/ : /22.*50\.00/,
+      );
       expect(tx.checkoutSettlementItem.deleteMany).not.toHaveBeenCalled();
       expect(tx.checkoutSettlement.update).not.toHaveBeenCalled();
       expect(tx.checkoutRentRefundAllocation.updateMany).not.toHaveBeenCalled();

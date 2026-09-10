@@ -386,6 +386,15 @@ describe('FinanceService rent collection category isolation', () => {
               transactionType: 'OFFSET_SETTLEMENT',
               amount: new Prisma.Decimal('200.00'),
               transactionNo: 'YJ-JY-71',
+              checkoutSettlement: { status: 'COMPLETED' },
+            },
+            {
+              id: 73,
+              occurredAt: new Date('2026-09-03T08:00:00.000Z'),
+              transactionType: 'OFFSET_SETTLEMENT',
+              amount: new Prisma.Decimal('100.00'),
+              transactionNo: 'YJ-CANCELLED-73',
+              checkoutSettlement: { status: 'CANCELLED' },
             },
             {
               id: 72,

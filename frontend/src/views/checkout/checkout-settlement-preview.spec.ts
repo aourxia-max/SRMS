@@ -20,7 +20,7 @@ const settlement = {
 };
 
 const rentRefundPreview = {
-  previewFingerprint: 'server-preview',
+  previewFingerprint: "server-preview",
   depositRefundableAmount: "7000.00",
   prepaymentRefundableAmount: "500.00",
   rentRefundableAmount: "3000.00",
@@ -41,6 +41,80 @@ const rentRefundPreview = {
 
 describe("退租结算实时预估", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("automatically includes current arrears while preserving repair details", async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: {
+        settlements: [
+          {
+            ...settlement,
+            items: [
+              {
+                itemType: "REPAIR",
+                amount: "100.00",
+                description: "维修",
+                inspectionRecordRef: "1",
+              },
+            ],
+          },
+        ],
+        arrearsLoading: true,
+        arrearsBills: [],
+      },
+    });
+    await wrapper.setProps({
+      arrearsLoading: false,
+      arrearsBills: [
+        {
+          id: 1115,
+          billNo: "ZD1115",
+          periodStart: "2026-08-10",
+          periodEnd: "2026-09-09",
+          outstandingAmount: "760.00",
+        },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    const emitted = wrapper.emitted("preview")!.at(-1)![1] as {
+      items: unknown[];
+    };
+    expect(emitted.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          itemType: "REPAIR",
+          amount: "100.00",
+          description: "维修",
+        }),
+        expect.objectContaining({
+          itemType: "RENT_ARREARS",
+          rentBillId: 1115,
+          amount: "760.00",
+        }),
+      ]),
+    );
+    expect(emitted.items).toHaveLength(2);
+    await wrapper.setProps({ arrearsLoading: true, arrearsBills: [] });
+    await wrapper.setProps({ arrearsLoading: false, arrearsBills: [] });
+    await vi.advanceTimersByTimeAsync(300);
+    const updated = wrapper.emitted("preview")!.at(-1)![1] as {
+      items: unknown[];
+    };
+    expect(updated.items).toEqual([
+      expect.objectContaining({ itemType: "REPAIR", amount: "100.00" }),
+    ]);
+    wrapper.unmount();
+  });
+
+  it("blocks submission during a running preview", () => {
+    const wrapper = mount(CheckoutSettlementPanel, {
+      props: { settlements: [settlement], previewLoading: true },
+    });
+    expect(
+      wrapper.get('[data-test="settlement-submit"]').attributes("disabled"),
+    ).toBeDefined();
+    wrapper.unmount();
+  });
 
   it("offers only authoritative eligible arrears bills instead of the saved settlement list", async () => {
     const wrapper = mount(CheckoutSettlementPanel, {
@@ -101,9 +175,7 @@ describe("退租结算实时预估", () => {
     const select = wrapper.getComponent(ElSelect);
     expect(select.props("filterable")).toBe(true);
     expect(
-      wrapper
-        .findAllComponents(ElOption)
-        .map((option) => option.props("label")),
+      select.findAllComponents(ElOption).map((option) => option.props("label")),
     ).toEqual([
       "ZD2026070031｜2026/07/01–2026/07/31｜未收 ¥300.00",
       "ZD2026080032｜2026/08/01–2026/08/31｜未收 ¥800.00",
@@ -186,7 +258,7 @@ describe("退租结算实时预估", () => {
       props: {
         settlements: [settlement],
         preview: {
-          previewFingerprint: 'server-preview',
+          previewFingerprint: "server-preview",
           depositRefundableAmount: "7000.00",
           prepaymentRefundableAmount: "500.00",
           rentRefundableAmount: "0.00",

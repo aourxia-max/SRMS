@@ -574,7 +574,10 @@ describe('actual checkout date accounting across real HTTP and MySQL (e2e)', () 
         previewFingerprint: oldPreview.previewFingerprint,
       })
       .expect(409);
-    expect((stale.body as { message: string }).message).toBe(conflictMessage);
+    expect((stale.body as { message: string }).message).toContain(
+      `欠租结算缺少账单 ${fixture.billId}`,
+    );
+    expect((stale.body as { message: string }).message).toContain('1600.00');
     expect(await snapshot(fixture, '2026-09-02')).toMatchObject({
       rentOutstanding: '1600.00',
       arrearsBills: [expect.objectContaining({ id: fixture.billId })],

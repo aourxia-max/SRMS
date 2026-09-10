@@ -264,6 +264,7 @@ export class FinanceService {
         }),
         this.prisma.db.depositTransaction.findMany({
           where: date ? { occurredAt: date } : {},
+          include: { checkoutSettlement: { select: { status: true } } },
         }),
         this.prisma.db.contractVoidReversal.findMany({
           where: {
@@ -453,7 +454,11 @@ export class FinanceService {
       .minus(paymentRefundTotal)
       .minus(checkoutRefundTotal);
     const operatingIncome = deposits
-      .filter((item) => item.transactionType === 'OFFSET_SETTLEMENT')
+      .filter(
+        (item) =>
+          item.transactionType === 'OFFSET_SETTLEMENT' &&
+          item.checkoutSettlement?.status !== 'CANCELLED',
+      )
       .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
     return {
       flows,

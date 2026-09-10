@@ -1,8 +1,27 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { assertCheckoutRentRefundPlanCurrent } from './checkout-accounting-validation';
+import {
+  assertCheckoutArrearsComplete,
+  assertCheckoutRentRefundPlanCurrent,
+} from './checkout-accounting-validation';
 
 describe('checkout accounting validation', () => {
+  it('identifies missing arrears separately from a stale preview', () => {
+    expect(() =>
+      assertCheckoutArrearsComplete(
+        [],
+        [{ id: 1115, outstandingAmount: new Prisma.Decimal('760.00') }],
+      ),
+    ).toThrow(/欠租.*1115.*760\.00/);
+  });
+  it('identifies an incomplete arrears amount', () => {
+    expect(() =>
+      assertCheckoutArrearsComplete(
+        [{ itemType: 'RENT_ARREARS', rentBillId: 1115, amount: '100.00' }],
+        [{ id: 1115, outstandingAmount: new Prisma.Decimal('760.00') }],
+      ),
+    ).toThrow(/1115.*760\.00/);
+  });
   it('rejects equal-total reservation details with duplicated payment references', () => {
     const reservation = {
       paymentAllocationId: 1,

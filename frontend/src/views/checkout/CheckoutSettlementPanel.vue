@@ -122,6 +122,49 @@ function addItem(type: CheckoutSettlementItem["itemType"] = "REPAIR") {
     confirmedByTenant: false,
   });
 }
+// Only synchronize a successfully loaded, actual-date-specific server snapshot.
+// Never replace inspection deductions or rent refunds entered by the operator.
+watch(
+  [
+    () => props.arrearsBills,
+    () => props.arrearsLoading,
+    () => props.arrearsUnavailable,
+  ],
+  () => {
+    if (
+      !props.arrearsBills ||
+      props.arrearsLoading ||
+      props.arrearsUnavailable ||
+      selected.value?.status !== "DRAFT" ||
+      !canOperate.value
+    )
+      return;
+    const existing = items.value;
+    items.value = [
+      ...existing.filter((item) => item.itemType !== "RENT_ARREARS"),
+      ...props.arrearsBills
+        .filter((bill) => Number(bill.outstandingAmount) > 0)
+        .map((bill) => ({
+          ...existing.find(
+            (item) =>
+              item.itemType === "RENT_ARREARS" && item.rentBillId === bill.id,
+          ),
+          itemType: "RENT_ARREARS" as const,
+          rentBillId: bill.id,
+          amount: bill.outstandingAmount,
+          description:
+            existing
+              .find(
+                (item) =>
+                  item.itemType === "RENT_ARREARS" &&
+                  item.rentBillId === bill.id,
+              )
+              ?.description?.trim() || `结清欠租账单 ${bill.billNo}`,
+        })),
+    ];
+  },
+  { immediate: true },
+);
 async function addRentRefund() {
   const existing = items.value.find((item) => item.itemType === "RENT_REFUND");
   if (!existing) {
@@ -172,6 +215,8 @@ function payload(): CheckoutSettlementPayload {
 function previewReady() {
   return Boolean(
     selected.value &&
+    !props.arrearsLoading &&
+    !props.arrearsUnavailable &&
     form.actualCheckoutDate &&
     form.handoverDate &&
     form.inspectionAt &&
@@ -191,7 +236,13 @@ function previewReady() {
 }
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
 watch(
-  [selected, form, items],
+  [
+    selected,
+    form,
+    items,
+    () => props.arrearsLoading,
+    () => props.arrearsUnavailable,
+  ],
   () => {
     if (previewTimer) clearTimeout(previewTimer);
     emit("clearPreview");
@@ -207,6 +258,12 @@ onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer);
   emit("clearPreview");
 });
+watch(
+  () => props.preview,
+  (value) => {
+    if (value?.previewFingerprint) errors.value = [];
+  },
+);
 
 function submit() {
   errors.value = [];
@@ -544,7 +601,11 @@ function cancelSelected() {
             <button
               data-test="settlement-submit"
               :disabled="
-                submitting || cancelling || arrearsLoading || arrearsUnavailable
+                submitting ||
+                cancelling ||
+                arrearsLoading ||
+                arrearsUnavailable ||
+                previewLoading
               "
               type="button"
               class="primary-button"

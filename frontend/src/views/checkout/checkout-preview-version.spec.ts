@@ -122,15 +122,68 @@ describe("checkout preview fingerprint UI", () => {
       previewFingerprint: "backend-version-A",
     });
   });
+  it("submits automatically populated arrears with the same reviewed items", async () => {
+    vi.mocked(checkoutApi.financeSnapshot).mockResolvedValue({
+      depositBalance: "1300.00",
+      prepaymentBalance: "0.00",
+      rentOutstanding: "760.00",
+      futureBillCount: 0,
+      arrearsBills: [
+        {
+          id: 1115,
+          billNo: "ZD1115",
+          periodStart: "2026-08-10",
+          periodEnd: "2026-09-09",
+          outstandingAmount: "760.00",
+        },
+      ],
+    });
+    const { panel } = await workspace();
+    await vi.advanceTimersByTimeAsync(300);
+    await flushPromises();
+    expect(checkoutApi.preview).toHaveBeenLastCalledWith(
+      8,
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            itemType: "RENT_ARREARS",
+            rentBillId: 1115,
+            amount: "760.00",
+          }),
+        ],
+      }),
+    );
+    await panel.get('[data-test="settlement-submit"]').trigger("click");
+    await flushPromises();
+    expect(checkoutApi.submit).toHaveBeenCalledWith(
+      8,
+      expect.objectContaining({
+        previewFingerprint: "backend-version-A",
+        items: [
+          expect.objectContaining({
+            itemType: "RENT_ARREARS",
+            rentBillId: 1115,
+            amount: "760.00",
+          }),
+        ],
+      }),
+    );
+  });
   it("requires re-preview before submitting even when there is no rent refund item", async () => {
     const { panel } = await workspace();
     await panel.get('[data-test="settlement-submit"]').trigger("click");
     await flushPromises();
     expect(checkoutApi.submit).not.toHaveBeenCalled();
-    expect(panel.text()).toContain("请重新预估结算金额");
+    expect(panel.text()).not.toContain("请重新预估结算金额");
     await vi.advanceTimersByTimeAsync(300);
     await flushPromises();
     expect(checkoutApi.preview).toHaveBeenCalled();
+    await panel.get('[data-test="settlement-submit"]').trigger("click");
+    await flushPromises();
+    expect(checkoutApi.submit).toHaveBeenCalledWith(8, {
+      ...payload,
+      previewFingerprint: "backend-version-A",
+    });
   });
   it("removes the prior version immediately when another preview starts", async () => {
     const { panel } = await workspace();

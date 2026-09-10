@@ -479,6 +479,100 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     }
   }
 
+  it.each([
+    ['0.00', '0.00'],
+    ['0.01', '0.00'],
+    ['1000.00', '0.00'],
+    ['3000.00', '0.00'],
+    ['0.00', '100.00'],
+    ['0.01', '100.00'],
+    ['1000.00', '100.00'],
+    ['3000.00', '100.00'],
+  ])(
+    'audit restores finance after rent refund %s repair %s and completed checkout revocation',
+    async (rentRefund, repairAmount) => {
+      const fixture = await createFixture('revoke-audit');
+      const before = await financeSnapshot();
+      const cash = async () => {
+        currentUser = operator;
+        const response = await request(app.getHttpServer())
+          .get('/api/finance/cash-flows')
+          .expect(200);
+        return response.body.data;
+      };
+      const beforeCash = await cash();
+      const payload = {
+        ...settlementPayload(rentRefund),
+        items: [
+          ...(rentRefund === '0.00' ? [] : settlementPayload(rentRefund).items),
+          ...(repairAmount === '0.00'
+            ? []
+            : [
+                {
+                  itemType: 'REPAIR',
+                  amount: repairAmount,
+                  inspectionRecordRef: 'audit',
+                  description: 'repair',
+                },
+              ]),
+        ],
+      };
+      const reviewed = await reviewedSettlementPayload(fixture, payload);
+      await request(app.getHttpServer())
+        .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
+        .send(reviewed)
+        .expect(201);
+      await approveSettlement(fixture).expect(201);
+      const refundId = await createPendingCombinedRefund(
+        fixture,
+        new Prisma.Decimal(rentRefund)
+          .plus(1000)
+          .minus(repairAmount)
+          .toFixed(2),
+      );
+      currentUser = operator;
+      await request(app.getHttpServer())
+        .post(`/api/deposit-refunds/${refundId}/approve`)
+        .expect(201);
+      const completed = await financeSnapshot();
+      const completedCash = await cash();
+      expect(
+        new Prisma.Decimal(completedCash.operatingIncome)
+          .minus(beforeCash.operatingIncome)
+          .toFixed(2),
+      ).toBe(repairAmount);
+      expect(
+        new Prisma.Decimal(completed.depositBalance)
+          .minus(before.depositBalance)
+          .toFixed(2),
+      ).toBe('-800.00');
+      expect(
+        new Prisma.Decimal(completed.validReceived)
+          .minus(before.validReceived)
+          .toFixed(2),
+      ).toBe(new Prisma.Decimal(rentRefund).negated().toFixed(2));
+      await request(app.getHttpServer())
+        .post(
+          `/api/checkout-settlements/${fixture.settlementId}/revoke-completed`,
+        )
+        .expect(201);
+      expect(await financeSnapshot()).toEqual(before);
+      await request(app.getHttpServer())
+        .post(
+          `/api/checkout-settlements/${fixture.settlementId}/revoke-completed`,
+        )
+        .expect(400);
+      expect(await financeSnapshot()).toEqual(before);
+      const restoredCash = await cash();
+      expect(beforeCash.rentAndDepositReceivedTotal).toBeDefined();
+      expect(beforeCash.operatingIncome).toBeDefined();
+      expect(restoredCash.rentAndDepositReceivedTotal).toEqual(
+        beforeCash.rentAndDepositReceivedTotal,
+      );
+      expect(restoredCash.operatingIncome).toEqual(beforeCash.operatingIncome);
+    },
+  );
+
   it('原子完成押金、预收款和租金合并退款，只展示最终回冲且只产生一笔外部退款', async () => {
     const fixture = await createFixture('atomic');
     const payload = settlementPayload('1000.00');
