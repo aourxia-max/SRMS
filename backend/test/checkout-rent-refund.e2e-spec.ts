@@ -498,7 +498,14 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
         const response = await request(app.getHttpServer())
           .get('/api/finance/cash-flows')
           .expect(200);
-        return response.body.data;
+        return (
+          response.body as {
+            data: {
+              rentAndDepositReceivedTotal: string;
+              operatingIncome: string;
+            };
+          }
+        ).data;
       };
       const beforeCash = await cash();
       const payload = {
