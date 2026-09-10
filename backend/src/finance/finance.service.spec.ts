@@ -36,6 +36,7 @@ describe('FinanceService rent collection category isolation', () => {
         discountAmount: new Prisma.Decimal(0),
         status: 'OVERDUE',
         allocations: [],
+        depositTransactions: [],
         adjustments: [],
         contract,
       },
@@ -48,6 +49,11 @@ describe('FinanceService rent collection category isolation', () => {
         discountAmount: new Prisma.Decimal(0),
         status: 'OVERDUE',
         allocations: [allocation(0)],
+        depositTransactions: [] as Array<{
+          transactionType: string;
+          amount: Prisma.Decimal;
+          checkoutSettlement: { status: string } | null;
+        }>,
         adjustments: [],
         contract,
       },
@@ -60,6 +66,7 @@ describe('FinanceService rent collection category isolation', () => {
         discountAmount: new Prisma.Decimal(0),
         status: 'PAID',
         allocations: [allocation(1)],
+        depositTransactions: [],
         adjustments: [],
         contract,
       },
@@ -72,6 +79,7 @@ describe('FinanceService rent collection category isolation', () => {
         discountAmount: new Prisma.Decimal(0),
         status: 'PARTIAL',
         allocations: [allocation(2)],
+        depositTransactions: [],
         adjustments: [],
         contract,
       },
@@ -151,6 +159,34 @@ describe('FinanceService rent collection category isolation', () => {
     expect((await service.cashFlows()).netCashFlow.toFixed(2)).toBe('2000.00');
   });
 
+  it('counts an active checkout deposit offset against arrears as valid rent received', async () => {
+    const { service, rows } = checkoutFixture();
+    rows[1].depositTransactions.push({
+      transactionType: 'OFFSET_ARREARS',
+      amount: new Prisma.Decimal('760.00'),
+      checkoutSettlement: { status: 'COMPLETED' },
+    });
+
+    const result = await service.rentCollection();
+
+    expect(result.total.validReceived.toFixed(2)).toBe('3160.00');
+    expect(result.total.outstanding.toFixed(2)).toBe('40.00');
+  });
+
+  it('does not count a cancelled checkout deposit offset as valid rent received', async () => {
+    const { service, rows } = checkoutFixture();
+    rows[1].depositTransactions.push({
+      transactionType: 'OFFSET_ARREARS',
+      amount: new Prisma.Decimal('760.00'),
+      checkoutSettlement: { status: 'CANCELLED' },
+    });
+
+    const result = await service.rentCollection();
+
+    expect(result.total.validReceived.toFixed(2)).toBe('2400.00');
+    expect(result.total.outstanding.toFixed(2)).toBe('800.00');
+  });
+
   it('restores original receivable and arrears after the same checkout is cancelled', async () => {
     const { service, settlement } = checkoutFixture();
     expect((await service.rentCollection()).total.outstanding.toFixed(2)).toBe(
@@ -201,6 +237,7 @@ describe('FinanceService rent collection category isolation', () => {
           members: [{ tenant: { name: '测试租户' } }],
         },
         allocations: [],
+        depositTransactions: [],
         adjustments: [
           { amount: new Prisma.Decimal('30.00') },
           { amount: new Prisma.Decimal('20.00') },

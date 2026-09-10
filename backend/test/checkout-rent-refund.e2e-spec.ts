@@ -479,6 +479,65 @@ describe('checkout rent refund real MySQL workflow (e2e)', () => {
     }
   }
 
+  it('moves deposit used for rent arrears from deposit balance into valid rent received', async () => {
+    const fixture = await createFixture('deposit-arrears', {
+      depositBalance: '1300.00',
+      prepaymentBalance: '0.00',
+    });
+    const arrearsBill = await prisma.db.rentBill.create({
+      data: {
+        billNo: `${suitePrefix}-A-${fixture.contractId}`.slice(0, 40),
+        contractId: fixture.contractId,
+        periodSeq: 2,
+        periodStart: new Date('2025-01-01T00:00:00.000Z'),
+        periodEnd: new Date('2025-01-31T00:00:00.000Z'),
+        dueDate: new Date('2025-01-01T00:00:00.000Z'),
+        unitMonthlyRent: new Prisma.Decimal('760.00'),
+        baseRentAmount: new Prisma.Decimal('760.00'),
+        payableAmount: new Prisma.Decimal('760.00'),
+        receivedAmount: new Prisma.Decimal('0.00'),
+        outstandingAmount: new Prisma.Decimal('760.00'),
+        status: 'OVERDUE',
+      },
+    });
+    const before = await financeSnapshot();
+    const requestPayload = {
+      ...settlementPayload('0.00'),
+      items: [
+        {
+          itemType: 'RENT_ARREARS',
+          rentBillId: arrearsBill.id,
+          amount: '760.00',
+          description: '押金抵扣欠租',
+        },
+      ],
+    };
+    const reviewed = await reviewedSettlementPayload(fixture, requestPayload);
+    currentUser = asRole(UserRole.ADMIN);
+    await request(app.getHttpServer())
+      .post(`/api/checkout-settlements/${fixture.settlementId}/submit`)
+      .send(reviewed)
+      .expect(201);
+    await approveSettlement(fixture).expect(201);
+
+    const after = await financeSnapshot();
+    expect(
+      new Prisma.Decimal(after.depositBalance)
+        .minus(before.depositBalance)
+        .toFixed(2),
+    ).toBe('-760.00');
+    expect(
+      new Prisma.Decimal(after.validReceived)
+        .minus(before.validReceived)
+        .toFixed(2),
+    ).toBe('760.00');
+    expect(
+      new Prisma.Decimal(after.outstanding)
+        .minus(before.outstanding)
+        .toFixed(2),
+    ).toBe('-760.00');
+  });
+
   it.each([
     ['0.00', '0.00'],
     ['0.01', '0.00'],

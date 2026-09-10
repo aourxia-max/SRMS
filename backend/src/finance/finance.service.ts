@@ -106,6 +106,13 @@ export class FinanceService {
           },
         },
         allocations: { include: { payment: true } },
+        depositTransactions: {
+          where: { transactionType: 'OFFSET_ARREARS' },
+          select: {
+            amount: true,
+            checkoutSettlement: { select: { status: true } },
+          },
+        },
         adjustments: {
           where: {
             adjustmentType: { in: ['DISCOUNT', 'WAIVER'] },
@@ -123,7 +130,7 @@ export class FinanceService {
         bill.contract.checkoutSettlements ?? [],
       );
       const performed = isRentBillPerformed(bill.periodStart, cutoff);
-      const validReceived = bill.allocations
+      const allocatedRentReceived = bill.allocations
         .filter((item) =>
           ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.payment.status),
         )
@@ -136,6 +143,10 @@ export class FinanceService {
             ),
           new Prisma.Decimal(0),
         );
+      const depositOffsetReceived = bill.depositTransactions
+        .filter((item) => item.checkoutSettlement?.status !== 'CANCELLED')
+        .reduce((sum, item) => sum.plus(item.amount), new Prisma.Decimal(0));
+      const validReceived = allocatedRentReceived.plus(depositOffsetReceived);
       const netReceivable = new Prisma.Decimal(
         performed ? bill.payableAmount : 0,
       );
