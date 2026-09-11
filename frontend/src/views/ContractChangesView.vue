@@ -111,7 +111,7 @@ async function submit() {
   try {
     await http.post(`/contracts/${selectedContractId.value}/changes`, { changeType: form.changeType, effectiveDate: form.effectiveDate, afterSnapshot: afterSnapshot(), reason: form.reason })
     await loadChanges()
-    await approvalTasks.refresh()
+    await approvalTasks.refresh(true)
     ElMessage.success('变更已提交，等待超级管理员确认')
   } catch (error) {
     ElMessage.error(contractChangeSubmitErrorMessage(error))
@@ -121,7 +121,7 @@ async function approve(id: number) {
   try {
     await http.post(`/contracts/changes/${id}/approve`)
     await loadChanges()
-    await approvalTasks.refresh()
+    await approvalTasks.refresh(true)
     ElMessage.success('合同变更已确认')
   } catch (error) {
     ElMessage.error(
@@ -132,7 +132,7 @@ async function approve(id: number) {
     )
   }
 }
-async function reject(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/contracts/changes/${id}/reject`, { reason }); await loadChanges(); await approvalTasks.refresh() } }
+async function reject(id: number) { const reason = window.prompt('请输入驳回原因'); if (reason) { await http.post(`/contracts/changes/${id}/reject`, { reason }); await loadChanges(); await approvalTasks.refresh(true) } }
 onMounted(loadContracts)
 </script>
 

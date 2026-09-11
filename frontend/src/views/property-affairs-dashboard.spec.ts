@@ -96,7 +96,7 @@ describe('驾驶舱物业办事', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="dashboard-property-affairs"]').exists()).toBe(false)
-    expect(vi.mocked(http.get).mock.calls.filter(([url]) => url === '/dashboard')).toHaveLength(2)
+    expect(vi.mocked(http.get).mock.calls.filter(([url]) => url === '/dashboard')).toHaveLength(1)
     expect(vi.mocked(http.get).mock.calls.some(([url]) => String(url).startsWith('/property-affairs'))).toBe(false)
     wrapper.unmount()
   })

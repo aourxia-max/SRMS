@@ -1,26 +1,27 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, START_LOCATION, type RouteRecordRaw, type Router } from 'vue-router'
+import { cancelPendingReadRequests } from '../services/navigation-read-requests'
 import { useSessionStore } from '../stores/session'
-import HomeView from '../views/HomeView.vue'
-import LoginView from '../views/LoginView.vue'
-import UsersView from '../views/UsersView.vue'
-import PropertiesView from '../views/PropertiesView.vue'
-import TenantsView from '../views/TenantsView.vue'
-import TenantDetailView from '../views/TenantDetailView.vue'
-import ContractsView from '../views/ContractsView.vue'
-import ConcessionsPreviewView from '../views/ConcessionsPreviewView.vue'
-import ContractChangesView from '../views/ContractChangesView.vue'
-import PaymentCollectView from '../views/payments/PaymentCollectView.vue'
-import PaymentDetailView from '../views/payments/PaymentDetailView.vue'
-import PaymentReviewsView from '../views/payments/PaymentReviewsView.vue'
-import CheckoutView from '../views/CheckoutView.vue'
-import FinanceView from '../views/FinanceView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import SystemManagementView from '../views/SystemManagementView.vue'
-import RoomDetailView from '../views/RoomDetailView.vue'
-import RentBillsView from '../views/RentBillsView.vue'
-import PropertyAffairsView from '../views/PropertyAffairsView.vue'
-import PropertyAffairFormView from '../views/PropertyAffairFormView.vue'
-import PropertyAffairDetailView from '../views/PropertyAffairDetailView.vue'
+const HomeView = () => import('../views/HomeView.vue')
+const LoginView = () => import('../views/LoginView.vue')
+const UsersView = () => import('../views/UsersView.vue')
+const PropertiesView = () => import('../views/PropertiesView.vue')
+const TenantsView = () => import('../views/TenantsView.vue')
+const TenantDetailView = () => import('../views/TenantDetailView.vue')
+const ContractsView = () => import('../views/ContractsView.vue')
+const ConcessionsPreviewView = () => import('../views/ConcessionsPreviewView.vue')
+const ContractChangesView = () => import('../views/ContractChangesView.vue')
+const PaymentCollectView = () => import('../views/payments/PaymentCollectView.vue')
+const PaymentDetailView = () => import('../views/payments/PaymentDetailView.vue')
+const PaymentReviewsView = () => import('../views/payments/PaymentReviewsView.vue')
+const CheckoutView = () => import('../views/CheckoutView.vue')
+const FinanceView = () => import('../views/FinanceView.vue')
+const DashboardView = () => import('../views/DashboardView.vue')
+const SystemManagementView = () => import('../views/SystemManagementView.vue')
+const RoomDetailView = () => import('../views/RoomDetailView.vue')
+const RentBillsView = () => import('../views/RentBillsView.vue')
+const PropertyAffairsView = () => import('../views/PropertyAffairsView.vue')
+const PropertyAffairFormView = () => import('../views/PropertyAffairFormView.vue')
+const PropertyAffairDetailView = () => import('../views/PropertyAffairDetailView.vue')
 
 type RouteAccessTarget = {
   fullPath: string
@@ -88,6 +89,15 @@ export const router = createRouter({
   history: createWebHistory(),
   routes,
 })
+
+export function installNavigationRequestCleanup(targetRouter: Router) {
+  targetRouter.afterEach((to, from, failure) => {
+    const leftRenderedPage = from !== START_LOCATION && from.matched.length > 0
+    if (!failure && leftRenderedPage && to.fullPath !== from.fullPath) cancelPendingReadRequests()
+  })
+}
+
+installNavigationRequestCleanup(router)
 
 router.beforeEach(async (to) => {
   const session = useSessionStore()

@@ -85,6 +85,7 @@ describe('驾驶舱楼栋房态图可视高度', () => {
     expect(getComputedStyle(map).minHeight).not.toBe('645px')
     expect(getComputedStyle(floor).minHeight).toBe('76px')
     expect(getComputedStyle(room).minHeight).toBe('76px')
+    expect(vi.mocked(http.get).mock.calls.filter(([url]) => url === '/dashboard')).toHaveLength(1)
     wrapper.unmount()
   })
 })

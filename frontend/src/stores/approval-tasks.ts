@@ -28,18 +28,44 @@ export const useApprovalTasksStore = defineStore('approval-tasks', () => {
   const items = ref<ApprovalTaskItem[]>([])
   let requestGeneration = 0
   let pollingTimer: number | null = null
+  let refreshPromise: Promise<void> | null = null
+  let trailingRefreshPromise: Promise<void> | null = null
 
-  async function refresh() {
+  function executeRefresh() {
     const generation = ++requestGeneration
-    try {
-      const summary = await getApprovalTaskSummary()
-      if (generation === requestGeneration) {
-        counts.value = summary.counts
-        items.value = summary.items
-      }
-    } catch {
-      // 保留最近一次成功结果，短暂网络错误不应让提醒闪烁或清零。
-    }
+    const request = getApprovalTaskSummary()
+      .then((summary) => {
+        if (generation === requestGeneration) {
+          counts.value = summary.counts
+          items.value = summary.items
+        }
+      })
+      .catch(() => {
+        // 保留最近一次成功结果，短暂网络错误不应让提醒闪烁或清零。
+      })
+      .finally(() => {
+        if (refreshPromise === request) refreshPromise = null
+      })
+    refreshPromise = request
+    return request
+  }
+
+  function refresh(forceFresh = false): Promise<void> {
+    if (!refreshPromise) return executeRefresh()
+    if (!forceFresh) return refreshPromise
+    if (trailingRefreshPromise) return trailingRefreshPromise
+
+    const activeRequest = refreshPromise
+    const queuedGeneration = requestGeneration
+    const trailing = activeRequest.then(() => {
+      if (queuedGeneration !== requestGeneration) return
+      trailingRefreshPromise = null
+      return executeRefresh()
+    }).finally(() => {
+      if (trailingRefreshPromise === trailing) trailingRefreshPromise = null
+    })
+    trailingRefreshPromise = trailing
+    return trailing
   }
 
   function stopPolling() {
@@ -54,6 +80,8 @@ export const useApprovalTasksStore = defineStore('approval-tasks', () => {
 
   function reset() {
     requestGeneration += 1
+    refreshPromise = null
+    trailingRefreshPromise = null
     stopPolling()
     counts.value = emptyCounts()
     items.value = []

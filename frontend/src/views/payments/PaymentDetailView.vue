@@ -228,7 +228,7 @@ async function submitRefund() {
   refundOpen.value = false;
   ElMessage.success("退款申请已提交，等待超级管理员确认");
   await openDetail(detail.value.id);
-  await approvalTasks.refresh();
+  await approvalTasks.refresh(true);
 }
 async function submitVoid() {
   if (!detail.value || !voidReason.value.trim())
@@ -240,7 +240,7 @@ async function submitVoid() {
   voidOpen.value = false;
   ElMessage.success("作废申请已提交");
   await openDetail(detail.value.id);
-  await approvalTasks.refresh();
+  await approvalTasks.refresh(true);
 }
 function prepareEdit() {
   if (!detail.value) return;

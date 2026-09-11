@@ -48,12 +48,6 @@ watch(
   },
   { immediate: true },
 )
-watch(
-  () => route.fullPath,
-  () => {
-    if (session.user?.id) void approvalTasks.refresh()
-  },
-)
 onBeforeUnmount(() => approvalTasks.stopPolling())
 </script>
 

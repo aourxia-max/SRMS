@@ -1,10 +1,33 @@
 import axios from 'axios'
+import {
+  cancelPendingReadRequests,
+  navigationReadSignalFor,
+  releaseNavigationReadSignal,
+} from './navigation-read-requests'
 
 export const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? '/api',
   timeout: 10_000,
   withCredentials: true,
 })
+
+http.interceptors.request.use((config) => {
+  if (config.method?.toLowerCase() === 'get') config.signal = navigationReadSignalFor(config.signal)
+  return config
+})
+
+http.interceptors.response.use(
+  (response) => {
+    releaseNavigationReadSignal(response.config.signal)
+    return response
+  },
+  (error) => {
+    releaseNavigationReadSignal(error?.config?.signal)
+    return Promise.reject(error)
+  },
+)
+
+export { cancelPendingReadRequests }
 
 export type RentBillStatus = 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'VOIDED' | 'REFUNDED' | 'PENDING_CHECKOUT_REVIEW'
 export type RentBillQuery = { keyword?: string; buildingId?: number; status?: RentBillStatus; month?: string; page?: number; pageSize?: number }

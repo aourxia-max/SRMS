@@ -70,18 +70,34 @@ describe('useApprovalTasksStore', () => {
     expect(store.counts).toEqual(firstCounts)
   })
 
-  it('较晚发起的请求先返回时不会被旧响应覆盖', async () => {
-    const older = deferred<ApprovalTaskSummary>()
-    const newer = deferred<ApprovalTaskSummary>()
-    getSummaryMock.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+  it('并发刷新复用同一个在途请求，避免快速切页时堆积', async () => {
+    const pending = deferred<ApprovalTaskSummary>()
+    getSummaryMock.mockReturnValue(pending.promise)
     const store = useApprovalTasksStore()
 
-    const olderRefresh = store.refresh()
-    const newerRefresh = store.refresh()
-    newer.resolve(asSummary(latestCounts))
-    await newerRefresh
-    older.resolve(asSummary(firstCounts))
-    await olderRefresh
+    const firstRefresh = store.refresh()
+    const secondRefresh = store.refresh()
+    pending.resolve(asSummary(latestCounts))
+    await Promise.all([firstRefresh, secondRefresh])
+
+    expect(getSummaryMock).toHaveBeenCalledTimes(1)
+    expect(store.counts).toEqual(latestCounts)
+  })
+
+  it('业务变更后的强制刷新会在旧请求完成后再取一次新结果', async () => {
+    const beforeMutation = deferred<ApprovalTaskSummary>()
+    const afterMutation = deferred<ApprovalTaskSummary>()
+    getSummaryMock.mockReturnValueOnce(beforeMutation.promise).mockReturnValueOnce(afterMutation.promise)
+    const store = useApprovalTasksStore()
+
+    const pollingRefresh = store.refresh()
+    const mutationRefresh = store.refresh(true)
+    beforeMutation.resolve(asSummary(firstCounts))
+    await pollingRefresh
+    expect(getSummaryMock).toHaveBeenCalledTimes(2)
+
+    afterMutation.resolve(asSummary(latestCounts))
+    await mutationRefresh
 
     expect(store.counts).toEqual(latestCounts)
   })

@@ -88,15 +88,17 @@ describe('全局待审批导航提醒', () => {
     wrapper.unmount()
   })
 
-  it('登录时启动轮询、路由切换刷新、退出停止并在再次登录后重启', async () => {
+  it('登录时启动轮询、连续切换一百次不额外刷新、退出后停止', async () => {
     const context = await mountApp('ADMIN')
     const { wrapper, router, session, refresh, reset, startPolling, stopPolling } = context
 
     expect(refresh).toHaveBeenCalledTimes(1)
     expect(startPolling).toHaveBeenCalledTimes(1)
-    await router.push('/contracts')
+    for (let index = 0; index < 100; index += 1) {
+      await router.push(index % 2 === 0 ? '/contracts' : '/')
+    }
     await flushPromises()
-    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(refresh).toHaveBeenCalledTimes(1)
 
     session.user = null
     session.accessToken = null

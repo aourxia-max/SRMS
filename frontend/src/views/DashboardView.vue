@@ -269,7 +269,9 @@ async function loadRoomMap() {
 }
 async function init() {
   buildings.value = (await http.get('/properties/buildings')).data.data
-  await Promise.all([load(), loadRoomMap()])
+  const initial = (await http.get('/dashboard')).data.data
+  data.value = initial
+  roomMapData.value = initial
 }
 onMounted(init)
 </script>

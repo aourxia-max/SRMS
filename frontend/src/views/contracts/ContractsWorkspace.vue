@@ -417,7 +417,7 @@ async function submitRebate(payload: Record<string, unknown>) {
     if (!selectedContract.value) throw new Error('请先选择合同')
     await submitFixedRentRebate(selectedContract.value, payload)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
-    await approvalTasks.refresh()
+    await approvalTasks.refresh(true)
     ElMessage.success('固定月租退差申请已提交')
   } catch (error) {
     ElMessage.error(errorMessage(error, '退差申请提交失败'))
@@ -455,7 +455,7 @@ async function approveRebate(id: number) {
   try {
     await approveFixedRentRebate(id)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
-    await approvalTasks.refresh()
+    await approvalTasks.refresh(true)
     ElMessage.success('退差已确认')
   } catch (error) {
     ElMessage.error(errorMessage(error, '退差确认失败'))
@@ -471,7 +471,7 @@ async function rejectRebate(id: number) {
     })
     await rejectFixedRentRebate(id, result.value)
     rebates.value = await listFixedRentRebates(selectedContractId.value || undefined)
-    await approvalTasks.refresh()
+    await approvalTasks.refresh(true)
     ElMessage.success('退差已驳回')
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(errorMessage(error, '退差驳回失败'))
