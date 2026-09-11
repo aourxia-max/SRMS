@@ -6,7 +6,7 @@ import { ListRentBillsDto } from './dto/list-rent-bills.dto';
 import { RentBillsService } from './rent-bills.service';
 
 function bill(overrides: Record<string, unknown> = {}) {
-  return {
+  const row = {
     id: 1,
     billCategory: 'RENT',
     billNo: 'ZD202608-0101',
@@ -34,6 +34,23 @@ function bill(overrides: Record<string, unknown> = {}) {
       members: [{ tenant: { id: 8, name: '李四' } }],
     },
     ...overrides,
+  };
+  return {
+    ...row,
+    allocations:
+      'allocations' in overrides
+        ? overrides.allocations
+        : new Prisma.Decimal(row.receivedAmount).gt(0)
+          ? [
+              {
+                allocatedAmount: new Prisma.Decimal(row.receivedAmount),
+                reversedAmount: new Prisma.Decimal(0),
+                payment: { status: 'CONFIRMED' },
+              },
+            ]
+          : [],
+    depositTransactions:
+      'depositTransactions' in overrides ? overrides.depositTransactions : [],
   };
 }
 
@@ -513,6 +530,89 @@ describe('RentBillsService', () => {
       count: 1,
     });
   });
+
+  it('uses the net allocation after a completed refund instead of a stale received snapshot', async () => {
+    const refundedAllocationBill = bill({
+      payableAmount: new Prisma.Decimal('760.00'),
+      receivedAmount: new Prisma.Decimal('760.00'),
+      outstandingAmount: new Prisma.Decimal('0.00'),
+      status: 'PAID',
+      allocations: [
+        {
+          allocatedAmount: new Prisma.Decimal('760.00'),
+          reversedAmount: new Prisma.Decimal('760.00'),
+          payment: { status: 'FULLY_REFUNDED' },
+        },
+      ],
+      depositTransactions: [],
+    });
+    const prisma = {
+      db: {
+        rentBill: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findMany: jest.fn().mockResolvedValue([refundedAllocationBill]),
+        },
+      },
+    } as any;
+
+    const result = await new RentBillsService(prisma).list({
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.summary).toMatchObject({
+      payable: '760.00',
+      received: '0.00',
+      outstanding: '760.00',
+    });
+    expect(result.items[0]).toMatchObject({
+      payableAmount: '760.00',
+      receivedAmount: '0.00',
+      outstandingAmount: '760.00',
+      status: 'PENDING',
+    });
+  });
+
+  it('includes an active deposit arrears offset in the bill net received amount', async () => {
+    const offsetBill = bill({
+      payableAmount: new Prisma.Decimal('760.00'),
+      receivedAmount: new Prisma.Decimal('0.00'),
+      outstandingAmount: new Prisma.Decimal('760.00'),
+      status: 'PENDING',
+      allocations: [],
+      depositTransactions: [
+        {
+          amount: new Prisma.Decimal('760.00'),
+          checkoutSettlement: { status: 'COMPLETED' },
+        },
+      ],
+    });
+    const prisma = {
+      db: {
+        rentBill: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findMany: jest.fn().mockResolvedValue([offsetBill]),
+        },
+      },
+    } as any;
+
+    const result = await new RentBillsService(prisma).list({
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.summary).toMatchObject({
+      payable: '760.00',
+      received: '760.00',
+      outstanding: '0.00',
+    });
+    expect(result.items[0]).toMatchObject({
+      receivedAmount: '760.00',
+      outstandingAmount: '0.00',
+      status: 'PAID',
+    });
+  });
+
   it('returns detail relations without sensitive tenant or payment account fields', async () => {
     const row = {
       ...bill(),

@@ -25,6 +25,20 @@ const rentBillInclude = {
       },
     },
   },
+  allocations: {
+    select: {
+      allocatedAmount: true,
+      reversedAmount: true,
+      payment: { select: { status: true } },
+    },
+  },
+  depositTransactions: {
+    where: { transactionType: 'OFFSET_ARREARS' },
+    select: {
+      amount: true,
+      checkoutSettlement: { select: { status: true } },
+    },
+  },
 } satisfies Prisma.RentBillInclude;
 
 const rentBillDetailInclude = {
@@ -71,6 +85,37 @@ type RentBillDetailRow = Prisma.RentBillGetPayload<{
 }>;
 const money = (value: Prisma.Decimal | string | number) =>
   new Prisma.Decimal(value).toFixed(2);
+
+function netReceived(
+  bill: Pick<RentBillRow, 'allocations' | 'depositTransactions'>,
+) {
+  const allocated = bill.allocations
+    .filter((item) =>
+      ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.payment.status),
+    )
+    .reduce(
+      (sum, item) =>
+        sum.plus(
+          new Prisma.Decimal(item.allocatedAmount).minus(item.reversedAmount),
+        ),
+      new Prisma.Decimal(0),
+    );
+  return bill.depositTransactions
+    .filter((item) => item.checkoutSettlement?.status !== 'CANCELLED')
+    .reduce((sum, item) => sum.plus(item.amount), allocated)
+    .toDecimalPlaces(2);
+}
+
+function netStatus(
+  status: RentBillStatus,
+  received: Prisma.Decimal,
+  outstanding: Prisma.Decimal,
+) {
+  if (['VOIDED', 'REFUNDED'].includes(status)) return status;
+  if (outstanding.isZero()) return RentBillStatus.PAID;
+  if (status === RentBillStatus.OVERDUE) return status;
+  return received.gt(0) ? RentBillStatus.PARTIAL : RentBillStatus.PENDING;
+}
 
 @Injectable()
 export class RentBillsService {
@@ -157,6 +202,17 @@ export class RentBillsService {
         ? resolveCheckoutCutoff(bill.contract.checkoutSettlements ?? [])
         : null;
     const performed = isRentBillPerformed(bill.periodStart, cutoff);
+    const receivedAmount =
+      bill.billCategory === 'RENT'
+        ? netReceived(bill)
+        : new Prisma.Decimal(bill.receivedAmount);
+    const payableAmount = new Prisma.Decimal(
+      performed ? bill.payableAmount : 0,
+    );
+    const outstandingAmount = performed
+      ? Prisma.Decimal.max(0, payableAmount.minus(receivedAmount))
+      : new Prisma.Decimal(0);
+    const status = netStatus(bill.status, receivedAmount, outstandingAmount);
     return {
       id: bill.id,
       billNo: bill.billNo,
@@ -176,10 +232,10 @@ export class RentBillsService {
       baseRentAmount: money(bill.baseRentAmount),
       rentFreeAmount: money(bill.rentFreeAmount),
       discountAmount: money(bill.discountAmount),
-      payableAmount: money(performed ? bill.payableAmount : 0),
-      receivedAmount: money(bill.receivedAmount),
-      outstandingAmount: money(performed ? bill.outstandingAmount : 0),
-      status: effectiveRentBillStatus(bill.status, bill.periodStart, cutoff),
+      payableAmount: money(payableAmount),
+      receivedAmount: money(receivedAmount),
+      outstandingAmount: money(outstandingAmount),
+      status: effectiveRentBillStatus(status, bill.periodStart, cutoff),
     };
   }
 
@@ -200,8 +256,8 @@ export class RentBillsService {
         bill.contract.status !== 'VOIDED',
     );
     const summary = businessRows.reduce(
-      (result, { bill, row }) => {
-        result.received = result.received.plus(bill.receivedAmount);
+      (result, { row }) => {
+        result.received = result.received.plus(row.receivedAmount);
         if (row.status !== 'PENDING_CHECKOUT_REVIEW') {
           result.payable = result.payable.plus(row.payableAmount);
           result.outstanding = result.outstanding.plus(row.outstandingAmount);
