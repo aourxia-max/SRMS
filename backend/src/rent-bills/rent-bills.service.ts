@@ -86,10 +86,8 @@ type RentBillDetailRow = Prisma.RentBillGetPayload<{
 const money = (value: Prisma.Decimal | string | number) =>
   new Prisma.Decimal(value).toFixed(2);
 
-function netReceived(
-  bill: Pick<RentBillRow, 'allocations' | 'depositTransactions'>,
-) {
-  const allocated = bill.allocations
+function netCashReceived(bill: Pick<RentBillRow, 'allocations'>) {
+  return bill.allocations
     .filter((item) =>
       ['CONFIRMED', 'PARTIALLY_REFUNDED'].includes(item.payment.status),
     )
@@ -99,7 +97,14 @@ function netReceived(
           new Prisma.Decimal(item.allocatedAmount).minus(item.reversedAmount),
         ),
       new Prisma.Decimal(0),
-    );
+    )
+    .toDecimalPlaces(2);
+}
+
+function netReceived(
+  bill: Pick<RentBillRow, 'allocations' | 'depositTransactions'>,
+) {
+  const allocated = netCashReceived(bill);
   return bill.depositTransactions
     .filter((item) => item.checkoutSettlement?.status !== 'CANCELLED')
     .reduce((sum, item) => sum.plus(item.amount), allocated)
@@ -256,8 +261,8 @@ export class RentBillsService {
         bill.contract.status !== 'VOIDED',
     );
     const summary = businessRows.reduce(
-      (result, { row }) => {
-        result.received = result.received.plus(row.receivedAmount);
+      (result, { bill, row }) => {
+        result.received = result.received.plus(netCashReceived(bill));
         if (row.status !== 'PENDING_CHECKOUT_REVIEW') {
           result.payable = result.payable.plus(row.payableAmount);
           result.outstanding = result.outstanding.plus(row.outstandingAmount);

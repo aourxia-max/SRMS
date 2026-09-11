@@ -573,13 +573,19 @@ describe('RentBillsService', () => {
     });
   });
 
-  it('includes an active deposit arrears offset in the bill net received amount', async () => {
+  it('excludes a deposit arrears offset from monthly cash received while retaining the settled bill amount', async () => {
     const offsetBill = bill({
       payableAmount: new Prisma.Decimal('760.00'),
-      receivedAmount: new Prisma.Decimal('0.00'),
-      outstandingAmount: new Prisma.Decimal('760.00'),
-      status: 'PENDING',
-      allocations: [],
+      receivedAmount: new Prisma.Decimal('760.00'),
+      outstandingAmount: new Prisma.Decimal('0.00'),
+      status: 'PAID',
+      allocations: [
+        {
+          allocatedAmount: new Prisma.Decimal('760.00'),
+          reversedAmount: new Prisma.Decimal('760.00'),
+          payment: { status: 'VOIDED' },
+        },
+      ],
       depositTransactions: [
         {
           amount: new Prisma.Decimal('760.00'),
@@ -603,7 +609,7 @@ describe('RentBillsService', () => {
 
     expect(result.summary).toMatchObject({
       payable: '760.00',
-      received: '760.00',
+      received: '0.00',
       outstanding: '0.00',
     });
     expect(result.items[0]).toMatchObject({
