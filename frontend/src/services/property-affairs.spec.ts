@@ -61,6 +61,7 @@ describe('物业办事 API', () => {
     const patch = vi.spyOn(http, 'patch').mockResolvedValue(envelope({ ...affair, version: 5 }) as never)
     const create: PropertyAffairCreatePayload = {
       title: '走廊照明维修', content: '更换损坏灯具', priority: 'URGENT',
+      visibilityScope: 'ALL', viewerUserIds: [],
       buildingIds: [1], roomIds: [2], tenantIds: [], contractIds: [],
     }
     const update: PropertyAffairUpdatePayload = { version: 3, title: '走廊照明维修', buildingIds: [1], roomIds: [2], tenantIds: [], contractIds: [] }

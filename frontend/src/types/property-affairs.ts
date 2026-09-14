@@ -1,5 +1,10 @@
 export type PropertyAffairStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
 export type PropertyAffairPriority = 'NORMAL' | 'IMPORTANT' | 'URGENT'
+export type PropertyAffairVisibilityScope = 'ALL' | 'RESTRICTED'
+export type PropertyAffairViewer = {
+  id: number
+  displayName: string
+}
 export type PropertyAffairRelationType = 'building' | 'room' | 'tenant' | 'contract'
 
 export type PropertyAffairBuildingStatus = 'ACTIVE' | 'DISABLED'
@@ -56,6 +61,8 @@ export type PropertyAffairSummary = {
   category: string | null
   priority: PropertyAffairPriority
   status: PropertyAffairStatus
+  visibilityScope: PropertyAffairVisibilityScope
+  viewers: PropertyAffairViewer[]
   content: string
   responsibleUserId: number | null
   responsibleSnapshot: string | null
@@ -94,6 +101,8 @@ export type PropertyAffairFormModel = PropertyAffairRelationsPayload & {
   category: string
   priority: PropertyAffairPriority
   content: string
+  visibilityScope: PropertyAffairVisibilityScope
+  viewerUserIds: number[]
   responsibleUserId: number | null
   externalHandlerName: string
   externalPhone: string
@@ -105,6 +114,8 @@ export type PropertyAffairCreatePayload = PropertyAffairRelationsPayload & {
   category?: string
   priority?: PropertyAffairPriority
   content: string
+  visibilityScope: PropertyAffairVisibilityScope
+  viewerUserIds: number[]
   responsibleUserId?: number
   externalHandlerName?: string
   externalPhone?: string
@@ -117,6 +128,8 @@ export type PropertyAffairUpdatePayload = Partial<PropertyAffairRelationsPayload
   category?: string | null
   priority?: PropertyAffairPriority
   content?: string
+  visibilityScope?: PropertyAffairVisibilityScope
+  viewerUserIds?: number[]
   responsibleUserId?: number | null
   externalHandlerName?: string | null
   externalPhone?: string | null

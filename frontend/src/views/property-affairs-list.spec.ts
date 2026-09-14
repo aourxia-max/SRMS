@@ -39,6 +39,8 @@ const affair: PropertyAffairSummary = {
   category: '公共维修',
   priority: 'URGENT',
   status: 'IN_PROGRESS',
+  visibilityScope: 'ALL',
+  viewers: [],
   content: '更换灯具',
   responsibleUserId: 2,
   responsibleSnapshot: '王管理员',

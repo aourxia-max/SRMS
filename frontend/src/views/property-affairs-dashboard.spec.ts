@@ -35,6 +35,8 @@ function affair(id: number, overrides: Partial<PropertyAffairSummary> = {}): Pro
     category: '公共维修',
     priority: 'IMPORTANT',
     status: 'IN_PROGRESS',
+    visibilityScope: 'ALL',
+    viewers: [],
     content: '跟进中',
     responsibleUserId: 2,
     responsibleSnapshot: `管理员${id}`,

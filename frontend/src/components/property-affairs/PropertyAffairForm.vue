@@ -49,6 +49,7 @@ const emit = defineEmits<{ submit: [submission: PropertyAffairFormSubmission]; c
 const emptyModel = (): PropertyAffairFormModel => ({
   title: '', category: '', priority: 'NORMAL', content: '', responsibleUserId: null,
   externalHandlerName: '', externalPhone: '', externalContact: '',
+  visibilityScope: 'ALL', viewerUserIds: [],
   buildingIds: [], roomIds: [], tenantIds: [], contractIds: [],
 })
 const model = reactive<PropertyAffairFormModel>(emptyModel())
@@ -78,6 +79,8 @@ function hydrate(initial?: PropertyAffairDetail | null) {
     externalHandlerName: initial.externalHandlerName ?? '',
     externalPhone: initial.externalPhone ?? '',
     externalContact: initial.externalContact ?? '',
+    visibilityScope: initial.visibilityScope ?? 'ALL',
+    viewerUserIds: initial.viewers?.map((viewer) => viewer.id) ?? [],
     buildingIds: initial.buildings.map((item) => item.id),
     roomIds: initial.rooms.map((item) => item.id),
     tenantIds: initial.tenants.map((item) => item.id),
@@ -100,6 +103,9 @@ function validate() {
   if (Array.from(model.externalHandlerName.trim()).length > 100) errors.externalHandlerName = '外部办理人不能超过100个字符'
   if (Array.from(model.externalPhone.trim()).length > 50) errors.externalPhone = '联系电话不能超过50个字符'
   if (Array.from(model.externalContact.trim()).length > 200) errors.externalContact = '其他联系方式不能超过200个字符'
+  if (model.visibilityScope === 'RESTRICTED' && model.viewerUserIds.length === 0) {
+    errors.viewerUserIds = '请至少选择一名可见人员'
+  }
   return Object.keys(errors).length === 0
 }
 
@@ -114,6 +120,8 @@ function submit() {
       externalHandlerName: model.externalHandlerName.trim(),
       externalPhone: model.externalPhone.trim(),
       externalContact: model.externalContact.trim(),
+      visibilityScope: model.visibilityScope,
+      viewerUserIds: [...model.viewerUserIds],
       buildingIds: [...model.buildingIds],
       roomIds: [...model.roomIds],
       tenantIds: [...model.tenantIds],
@@ -128,6 +136,14 @@ function submit() {
 function selectFiles(event: Event) {
   files.value = Array.from((event.target as HTMLInputElement).files ?? [])
 }
+
+watch(
+  () => model.visibilityScope,
+  (scope) => {
+    if (scope === 'ALL') model.viewerUserIds = []
+    delete errors.viewerUserIds
+  },
+)
 
 watch(() => props.initial, hydrate, { immediate: true })
 </script>
@@ -157,6 +173,21 @@ watch(() => props.initial, hydrate, { immediate: true })
         <el-form-item label="内部负责人">
           <el-select data-test="responsible-user" v-model="model.responsibleUserId" filterable clearable placeholder="选择在职管理员"><el-option v-for="item in responsibleUsers" :key="item.id" :label="item.displayName" :value="item.id" /></el-select>
         </el-form-item>
+      </div>
+      <div class="visibility-panel">
+        <el-form-item label="可见范围" required>
+          <el-radio-group data-test="visibility-scope" v-model="model.visibilityScope">
+            <el-radio value="ALL">所有人可见</el-radio>
+            <el-radio value="RESTRICTED">仅指定人员可见</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="model.visibilityScope === 'RESTRICTED'" label="可见人员" required :error="errors.viewerUserIds">
+          <el-select data-test="visibility-viewers" v-model="model.viewerUserIds" multiple filterable collapse-tags clearable placeholder="请选择可见人员">
+            <el-option v-for="item in responsibleUsers" :key="item.id" :label="item.displayName" :value="item.id" />
+          </el-select>
+          <p v-if="errors.viewerUserIds" class="field-error">{{ errors.viewerUserIds }}</p>
+        </el-form-item>
+        <p class="form-hint visibility-hint">创建人和超级管理员始终可以查看。</p>
       </div>
       <el-form-item label="事项内容" required :error="errors.content">
         <el-input data-test="affair-content" v-model="model.content" type="textarea" :rows="7" maxlength="5000" show-word-limit placeholder="记录背景、需要处理的问题和当前情况" />
@@ -202,6 +233,9 @@ watch(() => props.initial, hydrate, { immediate: true })
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
 .form-grid-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-grid :deep(.el-select) { width: 100%; }
+.visibility-panel { margin-bottom: 18px; padding: 14px 16px; border-radius: 10px; background: #f8fafc; }
+.visibility-panel :deep(.el-select) { width: 100%; }
+.visibility-hint { margin-top: -8px; }
 .affair-number { display: flex; gap: 16px; margin: -4px 0 18px; padding: 12px 14px; border-radius: 8px; background: #f8fafc; color: #64748b; }
 .affair-number strong { color: #1e293b; }
 .file-picker { display: flex; min-height: 74px; cursor: pointer; align-items: center; justify-content: center; border: 1px dashed #b8c5d8; border-radius: 10px; color: #2563eb; }

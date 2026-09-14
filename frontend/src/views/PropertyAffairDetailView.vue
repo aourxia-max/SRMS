@@ -53,6 +53,14 @@ const creatorName = computed(() => {
   return affair.value.progresses.find((progress) => progress.statusBefore === null)?.createdBySnapshot || '管理员'
 })
 
+const visibilityText = computed(() => {
+  if (!affair.value || affair.value.visibilityScope !== 'RESTRICTED') {
+    return '所有人可见'
+  }
+  const names = affair.value.viewers.map((viewer) => viewer.displayName)
+  return names.length ? `仅指定人员可见：${names.join('、')}` : '仅指定人员可见'
+})
+
 function formatDate(value: string | null) {
   if (!value) return '未记录'
   const date = new Date(value)
@@ -257,10 +265,12 @@ onBeforeUnmount(() => {
           <div><dt>联系电话</dt><dd>{{ affair.externalPhone || '未记录' }}</dd></div>
           <div><dt>其他联系方式</dt><dd>{{ affair.externalContact || '未记录' }}</dd></div>
           <div><dt>创建人</dt><dd>{{ creatorName }}</dd></div>
+          <div data-test="affair-visibility"><dt>可见范围</dt><dd>{{ visibilityText }}</dd></div>
           <div><dt>创建时间</dt><dd>{{ formatDate(affair.createdAt) }}</dd></div>
           <div><dt>最近更新</dt><dd>{{ formatDate(affair.updatedAt) }}</dd></div>
           <div><dt>完成时间</dt><dd>{{ formatDate(affair.completedAt) }}</dd></div>
         </dl>
+        <p class="visibility-note">创建人和超级管理员始终可以查看。</p>
       </el-card>
 
       <el-card>
@@ -314,6 +324,7 @@ onBeforeUnmount(() => {
 .header-tags, .header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .info-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin: 0; }
 .info-grid div { min-width: 0; }.info-grid dt { color: #94a3b8; font-size: 12px; }.info-grid dd { margin: 6px 0 0; color: #334155; overflow-wrap: anywhere; }
+.visibility-note { margin: 16px 0 0; color: #64748b; font-size: 13px; }
 .content-text { margin: 0; color: #334155; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .relation-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .relation-groups section { padding: 14px; border-radius: 10px; background: #f8fafc; }.relation-groups h3 { margin: 0 0 10px; color: #475569; font-size: 14px; }

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage, ElOption, ElSelect } from 'element-plus'
+import ElementPlus, { ElMessage, ElOption, ElRadioGroup, ElSelect } from 'element-plus'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { defineComponent } from 'vue'
@@ -41,6 +41,8 @@ const detail: PropertyAffairDetail = {
   category: '公共维修',
   priority: 'URGENT',
   status: 'COMPLETED',
+  visibilityScope: 'ALL',
+  viewers: [],
   content: '更换损坏灯具',
   responsibleUserId: 2,
   responsibleSnapshot: '王管理员',
@@ -69,6 +71,8 @@ const validModel: PropertyAffairFormModel = {
   category: '公共维修',
   priority: 'URGENT',
   content: '更换损坏灯具',
+  visibilityScope: 'ALL',
+  viewerUserIds: [],
   responsibleUserId: 2,
   externalHandlerName: '海口维修公司',
   externalPhone: '0898-12345678',
@@ -253,6 +257,71 @@ describe('物业办事表单与关联选择器', () => {
     expect(selectByTest(wrapper, 'relation-tenants').findAllComponents(ElOption).map((item) => item.props('label'))).toContain('第101位承租人')
   })
 
+  it('新建默认所有人可见，受限模式必须选择人员并提交完整名单', async () => {
+    const wrapper = mount(PropertyAffairForm, {
+      props: {
+        mode: 'create',
+        categories: [],
+        responsibleUsers: [
+          { id: 1, displayName: '超级管理员', role: 'SUPER_ADMIN' },
+          { id: 2, displayName: '王管理员', role: 'ADMIN' },
+        ],
+        saving: false,
+      },
+      global: { plugins: [ElementPlus], stubs: { PropertyAffairRelationPicker: true } },
+    })
+
+    expect(wrapper.text()).toContain('可见范围')
+    expect(wrapper.text()).toContain('所有人可见')
+    expect(wrapper.find('[data-test="visibility-viewers"]').exists()).toBe(false)
+
+    wrapper.findComponent(ElRadioGroup).vm.$emit('update:modelValue', 'RESTRICTED')
+    await flushPromises()
+    const viewers = selectByTest(wrapper, 'visibility-viewers')
+    expect(viewers.props('multiple')).toBe(true)
+    expect(viewers.props('filterable')).toBe(true)
+    expect(viewers.findAllComponents(ElOption).map((item) => item.props('label'))).toEqual([
+      '超级管理员',
+      '王管理员',
+    ])
+
+    await wrapper.get('[data-test="affair-title"]').setValue('内部维修')
+    await wrapper.get('[data-test="affair-content"]').setValue('只供指定人员处理')
+    await wrapper.get('[data-test="submit-affair-form"]').trigger('click')
+    expect(wrapper.text()).toContain('请至少选择一名可见人员')
+    expect(wrapper.emitted('submit')).toBeUndefined()
+
+    viewers.vm.$emit('update:modelValue', [2])
+    await wrapper.get('[data-test="submit-affair-form"]').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({
+      model: { visibilityScope: 'RESTRICTED', viewerUserIds: [2] },
+    })
+  })
+
+  it('编辑时回填受限可见范围和已选人员', async () => {
+    const wrapper = mount(PropertyAffairForm, {
+      props: {
+        mode: 'edit',
+        initial: {
+          ...detail,
+          visibilityScope: 'RESTRICTED',
+          viewers: [{ id: 2, displayName: '王管理员' }],
+        },
+        categories: [],
+        responsibleUsers: [
+          { id: 2, displayName: '王管理员', role: 'ADMIN' },
+        ],
+        saving: false,
+      },
+      global: { plugins: [ElementPlus], stubs: { PropertyAffairRelationPicker: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent(ElRadioGroup).props('modelValue')).toBe('RESTRICTED')
+    expect(selectByTest(wrapper, 'visibility-viewers').props('modelValue')).toEqual([2])
+    expect(wrapper.text()).toContain('创建人和超级管理员始终可以查看')
+  })
+
   it('编辑时完整回填编号、字段、关联和版本，并只允许终态重新开启', async () => {
     const wrapper = mount(PropertyAffairForm, {
       props: { mode: 'edit', initial: detail, categories: ['公共维修'], responsibleUsers: [{ id: 2, displayName: '王管理员', role: 'ADMIN' }], saving: false },
@@ -319,6 +388,7 @@ describe('物业办事表单与关联选择器', () => {
     expect(api.updatePropertyAffair).toHaveBeenCalledWith(7, {
       title: '现场输入不能丢', category: null, priority: 'URGENT', content: '更换损坏灯具', responsibleUserId: null,
       externalHandlerName: null, externalPhone: null, externalContact: null, status: 'IN_PROGRESS', version: 6,
+      visibilityScope: 'ALL', viewerUserIds: [],
       buildingIds: [1], roomIds: [11], tenantIds: [21], contractIds: [31],
     })
     expect(error).toHaveBeenCalledWith('内容已被其他管理员更新，请刷新后重试')

@@ -33,6 +33,8 @@ const detail: PropertyAffairDetail = {
   category: null,
   priority: 'URGENT',
   status: 'COMPLETED',
+  visibilityScope: 'ALL',
+  viewers: [],
   content: '更换损坏灯具',
   responsibleUserId: 2,
   responsibleSnapshot: '王管理员',
@@ -123,6 +125,22 @@ describe('物业办事详情、进度与附件', () => {
     expect(wrapper.text()).not.toContain('IN_PROGRESS')
     expect(wrapper.find('[data-test="edit-progress"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="delete-progress"]').exists()).toBe(false)
+  })
+
+  it('详情只展示明确选择的可见人员，并说明创建人和超级管理员始终可见', async () => {
+    vi.mocked(api.getPropertyAffair).mockResolvedValue({
+      ...detail,
+      visibilityScope: 'RESTRICTED',
+      viewers: [
+        { id: 2, displayName: '王管理员' },
+        { id: 3, displayName: '李管理员' },
+      ],
+    } as never)
+
+    const { wrapper } = await mountDetail()
+    expect(wrapper.get('[data-test="affair-visibility"]').text()).toContain('仅指定人员可见')
+    expect(wrapper.get('[data-test="affair-visibility"]').text()).toContain('王管理员、李管理员')
+    expect(wrapper.text()).toContain('创建人和超级管理员始终可以查看')
   })
 
   it('详情使用中文标签并呈现四类可读关联、快照、可用性和正确链接', async () => {
