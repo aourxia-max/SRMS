@@ -100,4 +100,25 @@ describe('property-affairs schema', () => {
       type: 'FileAsset',
     });
   });
+
+  it('exposes normalized visibility scope and viewer relations', () => {
+    const schema = readFileSync(schemaPath, 'utf8');
+    expect(schema).toContain('enum PropertyAffairVisibilityScope');
+    expect(schema).toMatch(/visibilityScope\s+PropertyAffairVisibilityScope\s+@default\(ALL\)\s+@map\("visibility_scope"\)/);
+    expect(schema).toMatch(/viewers\s+PropertyAffairViewer\[\]/);
+    expect(schema).toMatch(/propertyAffairViewerEntries\s+PropertyAffairViewer\[\]/);
+    expect(modelBlock(schema, 'PropertyAffairViewer')).toContain('@@id([affairId, userId])');
+    expect(modelBlock(schema, 'PropertyAffairViewer')).toContain('@@index([userId, affairId])');
+    const affair = Prisma.dmmf.datamodel.models.find((model) => model.name === 'PropertyAffair');
+    const scope = affair?.fields.find((field) => field.name === 'visibilityScope');
+    const viewers = affair?.fields.find((field) => field.name === 'viewers');
+    const viewer = Prisma.dmmf.datamodel.models.find((model) => model.name === 'PropertyAffairViewer');
+    expect(scope).toMatchObject({ kind: 'enum', type: 'PropertyAffairVisibilityScope', dbName: 'visibility_scope' });
+    expect(viewers).toMatchObject({ kind: 'object', type: 'PropertyAffairViewer' });
+    expect(viewer).toMatchObject({ dbName: 'property_affair_viewers' });
+    const migration = readFileSync(join(prismaDirectory, 'migrations', '20260914090000_property_affair_visibility', 'migration.sql'), 'utf8');
+    expect(migration).toMatch(/CREATE TABLE `property_affair_viewers`/);
+    expect(migration).toMatch(/PRIMARY KEY \(`affair_id`, `user_id`\)/);
+    expect(migration).toMatch(/KEY `property_affair_viewers_user_id_affair_id_idx` \(`user_id`, `affair_id`\)/);
+  });
 });

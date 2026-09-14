@@ -96,6 +96,11 @@ enum PropertyAffairPriority {
   URGENT
 }
 
+enum PropertyAffairVisibilityScope {
+  ALL
+  RESTRICTED
+}
+
 enum ExportTaskStatus {
   PENDING
   RUNNING
@@ -346,6 +351,7 @@ model User {
   paymentFiles              PaymentFile[]
   refundAdjustmentDecisions PaymentRefundAdjustmentDecision[]
   contractDrafts            ContractDraft[]
+  propertyAffairViewerEntries PropertyAffairViewer[]
 
   @@index([role, status])
   @@map("users")
@@ -1302,6 +1308,7 @@ model PropertyAffair {
   category            String?                @db.VarChar(80)
   priority            PropertyAffairPriority @default(NORMAL)
   status              PropertyAffairStatus   @default(PENDING)
+  visibilityScope     PropertyAffairVisibilityScope @default(ALL) @map("visibility_scope")
   content             String                 @db.Text
   responsibleUserId   Int?                   @map("responsible_user_id") @db.UnsignedInt
   responsibleSnapshot String?                @map("responsible_snapshot") @db.VarChar(50)
@@ -1323,11 +1330,23 @@ model PropertyAffair {
   contracts           PropertyAffairContract[]
   progresses          PropertyAffairProgress[]
   files               PropertyAffairFile[]
+  viewers             PropertyAffairViewer[]
   @@index([status, deletedAt, updatedAt])
   @@index([priority, updatedAt])
   @@index([responsibleUserId, status])
   @@index([category, updatedAt])
   @@map("property_affairs")
+}
+model PropertyAffairViewer {
+  affairId  Int            @map("affair_id") @db.UnsignedInt
+  userId    Int            @map("user_id") @db.UnsignedInt
+  createdAt DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  affair    PropertyAffair @relation(fields: [affairId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([affairId, userId])
+  @@index([userId, affairId])
+  @@map("property_affair_viewers")
 }
 model PropertyAffairDailySequence {
   dateKey      String @id @map("date_key") @db.Char(8)
