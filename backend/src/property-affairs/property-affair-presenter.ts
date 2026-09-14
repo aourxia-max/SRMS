@@ -7,6 +7,14 @@ export const propertyAffairInclude = {
   contracts: true,
   progresses: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] },
   files: { include: { fileAsset: true } },
+  viewers: {
+    select: {
+      user: {
+        select: { id: true, displayName: true, role: true, status: true },
+      },
+    },
+    orderBy: { user: { displayName: 'asc' } },
+  },
 } satisfies Prisma.PropertyAffairInclude;
 
 export type PropertyAffairLoaded = Prisma.PropertyAffairGetPayload<{
@@ -76,6 +84,10 @@ export function presentPropertyAffair(
         current.contracts.get(link.contractId),
       ),
     ),
+    viewers: (affair.viewers ?? []).map(({ user }) => ({
+      id: user.id,
+      displayName: user.displayName,
+    })),
     progresses: affair.progresses.map((progress) => ({ ...progress })),
     files: affair.files.map(({ fileAsset }) => ({
       id: fileAsset.id,

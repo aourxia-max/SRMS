@@ -1,6 +1,11 @@
-import { PropertyAffairPriority } from '@prisma/client';
+import {
+  PropertyAffairPriority,
+  PropertyAffairVisibilityScope,
+} from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayUnique,
+  IsArray,
   IsEnum,
   IsInt,
   IsString,
@@ -8,6 +13,10 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  Validate,
+  ValidationArguments,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
 import {
   isDefined,
@@ -16,7 +25,36 @@ import {
   trimRequiredString,
 } from './property-affair-relations.dto';
 
+@ValidatorConstraint({ name: 'restrictedViewerIdsRequired', async: false })
+class RestrictedViewerIdsRequired implements ValidatorConstraintInterface {
+  validate(_value: unknown, args: ValidationArguments) {
+    const dto = args.object as {
+      visibilityScope?: PropertyAffairVisibilityScope;
+      viewerUserIds?: number[];
+    };
+    return (
+      dto.visibilityScope !== PropertyAffairVisibilityScope.RESTRICTED ||
+      (Array.isArray(dto.viewerUserIds) && dto.viewerUserIds.length > 0)
+    );
+  }
+
+  defaultMessage() {
+    return '受限可见范围至少需要一名查看人';
+  }
+}
 export class CreatePropertyAffairDto extends PropertyAffairRelationsDto {
+  @Validate(RestrictedViewerIdsRequired)
+  @IsEnum(PropertyAffairVisibilityScope, { message: '可见范围无效' })
+  visibilityScope?: PropertyAffairVisibilityScope =
+    PropertyAffairVisibilityScope.ALL;
+
+  @ValidateIf(isDefined)
+  @IsArray({ message: '查看人编号必须为数组' })
+  @ArrayUnique({ message: '查看人编号不能重复' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: '查看人编号必须为整数' })
+  @Min(1, { each: true, message: '查看人编号必须为正整数' })
+  viewerUserIds?: number[] = [];
   @Transform(trimRequiredString)
   @IsString({ message: '标题必须为文本' })
   @Length(1, 200, { message: '标题长度必须为1至200个字符' })

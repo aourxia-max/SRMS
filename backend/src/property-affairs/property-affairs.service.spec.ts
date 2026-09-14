@@ -1,6 +1,7 @@
 import {
   PropertyAffairPriority,
   PropertyAffairStatus,
+  PropertyAffairVisibilityScope,
   UserRole,
 } from '@prisma/client';
 import { PropertyAffairsService } from './property-affairs.service';
@@ -28,6 +29,7 @@ const baseAffair = {
   category: '公共维修',
   priority: PropertyAffairPriority.NORMAL,
   status: 'PENDING' as const,
+  visibilityScope: PropertyAffairVisibilityScope.ALL,
   content: '协调维修单位处理漏水',
   responsibleUserId: 9,
   responsibleSnapshot: '管理员乙',
@@ -127,6 +129,18 @@ function createFixture() {
           },
         ],
         files: [],
+        viewers: [
+          {
+            affairId: 41,
+            userId: 9,
+            user: {
+              id: 9,
+              displayName: '管理员乙',
+              role: UserRole.ADMIN,
+              status: 'ACTIVE',
+            },
+          },
+        ],
       }),
     },
     propertyAffairBuilding: {
@@ -187,6 +201,8 @@ describe('PropertyAffairsService', () => {
       expect.objectContaining({
         id: 41,
         affairNo: 'WY202609020001',
+        visibilityScope: PropertyAffairVisibilityScope.ALL,
+        viewers: [{ id: 9, displayName: '管理员乙' }],
         version: 1,
       }),
     );

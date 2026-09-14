@@ -1,5 +1,9 @@
 import 'reflect-metadata';
-import { PropertyAffairPriority, PropertyAffairStatus } from '@prisma/client';
+import {
+  PropertyAffairPriority,
+  PropertyAffairStatus,
+  PropertyAffairVisibilityScope,
+} from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { AppendPropertyAffairProgressDto } from './append-property-affair-progress.dto';
@@ -109,6 +113,45 @@ describe('property-affair DTOs', () => {
     );
   });
 
+  it('defaults an omitted create visibility payload to ALL with no explicit viewers', async () => {
+    const dto = plainToInstance(CreatePropertyAffairDto, {
+      title: '有效标题',
+      content: '有效内容',
+    });
+
+    expect(dto).toMatchObject({
+      visibilityScope: PropertyAffairVisibilityScope.ALL,
+      viewerUserIds: [],
+    });
+    await expect(validate(dto)).resolves.toHaveLength(0);
+  });
+
+  it('requires unique positive viewers when create visibility is restricted', async () => {
+    const valid = plainToInstance(CreatePropertyAffairDto, {
+      title: '有效标题',
+      content: '有效内容',
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+      viewerUserIds: ['2', '9'],
+    });
+    const missing = plainToInstance(CreatePropertyAffairDto, {
+      title: '有效标题',
+      content: '有效内容',
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+    });
+    const malformed = plainToInstance(CreatePropertyAffairDto, {
+      title: '有效标题',
+      content: '有效内容',
+      visibilityScope: PropertyAffairVisibilityScope.ALL,
+      viewerUserIds: [2, 2, 0, 1.5],
+    });
+
+    expect(valid.viewerUserIds).toEqual([2, 9]);
+    await expect(validate(valid)).resolves.toHaveLength(0);
+    await expect(validate(missing)).resolves.not.toHaveLength(0);
+    await expect(invalidProperties(malformed)).resolves.toContain(
+      'viewerUserIds',
+    );
+  });
   it('requires a positive version and validates editable update fields', async () => {
     const valid = plainToInstance(UpdatePropertyAffairDto, {
       version: '2',
@@ -146,6 +189,25 @@ describe('property-affair DTOs', () => {
     await expect(validate(dto)).resolves.toHaveLength(0);
   });
 
+  it('accepts a visibility change with its complete replacement viewer list', async () => {
+    const valid = plainToInstance(UpdatePropertyAffairDto, {
+      version: '2',
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+      viewerUserIds: ['5', '9'],
+    });
+    const missing = plainToInstance(UpdatePropertyAffairDto, {
+      version: 2,
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+    });
+
+    expect(valid).toMatchObject({
+      version: 2,
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+      viewerUserIds: [5, 9],
+    });
+    await expect(validate(valid)).resolves.toHaveLength(0);
+    await expect(validate(missing)).resolves.not.toHaveLength(0);
+  });
   it('accepts null only for explicitly clearable update fields and keeps blanks as undefined', async () => {
     const clearable = plainToInstance(UpdatePropertyAffairDto, {
       version: 1,
