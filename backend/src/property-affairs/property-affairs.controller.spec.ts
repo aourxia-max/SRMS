@@ -53,6 +53,7 @@ describe('PropertyAffairsController', () => {
     softDelete: jest.fn(),
     restore: jest.fn(),
     permanentDelete: jest.fn(),
+    assertVisible: jest.fn(),
   };
   const files = {
     saveAndLinkPropertyAffairFile: jest.fn(),
@@ -421,6 +422,8 @@ describe('PropertyAffairsController', () => {
       admin,
       {},
     );
+    expect(propertyAffairs.assertVisible).toHaveBeenNthCalledWith(1, 11, admin);
+    expect(propertyAffairs.assertVisible).toHaveBeenNthCalledWith(2, 11, admin);
     expect(files.unlinkPropertyAffairFile).toHaveBeenCalledWith(
       11,
       41,
@@ -452,9 +455,13 @@ describe('PropertyAffairsController', () => {
       };
 
       await expect(
-        controller().preview(11, 41, response as Response),
+        controller().preview(11, 41, response as Response, admin),
       ).resolves.toBeUndefined();
+      expect(propertyAffairs.assertVisible).toHaveBeenCalledWith(11, admin);
       expect(files.readPropertyAffairFile).toHaveBeenCalledWith(11, 41);
+      expect(
+        propertyAffairs.assertVisible.mock.invocationCallOrder[0],
+      ).toBeLessThan(files.readPropertyAffairFile.mock.invocationCallOrder[0]);
       expect(response.setHeader).toHaveBeenCalledWith('Content-Type', mimeType);
       expect(response.setHeader).toHaveBeenCalledWith(
         'Content-Disposition',
@@ -483,7 +490,7 @@ describe('PropertyAffairsController', () => {
     };
 
     await expect(
-      controller().preview(11, 42, response as Response),
+      controller().preview(11, 42, response as Response, admin),
     ).rejects.toEqual(
       expect.objectContaining<Partial<BadRequestException>>({
         message: '该附件不支持在线预览，请下载后查看',
@@ -512,8 +519,12 @@ describe('PropertyAffairsController', () => {
     };
 
     await expect(
-      controller().download(11, 42, response as Response),
+      controller().download(11, 42, response as Response, admin),
     ).resolves.toBeUndefined();
+    expect(propertyAffairs.assertVisible).toHaveBeenCalledWith(11, admin);
+    expect(
+      propertyAffairs.assertVisible.mock.invocationCallOrder[0],
+    ).toBeLessThan(files.readPropertyAffairFile.mock.invocationCallOrder[0]);
     expect(response.setHeader).toHaveBeenCalledWith(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -523,6 +534,40 @@ describe('PropertyAffairsController', () => {
       `attachment; filename*=UTF-8''${encodeURIComponent('维修 记录.xlsx')}`,
     );
     expect(response.send).toHaveBeenCalledWith(content);
+  });
+
+  it('does not read attachment bytes when the affair is hidden from the current administrator', async () => {
+    propertyAffairs.assertVisible.mockRejectedValueOnce(
+      new Error('事项不存在或无权查看'),
+    );
+    const response: MockResponse = {
+      setHeader: jest.fn(),
+      send: jest.fn(),
+    };
+
+    await expect(
+      controller().download(11, 42, response as Response, admin),
+    ).rejects.toThrow('事项不存在或无权查看');
+    expect(files.readPropertyAffairFile).not.toHaveBeenCalled();
+    expect(response.setHeader).not.toHaveBeenCalled();
+    expect(response.send).not.toHaveBeenCalled();
+
+    propertyAffairs.assertVisible.mockRejectedValueOnce(
+      new Error('事项不存在或无权查看'),
+    );
+    await expect(
+      controller().upload(
+        11,
+        {
+          originalname: '隐藏事项.png',
+          mimetype: 'image/png',
+          size: 1,
+          buffer: Buffer.from('x'),
+        },
+        admin,
+      ),
+    ).rejects.toThrow('事项不存在或无权查看');
+    expect(files.saveAndLinkPropertyAffairFile).not.toHaveBeenCalled();
   });
 
   it('cleans released files only after permanent database deletion succeeds', async () => {

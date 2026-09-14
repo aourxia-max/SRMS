@@ -241,6 +241,23 @@ export class PropertyAffairsService {
     };
   }
 
+  async assertVisible(
+    id: number,
+    user: AuthUser,
+    includeDeleted = false,
+  ): Promise<void> {
+    const affair = await this.prisma.db.propertyAffair.findFirst({
+      where: {
+        AND: [
+          includeDeleted ? { id } : { id, deletedAt: null },
+          propertyAffairVisibilityWhere(user),
+        ],
+      },
+      select: { id: true },
+    });
+    if (!affair) throw new NotFoundException('事项不存在或无权查看');
+  }
+
   async get(id: number, user: AuthUser, includeDeleted = false) {
     const affair = await this.prisma.db.propertyAffair.findFirst({
       where: {

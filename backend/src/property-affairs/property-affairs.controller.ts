@@ -224,6 +224,7 @@ export class PropertyAffairsController {
     @CurrentUser() user: AuthUser,
     @Req() request?: Request,
   ) {
+    await this.propertyAffairs.assertVisible(id, user);
     return this.success(
       await this.files.saveAndLinkPropertyAffairFile(
         id,
@@ -239,7 +240,9 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Param('fileId', ParseIntPipe) fileId: number,
     @Res() response: Response,
+    @CurrentUser() user: AuthUser,
   ) {
+    await this.propertyAffairs.assertVisible(id, user);
     const { asset, content } = await this.files.readPropertyAffairFile(
       id,
       fileId,
@@ -255,7 +258,9 @@ export class PropertyAffairsController {
     @Param('id', ParseIntPipe) id: number,
     @Param('fileId', ParseIntPipe) fileId: number,
     @Res() response: Response,
+    @CurrentUser() user: AuthUser,
   ) {
+    await this.propertyAffairs.assertVisible(id, user);
     const { asset, content } = await this.files.readPropertyAffairFile(
       id,
       fileId,
@@ -270,6 +275,7 @@ export class PropertyAffairsController {
     @CurrentUser() user: AuthUser,
     @Req() request?: Request,
   ) {
+    await this.propertyAffairs.assertVisible(id, user);
     return this.success(
       await this.files.unlinkPropertyAffairFile(
         id,
