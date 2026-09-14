@@ -73,13 +73,16 @@ export class PropertyAffairsController {
   ) {}
 
   @Get()
-  async list(@Query() query: ListPropertyAffairsQueryDto) {
-    return this.success(await this.propertyAffairs.list(query));
+  async list(
+    @Query() query: ListPropertyAffairsQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.success(await this.propertyAffairs.list(query, user));
   }
 
   @Get('categories')
-  async categories() {
-    return this.success(await this.propertyAffairs.categories());
+  async categories(@CurrentUser() user: AuthUser) {
+    return this.success(await this.propertyAffairs.categories(user));
   }
 
   @Get('responsible-users')
@@ -88,13 +91,19 @@ export class PropertyAffairsController {
   }
 
   @Get('recycle-bin')
-  async recycleBin(@Query() query: ListPropertyAffairsQueryDto) {
-    return this.success(await this.propertyAffairs.listRecycleBin(query));
+  async recycleBin(
+    @Query() query: ListPropertyAffairsQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.success(await this.propertyAffairs.listRecycleBin(query, user));
   }
 
   @Get(':id')
-  async get(@Param('id', ParseIntPipe) id: number) {
-    return this.success(await this.propertyAffairs.get(id));
+  async get(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.success(await this.propertyAffairs.get(id, user));
   }
 
   @Post()

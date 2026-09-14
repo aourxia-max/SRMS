@@ -192,22 +192,22 @@ describe('PropertyAffairsController', () => {
     propertyAffairs.responsibleUsers.mockResolvedValue([{ id: 7 }]);
     const instance = controller();
 
-    await expect(instance.list(query)).resolves.toEqual({
+    await expect(instance.list(query, admin)).resolves.toEqual({
       code: 200,
       message: 'success',
       data: { items: [{ id: 1 }], total: 1 },
     });
-    await expect(instance.recycleBin(query)).resolves.toEqual({
+    await expect(instance.recycleBin(query, admin)).resolves.toEqual({
       code: 200,
       message: 'success',
       data: { items: [{ id: 2 }], total: 1 },
     });
-    await expect(instance.get(3)).resolves.toEqual({
+    await expect(instance.get(3, admin)).resolves.toEqual({
       code: 200,
       message: 'success',
       data: { id: 3 },
     });
-    await expect(instance.categories()).resolves.toEqual({
+    await expect(instance.categories(admin)).resolves.toEqual({
       code: 200,
       message: 'success',
       data: ['公共维修'],
@@ -217,9 +217,10 @@ describe('PropertyAffairsController', () => {
       message: 'success',
       data: [{ id: 7 }],
     });
-    expect(propertyAffairs.list).toHaveBeenCalledWith(query);
-    expect(propertyAffairs.listRecycleBin).toHaveBeenCalledWith(query);
-    expect(propertyAffairs.get).toHaveBeenCalledWith(3);
+    expect(propertyAffairs.list).toHaveBeenCalledWith(query, admin);
+    expect(propertyAffairs.listRecycleBin).toHaveBeenCalledWith(query, admin);
+    expect(propertyAffairs.get).toHaveBeenCalledWith(3, admin);
+    expect(propertyAffairs.categories).toHaveBeenCalledWith(admin);
   });
 
   it('passes exact DTOs and the current user to create, update, and progress writes', async () => {

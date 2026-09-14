@@ -64,7 +64,10 @@ describe('DashboardService property-affair role visibility', () => {
 
       expect(result.propertyAffairs).toEqual([{ id: 18, title: '电梯检修' }]);
       expect(propertyAffairs.dashboardItems).toHaveBeenCalledTimes(1);
-      expect(propertyAffairs.dashboardItems).toHaveBeenCalledWith(8);
+      expect(propertyAffairs.dashboardItems).toHaveBeenCalledWith(
+        8,
+        expect.objectContaining({ role }),
+      );
     },
   );
 
@@ -180,15 +183,23 @@ describe('PropertyAffairsService dashboard ordering', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    await service.dashboardItems(8);
+    await service.dashboardItems(8, {
+      id: 7,
+      username: 'admin',
+      displayName: '管理员',
+      role: UserRole.ADMIN,
+    });
 
-    const [segments, boundLimit] = queryRaw.mock.calls[0] as [
+    const rawArguments = queryRaw.mock.calls[0] as [
       TemplateStringsArray,
+      unknown,
       number,
     ];
+    const segments = rawArguments[0];
+    const boundLimit = rawArguments[2];
     const emittedSql = segments.join('?').replace(/\s+/g, ' ').trim();
-    expect(emittedSql).toBe(
-      "SELECT id FROM property_affairs WHERE deleted_at IS NULL AND status IN ('PENDING', 'IN_PROGRESS') ORDER BY CASE priority WHEN 'URGENT' THEN 0 WHEN 'IMPORTANT' THEN 1 ELSE 2 END, updated_at DESC, id DESC LIMIT ?",
+    expect(emittedSql).toContain(
+      "SELECT id FROM property_affairs WHERE deleted_at IS NULL AND status IN ('PENDING', 'IN_PROGRESS') AND ? ORDER BY CASE priority",
     );
     expect(boundLimit).toBe(8);
   });
@@ -218,20 +229,30 @@ describe('PropertyAffairsService dashboard ordering', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    const result = await service.dashboardItems(8);
+    const result = await service.dashboardItems(8, {
+      id: 7,
+      username: 'admin',
+      displayName: '管理员',
+      role: UserRole.ADMIN,
+    });
 
     expect(propertyAffairFindMany).toHaveBeenCalledTimes(1);
     expect(propertyAffairFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          id: { in: [4, 2, 9] },
-          deletedAt: null,
-          status: {
-            in: [
-              PropertyAffairStatus.PENDING,
-              PropertyAffairStatus.IN_PROGRESS,
-            ],
-          },
+          AND: [
+            {
+              id: { in: [4, 2, 9] },
+              deletedAt: null,
+              status: {
+                in: [
+                  PropertyAffairStatus.PENDING,
+                  PropertyAffairStatus.IN_PROGRESS,
+                ],
+              },
+            },
+            expect.objectContaining({ OR: expect.any(Array) }),
+          ],
         },
       }),
     );

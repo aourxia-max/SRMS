@@ -103,6 +103,9 @@ function createFixture() {
         displayName: '管理员乙',
         role: UserRole.SUPER_ADMIN,
       }),
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ id: 9, displayName: '管理员乙' }]),
     },
     propertyAffair: {
       create: jest.fn().mockResolvedValue(baseAffair),
@@ -129,19 +132,12 @@ function createFixture() {
           },
         ],
         files: [],
-        viewers: [
-          {
-            affairId: 41,
-            userId: 9,
-            user: {
-              id: 9,
-              displayName: '管理员乙',
-              role: UserRole.ADMIN,
-              status: 'ACTIVE',
-            },
-          },
-        ],
+        viewers: [],
       }),
+    },
+    propertyAffairViewer: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     propertyAffairBuilding: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -202,7 +198,7 @@ describe('PropertyAffairsService', () => {
         id: 41,
         affairNo: 'WY202609020001',
         visibilityScope: PropertyAffairVisibilityScope.ALL,
-        viewers: [{ id: 9, displayName: '管理员乙' }],
+        viewers: [],
         version: 1,
       }),
     );
@@ -286,8 +282,76 @@ describe('PropertyAffairsService', () => {
         roomIds: [11],
         tenantIds: [21],
         contractIds: [31],
+        visibilityScope: PropertyAffairVisibilityScope.ALL,
+        viewers: [],
       }),
     );
+  });
+
+  it('persists selected active administrators and audits their names for a restricted affair', async () => {
+    jest.useFakeTimers().setSystemTime(createdAt);
+    const { service, tx } = createFixture();
+    tx.propertyAffair.findUniqueOrThrow.mockResolvedValue({
+      ...baseAffair,
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+      buildings: [],
+      rooms: [],
+      tenants: [],
+      contracts: [],
+      progresses: [],
+      files: [],
+      viewers: [
+        {
+          affairId: 41,
+          userId: 9,
+          user: {
+            id: 9,
+            displayName: '管理员乙',
+            role: UserRole.ADMIN,
+            status: 'ACTIVE',
+          },
+        },
+      ],
+    });
+
+    const result = await service.create(
+      {
+        title: '仅指定人员可见事项',
+        content: '内部事项',
+        visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+        viewerUserIds: [9],
+        buildingIds: [],
+        roomIds: [],
+        tenantIds: [],
+        contractIds: [],
+      },
+      admin,
+    );
+
+    expect(tx.user.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: [9] },
+        role: { in: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
+        status: 'ACTIVE',
+        deletedAt: null,
+      },
+      select: { id: true, displayName: true },
+    });
+    expect(tx.propertyAffair.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+      }),
+    });
+    expect(tx.propertyAffairViewer.createMany).toHaveBeenCalledWith({
+      data: [{ affairId: 41, userId: 9 }],
+    });
+    expect(tx.operationLog.create.mock.calls[0][0].data.afterData).toEqual(
+      expect.objectContaining({
+        visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+        viewers: [{ userId: 9, displayName: '管理员乙' }],
+      }),
+    );
+    expect(result.viewers).toEqual([{ id: 9, displayName: '管理员乙' }]);
   });
 
   it('uses the Asia/Shanghai business date and zero-pads the daily sequence to four digits', async () => {
@@ -506,40 +570,47 @@ describe('PropertyAffairsService', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    const result = await service.list({
-      keyword: '漏水',
-      category: '公共维修',
-      priority: PropertyAffairPriority.URGENT,
-      status: PropertyAffairStatus.IN_PROGRESS,
-      responsibleUserId: 9,
-      buildingId: 1,
-      roomId: 11,
-      tenantId: 21,
-      contractId: 31,
-      page: 2,
-      pageSize: 5,
-    });
+    const result = await service.list(
+      {
+        keyword: '漏水',
+        category: '公共维修',
+        priority: PropertyAffairPriority.URGENT,
+        status: PropertyAffairStatus.IN_PROGRESS,
+        responsibleUserId: 9,
+        buildingId: 1,
+        roomId: 11,
+        tenantId: 21,
+        contractId: 31,
+        page: 2,
+        pageSize: 5,
+      },
+      admin,
+    );
 
     const listCall = db.propertyAffair.findMany.mock.calls[0][0];
+    const listFilters = listCall.where.AND[0];
     expect(listCall).toEqual(
       expect.objectContaining({
         skip: 5,
         take: 5,
         orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-        where: expect.objectContaining({
-          deletedAt: null,
-          category: '公共维修',
-          priority: PropertyAffairPriority.URGENT,
-          status: PropertyAffairStatus.IN_PROGRESS,
-          responsibleUserId: 9,
-          buildings: { some: { buildingId: 1 } },
-          rooms: { some: { roomId: 11 } },
-          tenants: { some: { tenantId: 21 } },
-          contracts: { some: { contractId: 31 } },
-        }),
+        where: expect.objectContaining({ AND: expect.any(Array) }),
       }),
     );
-    expect(listCall.where.OR).toEqual(
+    expect(listFilters).toEqual(
+      expect.objectContaining({
+        deletedAt: null,
+        category: '公共维修',
+        priority: PropertyAffairPriority.URGENT,
+        status: PropertyAffairStatus.IN_PROGRESS,
+        responsibleUserId: 9,
+        buildings: { some: { buildingId: 1 } },
+        rooms: { some: { roomId: 11 } },
+        tenants: { some: { tenantId: 21 } },
+        contracts: { some: { contractId: 31 } },
+      }),
+    );
+    expect(listFilters.OR).toEqual(
       expect.arrayContaining([
         { affairNo: { contains: '漏水' } },
         { title: { contains: '漏水' } },
@@ -662,9 +733,11 @@ describe('PropertyAffairsService', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    const ordinary = await service.get(41);
+    const ordinary = await service.get(41, admin);
     expect(db.propertyAffair.findFirst.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ where: { id: 41, deletedAt: null } }),
+      expect.objectContaining({
+        where: expect.objectContaining({ AND: expect.any(Array) }),
+      }),
     );
     expect(
       db.propertyAffair.findFirst.mock.calls[0][0].include.progresses,
@@ -703,9 +776,11 @@ describe('PropertyAffairsService', () => {
       }),
     );
 
-    await service.get(41, true);
+    await service.get(41, admin, true);
     expect(db.propertyAffair.findFirst.mock.calls[1][0]).toEqual(
-      expect.objectContaining({ where: { id: 41 } }),
+      expect.objectContaining({
+        where: expect.objectContaining({ AND: expect.any(Array) }),
+      }),
     );
   });
 
@@ -714,8 +789,8 @@ describe('PropertyAffairsService', () => {
       propertyAffair: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const service = new PropertyAffairsService({ db } as never);
-    await expect(service.get(404)).rejects.toEqual(
-      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+    await expect(service.get(404, admin)).rejects.toEqual(
+      expect.objectContaining({ message: '事项不存在或无权查看', status: 404 }),
     );
   });
 
@@ -742,7 +817,7 @@ describe('PropertyAffairsService', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    await expect(service.categories()).resolves.toEqual([
+    await expect(service.categories(admin)).resolves.toEqual([
       '公共维修',
       '证件资料',
       '沟通协调',
@@ -782,6 +857,7 @@ describe('PropertyAffairsService', () => {
       ],
       progresses: [],
       files: [],
+      viewers: [],
     };
     const updated = {
       ...current,
@@ -798,6 +874,7 @@ describe('PropertyAffairsService', () => {
       contracts: [
         { id: 14, affairId: 41, contractId: 32, targetLabel: 'HT-32' },
       ],
+      viewers: [],
     };
     const tx = {
       $queryRaw: jest
@@ -869,6 +946,13 @@ describe('PropertyAffairsService', () => {
           displayName: '管理员乙',
           role: UserRole.ADMIN,
         }),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 9, displayName: '管理员乙' }]),
+      },
+      propertyAffairViewer: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       propertyAffairBuilding: {
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -911,6 +995,60 @@ describe('PropertyAffairsService', () => {
     tenantIds: [22],
     contractIds: [32],
   };
+
+  it('replaces restricted viewers atomically and includes them in the update audit', async () => {
+    const { service, tx, updated } = updateFixture(
+      PropertyAffairStatus.PENDING,
+    );
+    tx.propertyAffair.findUniqueOrThrow.mockResolvedValue({
+      ...updated,
+      visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+      viewers: [
+        {
+          affairId: 41,
+          userId: 9,
+          user: {
+            id: 9,
+            displayName: '管理员乙',
+            role: UserRole.ADMIN,
+            status: 'ACTIVE',
+          },
+        },
+      ],
+    });
+
+    const result = await service.update(
+      41,
+      {
+        version: 3,
+        visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+        viewerUserIds: [9],
+      },
+      admin,
+    );
+
+    expect(tx.propertyAffairViewer.deleteMany).toHaveBeenCalledWith({
+      where: { affairId: 41 },
+    });
+    expect(tx.propertyAffairViewer.createMany).toHaveBeenCalledWith({
+      data: [{ affairId: 41, userId: 9 }],
+    });
+    expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+        }),
+      }),
+    );
+    const audit = tx.operationLog.create.mock.calls[0][0].data;
+    expect(audit.afterData).toEqual(
+      expect.objectContaining({
+        visibilityScope: PropertyAffairVisibilityScope.RESTRICTED,
+        viewers: [{ userId: 9, displayName: '管理员乙' }],
+      }),
+    );
+    expect(result.viewers).toEqual([{ id: 9, displayName: '管理员乙' }]);
+  });
 
   it('locks every newly linked target in fixed relation-type order before reading snapshots', async () => {
     const { service, tx } = updateFixture(PropertyAffairStatus.PENDING);
@@ -1073,7 +1211,9 @@ describe('PropertyAffairsService', () => {
 
     expect(db.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, version: 3, deletedAt: null },
+      where: {
+        AND: [{ id: 41, version: 3, deletedAt: null }, expect.any(Object)],
+      },
       data: expect.objectContaining({
         title: '更新后的事项',
         status: PropertyAffairStatus.COMPLETED,
@@ -1183,7 +1323,9 @@ describe('PropertyAffairsService', () => {
 
     expect(tx.user.findFirst).not.toHaveBeenCalled();
     expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, version: 3, deletedAt: null },
+      where: {
+        AND: [{ id: 41, version: 3, deletedAt: null }, expect.any(Object)],
+      },
       data: expect.objectContaining({
         category: null,
         responsibleUserId: null,
@@ -1244,7 +1386,9 @@ describe('PropertyAffairsService', () => {
       }),
     );
     expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, version: 3, deletedAt: null },
+      where: {
+        AND: [{ id: 41, version: 3, deletedAt: null }, expect.any(Object)],
+      },
       data: expect.objectContaining({ version: { increment: 1 } }),
     });
     expect(tx.propertyAffairRoom.deleteMany).not.toHaveBeenCalled();
@@ -1393,7 +1537,7 @@ describe('PropertyAffairsService', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    const result = await service.get(41);
+    const result = await service.get(41, admin);
 
     expect(result.rooms[0]).toEqual({
       id: 11,
@@ -1540,6 +1684,7 @@ describe('PropertyAffairsService', () => {
     };
     const tx = {
       propertyAffair: {
+        findFirst: jest.fn().mockResolvedValue(current),
         findUnique: jest.fn().mockResolvedValue(current),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUniqueOrThrow: jest.fn().mockResolvedValue(updated),
@@ -1630,7 +1775,7 @@ describe('PropertyAffairsService', () => {
       ...fixture.current,
       files: [fixture.current.files[0], secondFile],
     };
-    fixture.tx.propertyAffair.findUnique.mockResolvedValue(current);
+    fixture.tx.propertyAffair.findFirst.mockResolvedValue(current);
     const audit = {
       appendInTransaction: jest.fn().mockResolvedValue({ id: 90 }),
     };
@@ -1660,11 +1805,15 @@ describe('PropertyAffairsService', () => {
 
     expect(db.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
-      where: { id: 41, deletedAt: null },
+      where: {
+        AND: [{ id: 41, deletedAt: null }, expect.any(Object)],
+      },
       include: expect.any(Object),
     });
     expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, version: 3, deletedAt: null },
+      where: {
+        AND: [{ id: 41, version: 3, deletedAt: null }, expect.any(Object)],
+      },
       data: expect.objectContaining({
         status: PropertyAffairStatus.IN_PROGRESS,
         completedAt: null,
@@ -1920,23 +2069,34 @@ describe('PropertyAffairsService', () => {
     };
     const service = new PropertyAffairsService({ db } as never);
 
-    const result = await service.listRecycleBin({
-      keyword: '漏水',
-      category: '公共维修',
-      priority: PropertyAffairPriority.NORMAL,
-      status: PropertyAffairStatus.COMPLETED,
-      responsibleUserId: 9,
-      buildingId: 1,
-      roomId: 11,
-      tenantId: 21,
-      contractId: 31,
-      page: 2,
-      pageSize: 5,
-    });
+    const result = await service.listRecycleBin(
+      {
+        keyword: '漏水',
+        category: '公共维修',
+        priority: PropertyAffairPriority.NORMAL,
+        status: PropertyAffairStatus.COMPLETED,
+        responsibleUserId: 9,
+        buildingId: 1,
+        roomId: 11,
+        tenantId: 21,
+        contractId: 31,
+        page: 2,
+        pageSize: 5,
+      },
+      admin,
+    );
 
     const listCall = db.propertyAffair.findMany.mock.calls[0][0];
+    const listFilters = listCall.where.AND[0];
     expect(listCall).toEqual({
-      where: expect.objectContaining({
+      where: expect.objectContaining({ AND: expect.any(Array) }),
+      include: expect.any(Object),
+      orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
+      skip: 5,
+      take: 5,
+    });
+    expect(listFilters).toEqual(
+      expect.objectContaining({
         deletedAt: { not: null },
         category: '公共维修',
         priority: PropertyAffairPriority.NORMAL,
@@ -1947,12 +2107,8 @@ describe('PropertyAffairsService', () => {
         tenants: { some: { tenantId: 21 } },
         contracts: { some: { contractId: 31 } },
       }),
-      include: expect.any(Object),
-      orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
-      skip: 5,
-      take: 5,
-    });
-    expect(listCall.where.OR).toEqual(
+    );
+    expect(listFilters.OR).toEqual(
       expect.arrayContaining([
         { affairNo: { contains: '漏水' } },
         { title: { contains: '漏水' } },
@@ -1999,12 +2155,14 @@ describe('PropertyAffairsService', () => {
       await service.softDelete(41, 3, user);
 
       expect(db.$transaction).toHaveBeenCalledTimes(1);
-      expect(tx.propertyAffair.findUnique).toHaveBeenCalledWith({
-        where: { id: 41 },
+      expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
+        where: { AND: [{ id: 41 }, expect.any(Object)] },
         include: expect.any(Object),
       });
       expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-        where: { id: 41, version: 3, deletedAt: null },
+        where: {
+          AND: [{ id: 41, version: 3, deletedAt: null }, expect.any(Object)],
+        },
         data: {
           deletedAt: createdAt,
           deletedBy: user.id,
@@ -2079,7 +2237,12 @@ describe('PropertyAffairsService', () => {
       const result = await service.restore(41, 3, user);
 
       expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-        where: { id: 41, version: 3, deletedAt: { not: null } },
+        where: {
+          AND: [
+            { id: 41, version: 3, deletedAt: { not: null } },
+            expect.any(Object),
+          ],
+        },
         data: {
           deletedAt: null,
           deletedBy: null,
@@ -2166,11 +2329,11 @@ describe('PropertyAffairsService', () => {
 
   it('uses the Chinese not-found convention when a lifecycle target is missing', async () => {
     const { service, tx } = recycleFixture(false);
-    tx.propertyAffair.findUnique.mockResolvedValue(null);
+    tx.propertyAffair.findFirst.mockResolvedValue(null);
 
     await expect(service.softDelete(404, 1, admin)).rejects.toEqual(
       expect.objectContaining({
-        message: '办事事项不存在',
+        message: '事项不存在或无权查看',
         status: 404,
       }),
     );
@@ -2243,12 +2406,17 @@ describe('PropertyAffairsService', () => {
     );
 
     expect(db.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.propertyAffair.findUnique).toHaveBeenCalledWith({
-      where: { id: 41 },
+    expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
+      where: { AND: [{ id: 41 }, expect.any(Object)] },
       include: expect.any(Object),
     });
     expect(tx.propertyAffair.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, version: 3, deletedAt: { not: null } },
+      where: {
+        AND: [
+          { id: 41, version: 3, deletedAt: { not: null } },
+          expect.any(Object),
+        ],
+      },
       data: { version: { increment: 1 } },
     });
     expect(audit.appendInTransaction).toHaveBeenCalledWith(
@@ -2547,15 +2715,111 @@ describe('PropertyAffairsService', () => {
 
   it('returns Chinese 404 when the permanent-delete target no longer exists', async () => {
     const { service, tx, audit } = permanentDeleteFixture();
-    tx.propertyAffair.findUnique.mockResolvedValue(null);
+    tx.propertyAffair.findFirst.mockResolvedValue(null);
 
     await expect(service.permanentDelete(404, 1, superAdmin)).rejects.toEqual(
       expect.objectContaining({
-        message: '办事事项不存在',
+        message: '事项不存在或无权查看',
         status: 404,
       }),
     );
     expect(tx.propertyAffair.updateMany).not.toHaveBeenCalled();
     expect(audit.appendInTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('PropertyAffairsService visibility enforcement', () => {
+  const ordinaryPolicy = {
+    OR: [
+      { visibilityScope: PropertyAffairVisibilityScope.ALL },
+      { createdBy: admin.id },
+      {
+        viewers: {
+          some: { userId: admin.id, user: { status: 'ACTIVE' } },
+        },
+      },
+    ],
+  };
+
+  it('combines list filters and counts with the authenticated admin policy', async () => {
+    const db = {
+      propertyAffair: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      building: { findMany: jest.fn().mockResolvedValue([]) },
+      room: { findMany: jest.fn().mockResolvedValue([]) },
+      tenant: { findMany: jest.fn().mockResolvedValue([]) },
+      contract: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new PropertyAffairsService({ db } as never);
+
+    await service.list({ keyword: '维修' }, admin);
+
+    const where = db.propertyAffair.findMany.mock.calls[0][0].where;
+    expect(where).toEqual({
+      AND: [
+        expect.objectContaining({
+          deletedAt: null,
+          OR: expect.arrayContaining([{ title: { contains: '维修' } }]),
+        }),
+        ordinaryPolicy,
+      ],
+    });
+    expect(db.propertyAffair.count).toHaveBeenCalledWith({ where });
+  });
+
+  it('filters detail and category discovery without disclosing hidden data', async () => {
+    const db = {
+      propertyAffair: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new PropertyAffairsService({ db } as never);
+
+    await expect(service.get(404, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '事项不存在或无权查看',
+        status: 404,
+      }),
+    );
+    await expect(service.categories(admin)).resolves.toEqual([
+      '公共维修',
+      '证件资料',
+      '沟通协调',
+    ]);
+    expect(db.propertyAffair.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { AND: [{ id: 404, deletedAt: null }, ordinaryPolicy] },
+      }),
+    );
+    expect(db.propertyAffair.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: ordinaryPolicy }),
+    );
+  });
+
+  it('rejects an unselected admin before updating a guessed affair id', async () => {
+    const tx = {
+      propertyAffair: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const db = {
+      $transaction: jest.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const service = new PropertyAffairsService({ db } as never);
+
+    await expect(service.update(41, { version: 1 }, admin)).rejects.toEqual(
+      expect.objectContaining({
+        message: '事项不存在或无权查看',
+        status: 404,
+      }),
+    );
+    expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { AND: [{ id: 41, deletedAt: null }, ordinaryPolicy] },
+      }),
+    );
   });
 });

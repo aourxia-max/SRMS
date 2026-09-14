@@ -9,6 +9,7 @@ import {
   Prisma,
   PropertyAffairPriority,
   PropertyAffairStatus,
+  PropertyAffairVisibilityScope,
   UserRole,
 } from '@prisma/client';
 import type { AuthUser } from '../auth/auth-user.type';
@@ -20,6 +21,10 @@ import { ListPropertyAffairsQueryDto } from './dto/list-property-affairs-query.d
 import { PropertyAffairRelationsDto } from './dto/property-affair-relations.dto';
 import { UpdatePropertyAffairDto } from './dto/update-property-affair.dto';
 import { assertPropertyAffairTransition } from './property-affair-policy';
+import {
+  propertyAffairVisibilitySql,
+  propertyAffairVisibilityWhere,
+} from './property-affair-visibility';
 import type { PropertyAffairRequestContext } from './property-affair-request-context';
 import {
   presentPropertyAffair,
@@ -75,6 +80,11 @@ type ResponsibleUser = {
   role: UserRole;
 };
 
+type ViewerUser = {
+  id: number;
+  displayName: string;
+};
+
 type RelationReader = Pick<
   Prisma.TransactionClient,
   'building' | 'room' | 'tenant' | 'contract'
@@ -87,11 +97,11 @@ export class PropertyAffairsService {
     private readonly auditChain?: SecurityAuditChainService,
   ) {}
 
-  async list(query: ListPropertyAffairsQueryDto) {
+  async list(query: ListPropertyAffairsQueryDto, user: AuthUser) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const keyword = query.keyword?.trim();
-    const where: Prisma.PropertyAffairWhereInput = {
+    const filters: Prisma.PropertyAffairWhereInput = {
       deletedAt: null,
       ...(query.category !== undefined ? { category: query.category } : {}),
       ...(query.priority !== undefined ? { priority: query.priority } : {}),
@@ -136,6 +146,9 @@ export class PropertyAffairsService {
           }
         : {}),
     };
+    const where: Prisma.PropertyAffairWhereInput = {
+      AND: [filters, propertyAffairVisibilityWhere(user)],
+    };
 
     const [total, affairs] = await Promise.all([
       this.prisma.db.propertyAffair.count({ where }),
@@ -156,11 +169,11 @@ export class PropertyAffairsService {
     };
   }
 
-  async listRecycleBin(query: ListPropertyAffairsQueryDto) {
+  async listRecycleBin(query: ListPropertyAffairsQueryDto, user: AuthUser) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const keyword = query.keyword?.trim();
-    const where: Prisma.PropertyAffairWhereInput = {
+    const filters: Prisma.PropertyAffairWhereInput = {
       deletedAt: { not: null },
       ...(query.category !== undefined ? { category: query.category } : {}),
       ...(query.priority !== undefined ? { priority: query.priority } : {}),
@@ -205,6 +218,9 @@ export class PropertyAffairsService {
           }
         : {}),
     };
+    const where: Prisma.PropertyAffairWhereInput = {
+      AND: [filters, propertyAffairVisibilityWhere(user)],
+    };
 
     const [total, affairs] = await Promise.all([
       this.prisma.db.propertyAffair.count({ where }),
@@ -225,18 +241,24 @@ export class PropertyAffairsService {
     };
   }
 
-  async get(id: number, includeDeleted = false) {
+  async get(id: number, user: AuthUser, includeDeleted = false) {
     const affair = await this.prisma.db.propertyAffair.findFirst({
-      where: includeDeleted ? { id } : { id, deletedAt: null },
+      where: {
+        AND: [
+          includeDeleted ? { id } : { id, deletedAt: null },
+          propertyAffairVisibilityWhere(user),
+        ],
+      },
       include: propertyAffairInclude,
     });
-    if (!affair) throw new NotFoundException('办事事项不存在');
+    if (!affair) throw new NotFoundException('事项不存在或无权查看');
     const current = await this.loadCurrentRelations([affair], this.prisma.db);
     return presentPropertyAffair(affair, current);
   }
 
-  async categories() {
+  async categories(user: AuthUser) {
     const rows = await this.prisma.db.propertyAffair.findMany({
+      where: propertyAffairVisibilityWhere(user),
       select: { category: true },
       orderBy: { id: 'asc' },
     });
@@ -260,13 +282,14 @@ export class PropertyAffairsService {
     });
   }
 
-  async dashboardItems(limit: number) {
+  async dashboardItems(limit: number, user: AuthUser) {
     const safeLimit = Math.max(0, Math.min(100, Math.trunc(limit)));
     if (safeLimit === 0) return [];
     const rows = await this.prisma.db.$queryRaw<Array<{ id: number | bigint }>>`
       SELECT id FROM property_affairs
       WHERE deleted_at IS NULL
         AND status IN ('PENDING', 'IN_PROGRESS')
+        AND ${propertyAffairVisibilitySql(user)}
       ORDER BY CASE priority
         WHEN 'URGENT' THEN 0
         WHEN 'IMPORTANT' THEN 1
@@ -279,11 +302,19 @@ export class PropertyAffairsService {
 
     const affairs = await this.prisma.db.propertyAffair.findMany({
       where: {
-        id: { in: orderedIds },
-        deletedAt: null,
-        status: {
-          in: [PropertyAffairStatus.PENDING, PropertyAffairStatus.IN_PROGRESS],
-        },
+        AND: [
+          {
+            id: { in: orderedIds },
+            deletedAt: null,
+            status: {
+              in: [
+                PropertyAffairStatus.PENDING,
+                PropertyAffairStatus.IN_PROGRESS,
+              ],
+            },
+          },
+          propertyAffairVisibilityWhere(user),
+        ],
       },
       include: propertyAffairInclude,
     });
@@ -305,9 +336,12 @@ export class PropertyAffairsService {
     requestContext: PropertyAffairRequestContext = {},
   ) {
     return this.prisma.db.$transaction(async (tx) => {
-      const [relations, responsible] = await Promise.all([
+      const visibilityScope =
+        dto.visibilityScope ?? PropertyAffairVisibilityScope.ALL;
+      const [relations, responsible, viewers] = await Promise.all([
         this.resolveRelations(dto, tx),
         this.resolveResponsible(dto.responsibleUserId, tx),
+        this.resolveViewers(visibilityScope, dto.viewerUserIds, tx),
       ]);
       const affairNo = await this.nextAffairNo(tx);
       const affair = await tx.propertyAffair.create({
@@ -323,12 +357,21 @@ export class PropertyAffairsService {
           externalHandlerName: dto.externalHandlerName,
           externalPhone: dto.externalPhone,
           externalContact: dto.externalContact,
+          visibilityScope,
           createdBy: user.id,
           updatedBy: user.id,
         },
       });
 
       await this.createRelations(tx, affair.id, relations);
+      if (viewers.length) {
+        await tx.propertyAffairViewer.createMany({
+          data: viewers.map((viewer) => ({
+            affairId: affair.id,
+            userId: viewer.id,
+          })),
+        });
+      }
       await tx.propertyAffairProgress.create({
         data: {
           affairId: affair.id,
@@ -352,6 +395,11 @@ export class PropertyAffairsService {
         externalHandlerName: dto.externalHandlerName ?? null,
         externalPhone: dto.externalPhone ?? null,
         externalContact: dto.externalContact ?? null,
+        visibilityScope,
+        viewers: viewers.map((viewer) => ({
+          userId: viewer.id,
+          displayName: viewer.displayName,
+        })),
         buildingIds: relations.buildings.map((item) => item.id),
         roomIds: relations.rooms.map((item) => item.id),
         tenantIds: relations.tenants.map((item) => item.id),
@@ -392,10 +440,12 @@ export class PropertyAffairsService {
   ) {
     return this.prisma.db.$transaction(async (tx) => {
       const current = await tx.propertyAffair.findFirst({
-        where: { id, deletedAt: null },
+        where: {
+          AND: [{ id, deletedAt: null }, propertyAffairVisibilityWhere(user)],
+        },
         include: propertyAffairInclude,
       });
-      if (!current) throw new NotFoundException('办事事项不存在');
+      if (!current) throw new NotFoundException('事项不存在或无权查看');
       if (current.version !== dto.version) {
         throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
       }
@@ -410,6 +460,18 @@ export class PropertyAffairsService {
             ? this.resolveResponsible(dto.responsibleUserId, tx)
             : Promise.resolve(undefined),
       ]);
+      const visibilityChanged =
+        dto.visibilityScope !== undefined || dto.viewerUserIds !== undefined;
+      const nextVisibilityScope =
+        dto.visibilityScope ?? current.visibilityScope;
+      const viewerIds =
+        dto.viewerUserIds ??
+        (dto.visibilityScope === undefined
+          ? (current.viewers ?? []).map(({ user: viewer }) => viewer.id)
+          : undefined);
+      const viewers = visibilityChanged
+        ? await this.resolveViewers(nextVisibilityScope, viewerIds, tx)
+        : undefined;
       const statusChanged = nextStatus !== current.status;
       const occurredAt = new Date();
       const data: Prisma.PropertyAffairUpdateManyMutationInput = {
@@ -434,6 +496,9 @@ export class PropertyAffairsService {
         data.externalContact = dto.externalContact;
       }
       if (dto.status !== undefined) data.status = nextStatus;
+      if (visibilityChanged) {
+        data.visibilityScope = nextVisibilityScope;
+      }
       if (statusChanged) {
         if (nextStatus === PropertyAffairStatus.COMPLETED) {
           data.completedAt = occurredAt;
@@ -448,7 +513,12 @@ export class PropertyAffairsService {
       }
 
       const changed = await tx.propertyAffair.updateMany({
-        where: { id, version: dto.version, deletedAt: null },
+        where: {
+          AND: [
+            { id, version: dto.version, deletedAt: null },
+            propertyAffairVisibilityWhere(user),
+          ],
+        },
         data,
       });
       if (changed.count !== 1) {
@@ -456,6 +526,17 @@ export class PropertyAffairsService {
       }
 
       await this.applyRelationChanges(tx, id, relationChanges);
+      if (visibilityChanged) {
+        await tx.propertyAffairViewer.deleteMany({ where: { affairId: id } });
+        if (viewers?.length) {
+          await tx.propertyAffairViewer.createMany({
+            data: viewers.map((viewer) => ({
+              affairId: id,
+              userId: viewer.id,
+            })),
+          });
+        }
+      }
 
       if (statusChanged) {
         await tx.propertyAffairProgress.create({
@@ -503,10 +584,12 @@ export class PropertyAffairsService {
   ) {
     return this.prisma.db.$transaction(async (tx) => {
       const current = await tx.propertyAffair.findFirst({
-        where: { id, deletedAt: null },
+        where: {
+          AND: [{ id, deletedAt: null }, propertyAffairVisibilityWhere(user)],
+        },
         include: propertyAffairInclude,
       });
-      if (!current) throw new NotFoundException('办事事项不存在');
+      if (!current) throw new NotFoundException('事项不存在或无权查看');
       if (current.version !== dto.version) {
         throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
       }
@@ -534,7 +617,12 @@ export class PropertyAffairsService {
       }
 
       const changed = await tx.propertyAffair.updateMany({
-        where: { id, version: dto.version, deletedAt: null },
+        where: {
+          AND: [
+            { id, version: dto.version, deletedAt: null },
+            propertyAffairVisibilityWhere(user),
+          ],
+        },
         data,
       });
       if (changed.count !== 1) {
@@ -595,18 +683,25 @@ export class PropertyAffairsService {
     requestContext: PropertyAffairRequestContext = {},
   ) {
     return this.prisma.db.$transaction(async (tx) => {
-      const current = await tx.propertyAffair.findUnique({
-        where: { id },
+      const current = await tx.propertyAffair.findFirst({
+        where: {
+          AND: [{ id }, propertyAffairVisibilityWhere(user)],
+        },
         include: propertyAffairInclude,
       });
-      if (!current) throw new NotFoundException('办事事项不存在');
+      if (!current) throw new NotFoundException('事项不存在或无权查看');
       if (current.version !== version) {
         throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
       }
 
       const occurredAt = new Date();
       const changed = await tx.propertyAffair.updateMany({
-        where: { id, version, deletedAt: null },
+        where: {
+          AND: [
+            { id, version, deletedAt: null },
+            propertyAffairVisibilityWhere(user),
+          ],
+        },
         data: {
           deletedAt: occurredAt,
           deletedBy: user.id,
@@ -650,18 +745,25 @@ export class PropertyAffairsService {
     requestContext: PropertyAffairRequestContext = {},
   ) {
     return this.prisma.db.$transaction(async (tx) => {
-      const current = await tx.propertyAffair.findUnique({
-        where: { id },
+      const current = await tx.propertyAffair.findFirst({
+        where: {
+          AND: [{ id }, propertyAffairVisibilityWhere(user)],
+        },
         include: propertyAffairInclude,
       });
-      if (!current) throw new NotFoundException('办事事项不存在');
+      if (!current) throw new NotFoundException('事项不存在或无权查看');
       if (current.version !== version) {
         throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
       }
 
       const occurredAt = new Date();
       const changed = await tx.propertyAffair.updateMany({
-        where: { id, version, deletedAt: { not: null } },
+        where: {
+          AND: [
+            { id, version, deletedAt: { not: null } },
+            propertyAffairVisibilityWhere(user),
+          ],
+        },
         data: {
           deletedAt: null,
           deletedBy: null,
@@ -711,11 +813,13 @@ export class PropertyAffairsService {
     if (!auditChain) throw new Error('安全审计服务未配置');
 
     return this.prisma.db.$transaction(async (tx) => {
-      const current = await tx.propertyAffair.findUnique({
-        where: { id },
+      const current = await tx.propertyAffair.findFirst({
+        where: {
+          AND: [{ id }, propertyAffairVisibilityWhere(user)],
+        },
         include: propertyAffairInclude,
       });
-      if (!current) throw new NotFoundException('办事事项不存在');
+      if (!current) throw new NotFoundException('事项不存在或无权查看');
       if (current.version !== version) {
         throw new ConflictException('内容已被其他管理员更新，请刷新后重试');
       }
@@ -724,7 +828,12 @@ export class PropertyAffairsService {
       }
 
       const guarded = await tx.propertyAffair.updateMany({
-        where: { id, version, deletedAt: { not: null } },
+        where: {
+          AND: [
+            { id, version, deletedAt: { not: null } },
+            propertyAffairVisibilityWhere(user),
+          ],
+        },
         data: { version: { increment: 1 } },
       });
       if (guarded.count !== 1) {
@@ -869,6 +978,38 @@ export class PropertyAffairsService {
       );
     }
     return responsible;
+  }
+
+  private async resolveViewers(
+    visibilityScope: PropertyAffairVisibilityScope,
+    viewerUserIds: number[] | undefined,
+    tx: Prisma.TransactionClient,
+  ): Promise<ViewerUser[]> {
+    if (visibilityScope === PropertyAffairVisibilityScope.ALL) return [];
+    const ids = [...new Set(viewerUserIds ?? [])];
+    if (!ids.length) {
+      throw new BadRequestException('指定人员可见时请至少选择一名可见人员');
+    }
+    const users = await tx.user.findMany({
+      where: {
+        id: { in: ids },
+        role: { in: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
+        status: 'ACTIVE',
+        deletedAt: null,
+      },
+      select: { id: true, displayName: true },
+    });
+    if (users.length !== ids.length) {
+      throw new BadRequestException('可见人员不存在、已停用或无管理员权限');
+    }
+    const usersById = new Map(users.map((viewer) => [viewer.id, viewer]));
+    return ids.map((id) => {
+      const viewer = usersById.get(id);
+      if (!viewer) {
+        throw new BadRequestException('可见人员不存在、已停用或无管理员权限');
+      }
+      return viewer;
+    });
   }
 
   private async resolveRelations(
@@ -1238,6 +1379,12 @@ export class PropertyAffairsService {
       externalHandlerName: affair.externalHandlerName,
       externalPhone: affair.externalPhone,
       externalContact: affair.externalContact,
+      visibilityScope:
+        affair.visibilityScope ?? PropertyAffairVisibilityScope.ALL,
+      viewers: (affair.viewers ?? []).map(({ user: viewer }) => ({
+        userId: viewer.id,
+        displayName: viewer.displayName,
+      })),
       completedAt: affair.completedAt?.toISOString() ?? null,
       cancelledAt: affair.cancelledAt?.toISOString() ?? null,
       createdBy: affair.createdBy,

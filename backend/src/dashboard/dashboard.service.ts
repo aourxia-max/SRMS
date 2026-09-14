@@ -202,7 +202,7 @@ export class DashboardService {
         },
       }),
       canViewRoomRent && this.propertyAffairs
-        ? this.propertyAffairs.dashboardItems(8)
+        ? this.propertyAffairs.dashboardItems(8, user)
         : Promise.resolve([]),
     ]);
     const isPerformed = (bill: (typeof arrearsCandidates)[number]) =>
