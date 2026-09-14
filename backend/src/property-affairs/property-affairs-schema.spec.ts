@@ -36,6 +36,7 @@ describe('property-affairs schema', () => {
       expect(modelBlock(schema, name)).not.toBe('');
     }
     const migration = readFileSync(migrationPath, 'utf8');
+    expect(migration).toMatch(/FOREIGN KEY \(`affair_id`\)[\s\S]*ON DELETE CASCADE/);
     expect(migration).toMatch(/CREATE TABLE `property_affairs`/);
     expect(migration).toMatch(/CREATE TABLE `property_affair_progresses`/);
     expect(migration).toMatch(/`created_by` INT UNSIGNED NOT NULL/);
@@ -116,7 +117,11 @@ describe('property-affairs schema', () => {
     expect(scope).toMatchObject({ kind: 'enum', type: 'PropertyAffairVisibilityScope', dbName: 'visibility_scope' });
     expect(viewers).toMatchObject({ kind: 'object', type: 'PropertyAffairViewer' });
     expect(viewer).toMatchObject({ dbName: 'property_affair_viewers' });
+    const viewerBlock = modelBlock(schema, 'PropertyAffairViewer');
+    expect(viewerBlock).toContain('createdAt DateTime       @default(now()) @map("created_at") @db.DateTime(3)');
     const migration = readFileSync(join(prismaDirectory, 'migrations', '20260914090000_property_affair_visibility', 'migration.sql'), 'utf8');
+    expect(migration).toMatch(/FOREIGN KEY \(`affair_id`\)[\s\S]*ON DELETE CASCADE/);
+    expect(migration).toMatch(/FOREIGN KEY \(`affair_id`\)[\s\S]*ON DELETE CASCADE/);
     expect(migration).toMatch(/CREATE TABLE `property_affair_viewers`/);
     expect(migration).toMatch(/PRIMARY KEY \(`affair_id`, `user_id`\)/);
     expect(migration).toMatch(/KEY `property_affair_viewers_user_id_affair_id_idx` \(`user_id`, `affair_id`\)/);
