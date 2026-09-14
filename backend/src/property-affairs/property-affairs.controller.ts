@@ -246,6 +246,7 @@ export class PropertyAffairsController {
     const { asset, content } = await this.files.readPropertyAffairFile(
       id,
       fileId,
+      user,
     );
     if (!previewableMimeTypes.has(asset.mimeType)) {
       throw new BadRequestException('该附件不支持在线预览，请下载后查看');
@@ -264,6 +265,7 @@ export class PropertyAffairsController {
     const { asset, content } = await this.files.readPropertyAffairFile(
       id,
       fileId,
+      user,
     );
     this.sendFile(response, asset.mimeType, asset.originalName, content, false);
   }

@@ -14,6 +14,7 @@ import {
   safeStoredFileName,
 } from './files.service';
 
+import { propertyAffairVisibilityWhere } from '../property-affairs/property-affair-visibility';
 jest.mock('fs/promises', () => ({
   mkdir: jest.fn().mockResolvedValue(undefined),
   writeFile: jest.fn().mockResolvedValue(undefined),
@@ -1240,7 +1241,12 @@ describe('FilesService property-affair attachments', () => {
       expect(() => JSON.stringify(result)).not.toThrow();
       expect(db.$transaction).toHaveBeenCalledTimes(1);
       expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
-        where: { id: 41, deletedAt: null },
+        where: {
+          AND: [
+            { id: 41, deletedAt: null },
+            propertyAffairVisibilityWhere(admin),
+          ],
+        },
         select: { id: true, affairNo: true, deletedAt: true },
       });
       expect(tx.fileAsset.create).toHaveBeenCalledWith({
@@ -1346,7 +1352,7 @@ describe('FilesService property-affair attachments', () => {
         buffer,
       }),
     ).rejects.toEqual(
-      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+      expect.objectContaining({ message: '事项不存在或无权查看', status: 404 }),
     );
     expect(db.$transaction).not.toHaveBeenCalled();
     expect(writeFile).not.toHaveBeenCalled();
@@ -1516,8 +1522,17 @@ describe('FilesService property-affair attachments', () => {
         buffer,
       }),
     ).rejects.toEqual(
-      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+      expect.objectContaining({ message: '事项不存在或无权查看', status: 404 }),
     );
+    expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          { id: 41, deletedAt: null },
+          propertyAffairVisibilityWhere(admin),
+        ],
+      },
+      select: { id: true, affairNo: true, deletedAt: true },
+    });
     expect(tx.fileAsset.create).not.toHaveBeenCalled();
     expect(unlink).toHaveBeenCalledTimes(3);
   });
@@ -1638,10 +1653,14 @@ describe('FilesService property-affair attachments', () => {
 
   function propertyMethods(service: FilesService) {
     return service as unknown as {
-      listPropertyAffairFiles: (affairId: number) => Promise<unknown>;
+      listPropertyAffairFiles: (
+        affairId: number,
+        user: typeof admin,
+      ) => Promise<unknown>;
       readPropertyAffairFile: (
         affairId: number,
         fileId: number,
+        user: typeof admin,
       ) => Promise<{ asset: Record<string, unknown>; content: Buffer }>;
       unlinkPropertyAffairFile: (
         affairId: number,
@@ -1657,7 +1676,10 @@ describe('FilesService property-affair attachments', () => {
   it('lists only category-matching joins newest first as JSON-safe summaries', async () => {
     const { service, db } = accessFixture();
 
-    const result = await propertyMethods(service).listPropertyAffairFiles(41);
+    const result = await propertyMethods(service).listPropertyAffairFiles(
+      41,
+      admin,
+    );
 
     expect(result).toEqual([
       {
@@ -1672,7 +1694,9 @@ describe('FilesService property-affair attachments', () => {
     expect(db.propertyAffairFile.findMany).toHaveBeenCalledWith({
       where: {
         affairId: 41,
-        affair: { deletedAt: null },
+        affair: {
+          AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(admin)],
+        },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
@@ -1697,13 +1721,15 @@ describe('FilesService property-affair attachments', () => {
 
     const result = await propertyMethods(
       fixture.service,
-    ).readPropertyAffairFile(41, 71);
+    ).readPropertyAffairFile(41, 71, admin);
 
     expect(fixture.db.propertyAffairFile.findFirst).toHaveBeenCalledWith({
       where: {
         affairId: 41,
         fileAssetId: 71,
-        affair: { deletedAt: null },
+        affair: {
+          AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(admin)],
+        },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
@@ -1723,7 +1749,7 @@ describe('FilesService property-affair attachments', () => {
     const { service, db } = accessFixture({ link: null });
 
     await expect(
-      propertyMethods(service).readPropertyAffairFile(41, 99),
+      propertyMethods(service).readPropertyAffairFile(41, 99, admin),
     ).rejects.toEqual(
       expect.objectContaining({ message: '物业办事附件不存在', status: 404 }),
     );
@@ -1761,10 +1787,13 @@ describe('FilesService property-affair attachments', () => {
 
       await expect(
         method === 'listPropertyAffairFiles'
-          ? propertyMethods(service)[method](41)
-          : propertyMethods(service)[method](41, 71),
+          ? propertyMethods(service)[method](41, admin)
+          : propertyMethods(service)[method](41, 71, admin),
       ).rejects.toEqual(
-        expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+        expect.objectContaining({
+          message: '事项不存在或无权查看',
+          status: 404,
+        }),
       );
       expect(db.propertyAffairFile.findMany).not.toHaveBeenCalled();
       expect(db.propertyAffairFile.findFirst).not.toHaveBeenCalled();
@@ -1782,14 +1811,21 @@ describe('FilesService property-affair attachments', () => {
 
     expect(result).toEqual({ id: 71 });
     expect(tx.propertyAffair.findFirst).toHaveBeenCalledWith({
-      where: { id: 41, deletedAt: null },
+      where: {
+        AND: [
+          { id: 41, deletedAt: null },
+          propertyAffairVisibilityWhere(admin),
+        ],
+      },
       select: { id: true, affairNo: true, deletedAt: true },
     });
     expect(tx.propertyAffairFile.findFirst).toHaveBeenCalledWith({
       where: {
         affairId: 41,
         fileAssetId: 71,
-        affair: { deletedAt: null },
+        affair: {
+          AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(admin)],
+        },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
@@ -1798,7 +1834,9 @@ describe('FilesService property-affair attachments', () => {
       where: {
         affairId: 41,
         fileAssetId: 71,
-        affair: { deletedAt: null },
+        affair: {
+          AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(admin)],
+        },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
     });
@@ -1873,7 +1911,9 @@ describe('FilesService property-affair attachments', () => {
       where: {
         affairId: 41,
         fileAssetId: 71,
-        affair: { deletedAt: null },
+        affair: {
+          AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(admin)],
+        },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
     });
@@ -1893,7 +1933,7 @@ describe('FilesService property-affair attachments', () => {
     await expect(
       propertyMethods(service).unlinkPropertyAffairFile(41, 71, admin),
     ).rejects.toEqual(
-      expect.objectContaining({ message: '办事事项不存在', status: 404 }),
+      expect.objectContaining({ message: '事项不存在或无权查看', status: 404 }),
     );
     expect(tx.propertyAffairFile.findFirst).not.toHaveBeenCalled();
     expect(tx.propertyAffairFile.deleteMany).not.toHaveBeenCalled();

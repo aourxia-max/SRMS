@@ -13,7 +13,7 @@ import {
   updatePropertyAffair,
   uploadPropertyAffairFile,
 } from '../services/property-affairs'
-import type { PropertyAffairCreatePayload, PropertyAffairDetail, PropertyAffairResponsibleUserOption, PropertyAffairUpdatePayload } from '../types/property-affairs'
+import type { PropertyAffairCreatePayload, PropertyAffairDetail, PropertyAffairFormModel, PropertyAffairResponsibleUserOption, PropertyAffairUpdatePayload } from '../types/property-affairs'
 
 const route = useRoute()
 const router = useRouter()
@@ -56,6 +56,18 @@ function createPayload(submission: PropertyAffairFormSubmission): PropertyAffair
   }
 }
 
+function sameViewerIds(left: number[], right: number[]) {
+  return [...left].sort((a, b) => a - b).join(',') === [...right].sort((a, b) => a - b).join(',')
+}
+
+function visibilityUpdate(model: PropertyAffairFormModel): Pick<PropertyAffairUpdatePayload, 'visibilityScope' | 'viewerUserIds'> {
+  if (!initial.value) return { visibilityScope: model.visibilityScope, viewerUserIds: [...model.viewerUserIds] }
+  const originalScope = initial.value.visibilityScope ?? 'ALL'
+  const originalViewerIds = initial.value.viewers?.map((viewer) => viewer.id) ?? []
+  if (model.visibilityScope === originalScope && sameViewerIds(model.viewerUserIds, originalViewerIds)) return {}
+  return { visibilityScope: model.visibilityScope, viewerUserIds: [...model.viewerUserIds] }
+}
+
 function updatePayload(submission: PropertyAffairFormSubmission): PropertyAffairUpdatePayload {
   if (!submission.version) throw new Error('缺少事项版本号，请刷新后重试')
   const model = submission.model
@@ -64,8 +76,7 @@ function updatePayload(submission: PropertyAffairFormSubmission): PropertyAffair
     category: nullable(model.category),
     priority: model.priority,
     content: model.content,
-    visibilityScope: model.visibilityScope,
-    viewerUserIds: [...model.viewerUserIds],
+    ...visibilityUpdate(model),
     responsibleUserId: model.responsibleUserId,
     externalHandlerName: nullable(model.externalHandlerName),
     externalPhone: nullable(model.externalPhone),

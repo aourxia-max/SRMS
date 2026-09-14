@@ -1146,6 +1146,234 @@ describe('property affairs API workflows and invariants (e2e)', () => {
     });
   });
 
+  it('enforces restricted visibility across list, detail, dashboard, and creator access', async () => {
+    currentUser = superAdmin;
+    const created = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-指定人员可见`,
+        content: '验证可见范围权限边界',
+        visibilityScope: 'RESTRICTED',
+        viewerUserIds: [admin.id],
+      })
+      .expect(201);
+    const affairId = created.body.data.id as number;
+    createdAffairIds.add(affairId);
+    expect(created.body.data).toMatchObject({
+      visibilityScope: 'RESTRICTED',
+      viewers: [
+        expect.objectContaining({
+          id: admin.id,
+          displayName: admin.displayName,
+        }),
+      ],
+    });
+
+    currentUser = admin;
+    expect(await listContains(affairId)).toBe(true);
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}`)
+      .expect(200);
+    const selectedDashboard = await request(app.getHttpServer())
+      .get('/api/dashboard')
+      .expect(200);
+    expect(
+      (
+        selectedDashboard.body.data.propertyAffairs as Array<{ id: number }>
+      ).some((item) => item.id === affairId),
+    ).toBe(true);
+
+    const unselectedAdmin: AuthUser = {
+      ...admin,
+      id: admin.id + 1_000_000,
+      username: `unselected-${marker}`,
+      displayName: '未指定管理员',
+    };
+    currentUser = unselectedAdmin;
+    expect(await listContains(affairId)).toBe(false);
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}`)
+      .expect(404);
+    const hiddenDashboard = await request(app.getHttpServer())
+      .get('/api/dashboard')
+      .expect(200);
+    expect(
+      (hiddenDashboard.body.data.propertyAffairs as Array<{ id: number }>).some(
+        (item) => item.id === affairId,
+      ),
+    ).toBe(false);
+
+    currentUser = superAdmin;
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}`)
+      .expect(200);
+
+    currentUser = admin;
+    const creatorOwned = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-创建人始终可见`,
+        content: '验证创建人兜底权限',
+        visibilityScope: 'RESTRICTED',
+        viewerUserIds: [superAdmin.id],
+      })
+      .expect(201);
+    const creatorOwnedId = creatorOwned.body.data.id as number;
+    createdAffairIds.add(creatorOwnedId);
+    expect(await listContains(creatorOwnedId)).toBe(true);
+  });
+
+  it('denies an unselected or disabled user through every restricted-affair entry point', async () => {
+    currentUser = superAdmin;
+    const created = await request(app.getHttpServer())
+      .post('/api/property-affairs')
+      .send({
+        title: `${titlePrefix}-全入口权限矩阵`,
+        content: '覆盖检索、关联、回收站、变更和附件入口',
+        visibilityScope: 'RESTRICTED',
+        viewerUserIds: [admin.id],
+        buildingIds: [buildingId],
+        roomIds: [roomId],
+        tenantIds: [tenantId],
+        contractIds: [contractId],
+      })
+      .expect(201);
+    const affairId = created.body.data.id as number;
+    createdAffairIds.add(affairId);
+
+    currentUser = admin;
+    expect(await listContains(affairId, { keyword: '全入口权限矩阵' })).toBe(
+      true,
+    );
+    for (const query of reverseRelationQueries()) {
+      expect(await listContains(affairId, query)).toBe(true);
+    }
+    const updated = await request(app.getHttpServer())
+      .patch(`/api/property-affairs/${affairId}`)
+      .send({ version: 1, content: '指定人员可以修改' })
+      .expect(200);
+    const progressed = await request(app.getHttpServer())
+      .post(`/api/property-affairs/${affairId}/progress`)
+      .send({
+        version: updated.body.data.version,
+        content: '指定人员可以追加进度',
+        nextStatus: 'IN_PROGRESS',
+      })
+      .expect(201);
+    const version = progressed.body.data.version as number;
+    const uploaded = await request(app.getHttpServer())
+      .post(`/api/property-affairs/${affairId}/files`)
+      .attach('file', Buffer.from('%PDF-1.7\n'), {
+        filename: '权限矩阵.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(201);
+    const fileId = uploaded.body.data.id as number;
+    createdFileIds.add(fileId);
+
+    const unselectedAdmin: AuthUser = {
+      ...admin,
+      id: admin.id + 1_000_000,
+      username: `unselected-matrix-${marker}`,
+      displayName: '未指定管理员',
+    };
+    currentUser = unselectedAdmin;
+    expect(await listContains(affairId, { keyword: '全入口权限矩阵' })).toBe(
+      false,
+    );
+    for (const query of reverseRelationQueries()) {
+      expect(await listContains(affairId, query)).toBe(false);
+    }
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/property-affairs/${affairId}`)
+      .send({ version, title: '无权修改' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/api/property-affairs/${affairId}/progress`)
+      .send({ version, content: '无权追加' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .delete(`/api/property-affairs/${affairId}`)
+      .send({ version })
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/api/property-affairs/${affairId}/files`)
+      .attach('file', Buffer.from('%PDF-1.7\n'), {
+        filename: '无权上传.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}/files/${fileId}/preview`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}/files/${fileId}/download`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .delete(`/api/property-affairs/${affairId}/files/${fileId}`)
+      .expect(404);
+
+    currentUser = admin;
+    const deleted = await request(app.getHttpServer())
+      .delete(`/api/property-affairs/${affairId}`)
+      .send({ version })
+      .expect(200);
+    currentUser = unselectedAdmin;
+    const hiddenRecycleBin = await request(app.getHttpServer())
+      .get('/api/property-affairs/recycle-bin')
+      .query({ keyword: '全入口权限矩阵' })
+      .expect(200);
+    expect(
+      (hiddenRecycleBin.body.data.items as Array<{ id: number }>).some(
+        (item) => item.id === affairId,
+      ),
+    ).toBe(false);
+    await request(app.getHttpServer())
+      .post(`/api/property-affairs/${affairId}/restore`)
+      .send({ version: deleted.body.data.version })
+      .expect(404);
+
+    currentUser = admin;
+    await request(app.getHttpServer())
+      .post(`/api/property-affairs/${affairId}/restore`)
+      .send({ version: deleted.body.data.version })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}/files/${fileId}/preview`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}/files/${fileId}/download`)
+      .expect(200);
+
+    await prisma.db.user.update({
+      where: { id: admin.id },
+      data: { status: 'DISABLED' },
+    });
+    try {
+      currentUser = admin;
+      expect(await listContains(affairId)).toBe(false);
+      await request(app.getHttpServer())
+        .get(`/api/property-affairs/${affairId}`)
+        .expect(404);
+    } finally {
+      await prisma.db.user.update({
+        where: { id: admin.id },
+        data: { status: 'ACTIVE' },
+      });
+    }
+
+    currentUser = superAdmin;
+    await request(app.getHttpServer())
+      .get(`/api/property-affairs/${affairId}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .delete(`/api/property-affairs/${affairId}/files/${fileId}`)
+      .expect(200);
+  });
+
   it('persists normalized request sources for every property-affair write action', async () => {
     const logs = await prisma.db.operationLog.findMany({
       where: {

@@ -17,6 +17,7 @@ import { assertContractNotVoided } from '../contracts/contract-operability';
 import { lockRoomAndTargetContract } from '../contracts/contract-room-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import type { PropertyAffairRequestContext } from '../property-affairs/property-affair-request-context';
+import { propertyAffairVisibilityWhere } from '../property-affairs/property-affair-visibility';
 
 export type UploadedFile = {
   originalname: string;
@@ -301,11 +302,16 @@ export class FilesService {
       throw new ForbiddenException('无权操作物业办事附件');
     }
     const affair = await this.prisma.db.propertyAffair.findFirst({
-      where: { id: affairId, deletedAt: null },
+      where: {
+        AND: [
+          { id: affairId, deletedAt: null },
+          propertyAffairVisibilityWhere(user),
+        ],
+      },
       select: { id: true, affairNo: true, deletedAt: true },
     });
     if (!affair || affair.deletedAt)
-      throw new NotFoundException('办事事项不存在');
+      throw new NotFoundException('事项不存在或无权查看');
     if (!file || !file.buffer || !file.originalname)
       throw new BadRequestException('请上传物业办事附件');
     const limit = await this.configLimit();
@@ -349,11 +355,16 @@ export class FilesService {
       return await this.prisma.db.$transaction(
         async (tx) => {
           const current = await tx.propertyAffair.findFirst({
-            where: { id: affairId, deletedAt: null },
+            where: {
+              AND: [
+                { id: affairId, deletedAt: null },
+                propertyAffairVisibilityWhere(user),
+              ],
+            },
             select: { id: true, affairNo: true, deletedAt: true },
           });
           if (!current || current.deletedAt)
-            throw new NotFoundException('办事事项不存在');
+            throw new NotFoundException('事项不存在或无权查看');
           const asset = await tx.fileAsset.create({ data });
           await tx.propertyAffairFile.create({
             data: { affairId, fileAssetId: asset.id, createdBy: user.id },
@@ -386,18 +397,28 @@ export class FilesService {
     }
   }
 
-  async listPropertyAffairFiles(affairId: number) {
+  async listPropertyAffairFiles(affairId: number, user: AuthUser) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('无权操作物业办事附件');
+    }
     const affair = await this.prisma.db.propertyAffair.findFirst({
-      where: { id: affairId, deletedAt: null },
+      where: {
+        AND: [
+          { id: affairId, deletedAt: null },
+          propertyAffairVisibilityWhere(user),
+        ],
+      },
       select: { id: true, affairNo: true, deletedAt: true },
     });
     if (!affair || affair.deletedAt)
-      throw new NotFoundException('办事事项不存在');
+      throw new NotFoundException('事项不存在或无权查看');
     return (
       await this.prisma.db.propertyAffairFile.findMany({
         where: {
           affairId,
-          affair: { deletedAt: null },
+          affair: {
+            AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(user)],
+          },
           fileAsset: { category: 'PROPERTY_AFFAIR' },
         },
         include: { fileAsset: true },
@@ -406,18 +427,32 @@ export class FilesService {
     ).map(({ fileAsset }) => this.propertyAffairFileResult(fileAsset));
   }
 
-  async readPropertyAffairFile(affairId: number, fileId: number) {
+  async readPropertyAffairFile(
+    affairId: number,
+    fileId: number,
+    user: AuthUser,
+  ) {
+    if (user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('无权操作物业办事附件');
+    }
     const affair = await this.prisma.db.propertyAffair.findFirst({
-      where: { id: affairId, deletedAt: null },
+      where: {
+        AND: [
+          { id: affairId, deletedAt: null },
+          propertyAffairVisibilityWhere(user),
+        ],
+      },
       select: { id: true, affairNo: true, deletedAt: true },
     });
     if (!affair || affair.deletedAt)
-      throw new NotFoundException('办事事项不存在');
+      throw new NotFoundException('事项不存在或无权查看');
     const item = await this.prisma.db.propertyAffairFile.findFirst({
       where: {
         affairId,
         fileAssetId: fileId,
-        affair: { deletedAt: null },
+        affair: {
+          AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(user)],
+        },
         fileAsset: { category: 'PROPERTY_AFFAIR' },
       },
       include: { fileAsset: true },
@@ -449,16 +484,23 @@ export class FilesService {
     await this.prisma.db.$transaction(
       async (tx) => {
         const affair = await tx.propertyAffair.findFirst({
-          where: { id: affairId, deletedAt: null },
+          where: {
+            AND: [
+              { id: affairId, deletedAt: null },
+              propertyAffairVisibilityWhere(user),
+            ],
+          },
           select: { id: true, affairNo: true, deletedAt: true },
         });
         if (!affair || affair.deletedAt)
-          throw new NotFoundException('办事事项不存在');
+          throw new NotFoundException('事项不存在或无权查看');
         const link = await tx.propertyAffairFile.findFirst({
           where: {
             affairId,
             fileAssetId: fileId,
-            affair: { deletedAt: null },
+            affair: {
+              AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(user)],
+            },
             fileAsset: { category: 'PROPERTY_AFFAIR' },
           },
           include: { fileAsset: true },
@@ -468,7 +510,9 @@ export class FilesService {
           where: {
             affairId,
             fileAssetId: fileId,
-            affair: { deletedAt: null },
+            affair: {
+              AND: [{ deletedAt: null }, propertyAffairVisibilityWhere(user)],
+            },
             fileAsset: { category: 'PROPERTY_AFFAIR' },
           },
         });

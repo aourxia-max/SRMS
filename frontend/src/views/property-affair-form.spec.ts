@@ -388,12 +388,38 @@ describe('物业办事表单与关联选择器', () => {
     expect(api.updatePropertyAffair).toHaveBeenCalledWith(7, {
       title: '现场输入不能丢', category: null, priority: 'URGENT', content: '更换损坏灯具', responsibleUserId: null,
       externalHandlerName: null, externalPhone: null, externalContact: null, status: 'IN_PROGRESS', version: 6,
-      visibilityScope: 'ALL', viewerUserIds: [],
       buildingIds: [1], roomIds: [11], tenantIds: [21], contractIds: [31],
     })
     expect(error).toHaveBeenCalledWith('内容已被其他管理员更新，请刷新后重试')
     expect(router.currentRoute.value.fullPath).toBe('/property-affairs/7/edit')
     expect((form.get('[data-test="affair-title"]').element as HTMLInputElement).value).toBe('现场输入不能丢')
+  })
+
+  it('受限事项的停用查看人未被编辑时保留原名单，不阻断普通字段保存', async () => {
+    vi.mocked(api.getPropertyAffair).mockResolvedValue({
+      ...detail,
+      visibilityScope: 'RESTRICTED',
+      viewers: [{ id: 99, displayName: '已停用管理员' }],
+    })
+    const { wrapper } = await mountView('/property-affairs/7/edit')
+    const form = wrapper.findComponent(PropertyAffairForm)
+    expect(selectByTest(form, 'visibility-viewers').props('modelValue')).toEqual([99])
+
+    await form.get('[data-test="affair-title"]').setValue('只修改标题')
+    await form.get('[data-test="submit-affair-form"]').trigger('click')
+    await flushPromises()
+
+    expect(api.updatePropertyAffair).toHaveBeenCalledWith(
+      7,
+      expect.not.objectContaining({
+        visibilityScope: expect.anything(),
+        viewerUserIds: expect.anything(),
+      }),
+    )
+    expect(api.updatePropertyAffair).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ title: '只修改标题', version: 6 }),
+    )
   })
 
   it('创建后逐个上传附件；部分失败时列出文件名、保留事项并进入详情', async () => {

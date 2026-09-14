@@ -458,7 +458,7 @@ describe('PropertyAffairsController', () => {
         controller().preview(11, 41, response as Response, admin),
       ).resolves.toBeUndefined();
       expect(propertyAffairs.assertVisible).toHaveBeenCalledWith(11, admin);
-      expect(files.readPropertyAffairFile).toHaveBeenCalledWith(11, 41);
+      expect(files.readPropertyAffairFile).toHaveBeenCalledWith(11, 41, admin);
       expect(
         propertyAffairs.assertVisible.mock.invocationCallOrder[0],
       ).toBeLessThan(files.readPropertyAffairFile.mock.invocationCallOrder[0]);
