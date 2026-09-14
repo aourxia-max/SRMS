@@ -344,7 +344,14 @@ describe("CheckoutTopNav", () => {
     const input = wrapper.get('[data-test="initiate-actual-checkout-date"]');
     expect(input.attributes("type")).toBe("date");
     expect(input.attributes("required")).toBeUndefined();
-    expect(input.attributes("max")).toBe(new Date().toISOString().slice(0, 10));
+    const dateParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const dateValues = Object.fromEntries(dateParts.map((part) => [part.type, part.value]));
+    expect(input.attributes("max")).toBe(`${dateValues.year}-${dateValues.month}-${dateValues.day}`);
     expect(wrapper.text()).toContain("实际退房日期");
     expect(wrapper.text()).toContain("已经退房后补录时填写；尚未退房可留空");
   });
